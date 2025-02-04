@@ -195,6 +195,40 @@
         .upload-section {
             display: block;
         }
+
+        .download-progress {
+            display: none;
+            margin-top: 1rem;
+            background-color: var(--light-gray);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+        }
+
+        .download-progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #E0E0E0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .download-progress-fill {
+            width: 0%;
+            height: 100%;
+            background-color: var(--primary-green);
+            transition: width 0.3s ease-in-out;
+        }
+
+        .download-progress-text {
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+            color: #666;
+        }
+
+        .hidden {
+            display: none !important;
+        }
     </style>
 </head>
 
@@ -288,86 +322,308 @@
                 <div class="file-info-item" id="downloadFileName">Henter filinformasjon...</div>
             </div>
             <button class="button" onclick="downloadFile()" id="downloadButton">Last ned</button>
+
+            <div class="download-progress" id="downloadProgress">
+                <div class="progress-title" id="downloadProgressTitle">Laster ned...</div>
+                <div class="download-progress-bar">
+                    <div class="download-progress-fill" id="downloadProgressBar"></div>
+                </div>
+                <div class="download-progress-text" id="downloadProgressText">0%</div>
+            </div>
         </div>
     </div>
     </div>
 
-    <script>
+    <script src="/wasm_exec.js"></script>
 
+    <script>
+        "use strict";
+
+        let encryptionKey;
+        let wasmInstance;
         const maxFileSize = 1 * 1024 * 1024 * 1024; // 1GB in bytes
 
         class ChunkedFileProcessor {
-            constructor(chunkSize = 10 * 1024 * 1024) { // 10MB chunks
+            constructor(chunkSize = 1 * 1024 * 1024) {
                 this.chunkSize = chunkSize;
             }
 
-            async * getFileChunks(file) {
-                const reader = new FileReader();
-                let offset = 0;
-
-                while (offset < file.size) {
-                    const chunk = file.slice(offset, offset + this.chunkSize);
-                    const arrayBuffer = await new Promise((resolve, reject) => {
-                        reader.onload = e => resolve(e.target.result);
-                        reader.onerror = reject;
-                        reader.readAsArrayBuffer(chunk);
-                    });
-                    yield new Uint8Array(arrayBuffer);
-                    offset += this.chunkSize;
-                }
-            }
-
-            async encryptChunk(key, iv, chunk) {
-                return new Uint8Array(
-                    await window.crypto.subtle.encrypt(
-                        { name: "AES-GCM", iv },
-                        key,
-                        chunk
-                    )
-                );
-            }
-
-            async decryptChunk(key, iv, chunk) {
-                return new Uint8Array(
-                    await window.crypto.subtle.decrypt(
-                        { name: "AES-GCM", iv },
-                        key,
-                        chunk
-                    )
-                );
-            }
-
             async encryptFile(file, key) {
-                const iv = window.crypto.getRandomValues(new Uint8Array(12));
+                await updateProgress(0, 'Forbereder kryptering...');
+
+                // Encrypt metadata first
                 const metadata = {
                     filename: file.name,
                     contentType: file.type,
                     size: file.size
                 };
+                const metadataBytes = new TextEncoder().encode(JSON.stringify(metadata));
+                const encryptedMetadata = wasmInstance.encrypt(key, metadataBytes);
+                const header = new Uint8Array(16 + encryptedMetadata.length - 12);
+                header.set(encryptedMetadata.slice(0, 12), 0);
+                new DataView(header.buffer).setUint32(12, encryptedMetadata.length - 12, true);
+                header.set(encryptedMetadata.slice(12), 16);
 
-                const metadataBuffer = await this.encryptChunk(
-                    key,
-                    iv,
-                    new TextEncoder().encode(JSON.stringify(metadata))
+                // Initialize streaming encryption
+                const iv = wasmInstance.createEncryptionStream(key);
+                const chunks = [];
+                const totalChunks = Math.ceil(file.size / this.chunkSize);
+
+                // Process file in chunks
+                for (let i = 0; i < totalChunks; i++) {
+                    const start = i * this.chunkSize;
+                    const end = Math.min(start + this.chunkSize, file.size);
+                    const chunk = await file.slice(start, end).arrayBuffer();
+                    const isLastChunk = i === totalChunks - 1;
+
+                    const encryptedChunk = wasmInstance.encryptChunk(new Uint8Array(chunk), isLastChunk);
+
+                    chunks.push(encryptedChunk);
+
+                    await updateProgress(
+                        10 + (i / totalChunks) * 30,
+                        `Krypterer... (${Math.round((i + 1) / totalChunks * 100)}%)`
+                    );
+                }
+
+                // Combine all encrypted chunks
+                const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+                const encryptedContent = new Uint8Array(iv.length + totalSize);
+                encryptedContent.set(iv, 0);
+
+                let offset = iv.length;
+                for (const chunk of chunks) {
+                    encryptedContent.set(chunk, offset);
+                    offset += chunk.length;
+                }
+
+                console.log('Final sizes:', {
+                    header: header.length,
+                    iv: iv.length,
+                    encryptedContent: encryptedContent.length,
+                    total: header.length + encryptedContent.length
+                });
+
+                await updateProgress(40, 'Kryptering fullført');
+
+                return { header, encryptedContent };
+            }
+            async decryptFile(encryptedData, key, progressCallback) {
+    if (encryptedData.length < 16) {
+        throw new Error('Invalid encrypted data');
+    }
+
+    try {
+        // Handle metadata first
+        const metadataLength = new DataView(encryptedData.buffer).getUint32(12, true);
+        const headerLength = 16 + metadataLength;
+
+        if (encryptedData.length < headerLength) {
+            throw new Error('Invalid header length');
+        }
+
+        await progressCallback(0, 'Dekrypterer metadata...');
+        const metadata = await wasmInstance.decryptMetadata(key, encryptedData.slice(0, headerLength));
+
+        // Get the IV and encrypted content
+        const contentStartPos = headerLength;
+        const iv = encryptedData.slice(contentStartPos, contentStartPos + 12);
+        const encryptedContent = encryptedData.slice(contentStartPos + 12);
+
+        // Initialize decryption stream with IV
+        const success = wasmInstance.createDecryptionStream(key, iv);
+        if (!success) {
+            throw new Error('Failed to initialize decryption stream');
+        }
+
+        // Process content in chunks
+        const chunks = [];
+        const chunkSizeWithTag = this.chunkSize + 16; // AES-GCM tag size is 16 bytes
+        const totalChunks = Math.ceil(encryptedContent.length / chunkSizeWithTag);
+
+        console.log('Decryption details:', {
+            totalLength: encryptedContent.length,
+            chunkSize: this.chunkSize,
+            chunkSizeWithTag,
+            totalChunks
+        });
+
+        // Process chunks with controlled timing
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * chunkSizeWithTag;
+            const end = Math.min(start + chunkSizeWithTag, encryptedContent.length);
+            const chunk = encryptedContent.slice(start, end);
+            const isLastChunk = i === totalChunks - 1;
+
+            console.log(`Processing chunk ${i}:`, {
+                start,
+                end,
+                chunkLength: chunk.length,
+                isLastChunk
+            });
+
+            const decryptedChunk = wasmInstance.decryptChunk(chunk, isLastChunk);
+            if (!decryptedChunk) {
+                throw new Error(`Failed to decrypt chunk ${i}`);
+            }
+
+            chunks.push(decryptedChunk);
+
+            // Calculate and update progress with proper scaling
+            const currentProgress = (i + 1) / totalChunks;
+            const scaledProgress = 40 + (currentProgress * 50); // Scale between 40% and 90%
+
+            // Ensure UI update happens
+            await new Promise(resolve => {
+                requestAnimationFrame(async () => {
+                    await progressCallback(
+                        scaledProgress,
+                        `Dekrypterer... (${Math.round(currentProgress * 100)}%)`
+                    );
+                    resolve();
+                });
+            });
+        }
+
+                    // Combine all decrypted chunks
+                    const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+                    const decrypted = new Uint8Array(totalSize);
+                    let offset = 0;
+
+                    for (const chunk of chunks) {
+                        decrypted.set(chunk, offset);
+                        offset += chunk.length;
+                    }
+
+                    return { decrypted, metadata };
+                } catch (error) {
+                    console.error('Decryption error:', error);
+                    throw error;
+                }
+            }
+        }
+
+        async function updateDownloadProgress(progress, action) {
+    const progressContainer = document.getElementById('downloadProgress');
+    const progressTitle = document.getElementById('downloadProgressTitle');
+    const progressBar = document.getElementById('downloadProgressBar');
+    const progressText = document.getElementById('downloadProgressText');
+    const downloadButton = document.getElementById('downloadButton');
+
+    // Ensure progress is a valid number between 0 and 100
+    progress = Math.min(Math.max(0, progress), 100);
+    if (!Number.isFinite(progress)) {
+        progress = 0;
+    }
+
+    if (progress >= 100) {
+        progressContainer.style.display = 'none';
+        downloadButton.classList.remove('hidden');
+        return;
+    }
+
+    progressContainer.style.display = 'block';
+    downloadButton.classList.add('hidden');
+    progressTitle.textContent = action;
+    progressBar.style.width = `${progress}%`;
+    progressText.textContent = `${Math.round(progress)}%`;
+}
+        async function downloadFile() {
+            const fileId = window.location.pathname.slice(1);
+            try {
+                const downloadButton = document.getElementById('downloadButton');
+                downloadButton.classList.add('hidden');
+
+                await updateDownloadProgress(0, 'Starter nedlasting...');
+
+                // Stream the download with progress
+                const response = await fetch(`/download/${fileId}`);
+                if (!response.ok) throw new Error('Nedlasting feilet');
+
+                const contentLength = +response.headers.get('Content-Length') || 0;
+                const reader = response.body.getReader();
+                const chunks = [];
+                let receivedLength = 0;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+
+                    if (done) break;
+
+                    chunks.push(value);
+                    receivedLength += value.length;
+
+                    // Download progress (0% to 40% of total progress)
+                    // Only calculate progress if contentLength is valid
+                    if (contentLength > 0) {
+                        const downloadProgress = Math.min((receivedLength / contentLength) * 40, 40);
+                        await updateDownloadProgress(
+                            downloadProgress,
+                            `Laster ned... (${Math.round((receivedLength / contentLength) * 100)}%)`
+                        );
+                    } else {
+                        await updateDownloadProgress(20, 'Laster ned...');
+                    }
+                }
+
+                // Combine downloaded chunks
+                const encryptedData = new Uint8Array(receivedLength);
+                let position = 0;
+                for (const chunk of chunks) {
+                    encryptedData.set(chunk, position);
+                    position += chunk.length;
+                }
+
+                await updateDownloadProgress(40, 'Dekrypterer...');
+
+                // Decrypt with progress updates
+                const processor = new ChunkedFileProcessor();
+                const { decrypted, metadata } = await processor.decryptFile(
+                    encryptedData,
+                    encryptionKey,
+                    async (progress, message) => {
+                        // Ensure progress is between 40 and 90
+                        const adjustedProgress = 40 + (Math.min(Math.max(0, progress), 100) * 0.5);
+                        await updateDownloadProgress(adjustedProgress, message);
+                    }
                 );
 
-                // Write header: IV + metadata length + metadata
-                const header = new Uint8Array(12 + 4 + metadataBuffer.byteLength);
-                header.set(iv, 0);
-                new DataView(header.buffer).setUint32(12, metadataBuffer.byteLength, true);
-                header.set(metadataBuffer, 16);
+                await updateDownloadProgress(90, 'Forbereder nedlasting...');
 
-                const encryptedChunksGenerator = async function* () {
-                    for await (const chunk of this.getFileChunks(file)) {
-                        yield await this.encryptChunk(key, iv, chunk);
-                    }
-                }.bind(this);
+                const blob = new Blob([decrypted], { type: metadata.contentType || 'application/octet-stream' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = metadata.filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
 
-                return {
-                    header,
-                    encryptedChunks: encryptedChunksGenerator
-                };
+                await updateDownloadProgress(100, 'Fullført!');
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('Feil: ' + error.message);
+                document.getElementById('downloadButton').classList.remove('hidden');
+                document.getElementById('downloadProgress').style.display = 'none';
             }
+        }
+
+        // Initialize WebAssembly
+        async function initWasm() {
+            const go = new Go();
+            const result = await WebAssembly.instantiateStreaming(
+                fetch("/encryption.wasm"),
+                go.importObject
+            );
+            go.run(result.instance);
+            wasmInstance = window.goEncryption;
+        }
+
+        async function generateKey() {
+            const key = wasmInstance.generateKey();
+            window.location.hash = `key=${key}`;
+            return key;
         }
 
         function formatFileSize(bytes) {
@@ -381,47 +637,6 @@
             return `${size.toFixed(2)} ${units[unitIndex]}`;
         }
 
-        async function generateKey() {
-            const key = await window.crypto.subtle.generateKey(
-                { name: "AES-GCM", length: 256 },
-                true,
-                ["encrypt", "decrypt"]
-            );
-            const exportedKey = await window.crypto.subtle.exportKey("raw", key);
-            const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
-            window.location.hash = `key=${keyBase64}`;
-            return keyBase64;
-        }
-
-        async function importKey(keyBase64) {
-            try {
-                const decodedKey = atob(keyBase64);
-                const keyBytes = new Uint8Array(decodedKey.length);
-                for (let i = 0; i < decodedKey.length; i++) {
-                    keyBytes[i] = decodedKey.charCodeAt(i);
-                }
-                return window.crypto.subtle.importKey(
-                    "raw",
-                    keyBytes,
-                    { name: "AES-GCM", length: 256 },
-                    false,
-                    ["encrypt", "decrypt"]
-                );
-            } catch (error) {
-                throw new Error('Invalid encryption key format');
-            }
-        }
-
-        function showFileInfo(file) {
-            const fileInfo = document.getElementById('fileInfo');
-            const fileNameInfo = document.getElementById('fileNameInfo');
-            const fileSizeInfo = document.getElementById('fileSizeInfo');
-
-            fileNameInfo.textContent = `Filnavn: ${file.name}`;
-            fileSizeInfo.textContent = `Størrelse: ${formatFileSize(file.size)}`;
-            fileInfo.style.display = 'block';
-        }
-
         async function updateProgress(progress, action) {
             if (progress >= 100) {
                 document.getElementById('progressContainer').style.display = 'none';
@@ -432,6 +647,16 @@
             document.getElementById('progressTitle').textContent = action;
             document.getElementById('progressBar').style.width = `${progress}%`;
             document.getElementById('progressText').textContent = `${Math.round(progress)}%`;
+        }
+
+        function showFileInfo(file) {
+            const fileInfo = document.getElementById('fileInfo');
+            const fileNameInfo = document.getElementById('fileNameInfo');
+            const fileSizeInfo = document.getElementById('fileSizeInfo');
+
+            fileNameInfo.textContent = `Filnavn: ${file.name}`;
+            fileSizeInfo.textContent = `Størrelse: ${formatFileSize(file.size)}`;
+            fileInfo.style.display = 'block';
         }
 
         function copyUrl() {
@@ -447,7 +672,7 @@
             if (!file) return;
 
             if (file.size > maxFileSize) {
-                alert('Filen er for stor! Maksimal størrelse er 5GB');
+                alert('Filen er for stor! Maksimal størrelse er 1GB');
                 return;
             }
 
@@ -456,24 +681,15 @@
 
             try {
                 const processor = new ChunkedFileProcessor();
-                const key = await importKey(encryptionKey || await generateKey());
+                const key = encryptionKey || await generateKey();
 
-                updateProgress(0, 'Krypterer...');
-                const { header, encryptedChunks } = await processor.encryptFile(file, key);
+                await updateProgress(0, 'Krypterer...');
+                const { header, encryptedContent } = await processor.encryptFile(file, key);
 
-                const chunks = [];
-                chunks.push(header);
-
-                let processedSize = 0;
-                for await (const chunk of encryptedChunks()) {
-                    chunks.push(chunk);
-                    processedSize += chunk.byteLength;
-                    updateProgress((processedSize / file.size) * 50, 'Krypterer...');
-                }
-
-                updateProgress(50, 'Laster opp...');
+                await updateProgress(50, 'Laster opp...');
                 const formData = new FormData();
-                formData.append('file', new Blob(chunks), 'encrypted_container');
+                const blob = new Blob([header, encryptedContent]);
+                formData.append('file', blob, 'encrypted_container');
 
                 const xhr = new XMLHttpRequest();
                 xhr.upload.onprogress = (event) => {
@@ -496,7 +712,7 @@
                 if (!response.ok) throw new Error('Opplasting feilet');
 
                 const result = await response.json();
-                updateProgress(100, 'Fullført!');
+                await updateProgress(100, 'Fullført!');
 
                 const url = `${window.location.origin}/${result.id}${window.location.hash}`;
                 window.history.replaceState(null, '', url);
@@ -508,95 +724,9 @@
             }
         }
 
-        async function decryptMetadata(encryptedData) {
-            try {
-                if (!encryptionKey) {
-                    throw new Error('Mangler dekrypteringsnøkkel');
-                }
-
-                const key = await importKey(encryptionKey);
-                const dataArray = new Uint8Array(encryptedData);
-
-                const iv = dataArray.slice(0, 12);
-                const metadataLength = new DataView(dataArray.buffer).getUint32(12, true);
-
-                if (dataArray.length < 16 + metadataLength) {
-                    throw new Error('Ufullstendig metadata');
-                }
-
-                const encryptedMetadata = dataArray.slice(16, 16 + metadataLength);
-                const metadataBuffer = await window.crypto.subtle.decrypt(
-                    { name: "AES-GCM", iv },
-                    key,
-                    encryptedMetadata
-                );
-
-                return JSON.parse(new TextDecoder().decode(metadataBuffer));
-            } catch (error) {
-                console.error('Metadata decryption error:', error);
-                throw new Error('Kunne ikke dekryptere metadata: ' + error.message);
-            }
-        }
-
-        async function downloadFile() {
-            const fileId = window.location.pathname.slice(1);
-            const processor = new ChunkedFileProcessor();
-
-            try {
-                updateProgress(0, 'Laster ned...');
-                const response = await fetch(`/download/${fileId}`);
-                if (!response.ok) throw new Error('Nedlasting feilet');
-
-                const reader = response.body.getReader();
-                const contentLength = +response.headers.get('Content-Length');
-                const chunks = [];
-                let receivedLength = 0;
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    chunks.push(value);
-                    receivedLength += value.length;
-                    const downloadProgress = (receivedLength / contentLength) * 50;
-                    updateProgress(downloadProgress, 'Laster ned...');
-                }
-
-                const encryptedData = new Uint8Array(receivedLength);
-                let position = 0;
-                for (const chunk of chunks) {
-                    encryptedData.set(chunk, position);
-                    position += chunk.length;
-                }
-
-                const iv = encryptedData.slice(0, 12);
-                const metadataLength = new DataView(encryptedData.buffer).getUint32(12, true);
-                const metadata = await decryptMetadata(encryptedData);
-                const key = await importKey(encryptionKey);
-                const contentStartPos = 16 + metadataLength;
-                const encryptedContent = encryptedData.slice(contentStartPos);
-                const decryptedContent = await processor.decryptChunk(key, iv, encryptedContent);
-                updateProgress(75, 'Dekrypterer...');
-
-                const blob = new Blob([decryptedContent], { type: metadata.contentType });
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = metadata.filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
-
-                updateProgress(100, 'Fullført!');
-            } catch (error) {
-                console.error('Download error:', error);
-                alert('Feil: ' + error.message);
-            }
-        }
 
         async function fetchFileMetadata() {
-            if (!window.location.pathname.length > 1) return;
+            if (!(window.location.pathname.length > 1)) return;
 
             const fileId = window.location.pathname.slice(1);
             try {
@@ -610,7 +740,7 @@
                 }
 
                 try {
-                    const metadata = await decryptMetadata(encryptedData);
+                    const metadata = await wasmInstance.decryptMetadata(encryptionKey, new Uint8Array(encryptedData));
                     document.getElementById('downloadFileName').textContent = `Fil: ${metadata.filename}`;
                 } catch (error) {
                     document.getElementById('downloadFileName').textContent = 'Kunne ikke dekryptere filinformasjon';
@@ -624,12 +754,14 @@
             const fileInput = document.getElementById('fileInput');
             if (!fileInput.files.length) {
                 fileInput.click();
+                return;
             }
             uploadFile();
         }
 
         // Initialize application
-        window.onload = function () {
+        window.onload = async function () {
+            await initWasm();
             const urlParams = new URLSearchParams(window.location.hash.slice(1));
             encryptionKey = urlParams.get('key');
 
@@ -638,7 +770,7 @@
                 document.getElementById('downloadContainer').style.display = 'block';
                 fetchFileMetadata();
             }
-        }
+        };
 
         // Add event listeners
         document.getElementById('fileInput').addEventListener('change', function (e) {
@@ -649,6 +781,7 @@
             }
         });
     </script>
+
 </body>
 
 </html>
