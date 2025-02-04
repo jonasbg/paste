@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Secure File Sharing</title>
     <style>
@@ -196,329 +197,389 @@
         }
     </style>
 </head>
+
 <body>
     <header class="header">
-      <span class="h-15 sm:h-15 md:h-2" aria-hidden="true">
-        <svg style="max-width: 25vw;" width="1918" height="25" viewBox="0 0 1918 166" fill="#015945" xmlns="http://www.w3.org/2000/svg" class="fill-current h-full w-auto max-w-full my-auto">
-      <title>Forsiden til Norsk Helsenett</title>
-      <path d="M270.55 12.1301C262.784 4.36501 252.252 0.00268555 241.27 0.00268555C230.288 0.00268555 219.756 4.36501 211.99 12.1301L154.05 70.0701C161.545 62.1949 165.64 51.6871 165.451 40.8172C165.262 29.9474 160.804 19.5882 153.041 11.9781C145.277 4.36804 134.831 0.118062 123.959 0.146497C113.088 0.174932 102.664 4.4795 94.94 12.1301L12.13 94.9401C4.3658 102.704 0.00390625 113.235 0.00390625 124.215C0.00390625 135.195 4.3658 145.726 12.13 153.49C19.8942 161.254 30.4248 165.616 41.405 165.616C52.3853 165.616 62.9158 161.254 70.68 153.49L128.63 95.5501C121.135 103.425 117.04 113.933 117.229 124.803C117.418 135.673 121.876 146.032 129.639 153.642C137.403 161.252 147.849 165.502 158.721 165.474C169.592 165.445 180.016 161.141 187.74 153.49L270.55 70.6801C274.395 66.8357 277.444 62.2717 279.525 57.2487C281.606 52.2257 282.677 46.842 282.677 41.4051C282.677 35.9682 281.606 30.5845 279.525 25.5615C277.444 20.5385 274.395 15.9745 270.55 12.1301Z"></path>
-      <path d="M506 51.9201V3.58008H529V162.93H501.54L452.54 85.7201C438.18 63.3401 427.803 46.2567 421.41 34.4701C422.01 52.2234 422.31 78.9301 422.31 114.59V162.93H399V3.58008H426.53L475.8 80.8001C489.08 101.833 499.45 118.99 506.91 132.27C506.303 114.37 506 87.5867 506 51.9201Z"></path>
-      <path d="M648.8 149.06C638.213 160.1 624.413 165.62 607.4 165.62C590.387 165.62 576.587 160.1 566 149.06C555.413 138.02 550.117 123.397 550.11 105.19C550.11 86.8434 555.407 72.1467 566 61.1C576.453 50.2133 590.257 44.7667 607.41 44.76C624.563 44.7533 638.36 50.2 648.8 61.1C659.253 71.9867 664.477 86.6834 664.47 105.19C664.47 123.543 659.247 138.167 648.8 149.06ZM582.56 135.4C588.667 142.733 596.947 146.4 607.4 146.4C617.853 146.4 626.097 142.733 632.13 135.4C638.17 128.067 641.193 117.997 641.2 105.19C641.207 92.3834 638.183 82.32 632.13 75C626.09 67.6667 617.847 64 607.4 64C596.953 64 588.673 67.6667 582.56 75C576.44 82.3334 573.38 92.4034 573.38 105.21C573.38 118.017 576.44 128.08 582.56 135.4Z"></path>
-      <path d="M741.68 45.66C743.846 45.6124 746.012 45.6859 748.17 45.88V67.14H742.58C731.087 67.14 722.207 69.9767 715.94 75.65C709.673 81.3234 706.543 89.53 706.55 100.27V162.93H684.16V47.45H705.65V68C712.963 53.1067 724.973 45.66 741.68 45.66Z"></path>
-      <path d="M803.45 165.84C771.37 165.84 754.51 152.637 752.87 126.23H775.25C776.15 134.29 778.763 139.957 783.09 143.23C787.417 146.503 794.28 148.143 803.68 148.15C820.693 148.15 829.197 142.78 829.19 132.04C829.279 129.941 828.832 127.855 827.893 125.976C826.954 124.097 825.552 122.488 823.82 121.3C820.24 118.76 813.823 116.67 804.57 115.03L792.71 112.79C768.237 108.317 756 96.83 756 78.33C756 68.0433 759.953 59.8767 767.86 53.83C775.767 47.7833 786.657 44.76 800.53 44.76C832.323 44.76 848.587 57.6667 849.32 83.48H827.62C827.207 75.72 824.82 70.2267 820.46 67C816.1 63.7733 809.46 62.17 800.54 62.19C793.38 62.19 787.86 63.5233 783.98 66.19C782.113 67.4323 780.597 69.1349 779.579 71.1335C778.562 73.1321 778.076 75.3592 778.17 77.6C778.082 79.6275 778.506 81.6445 779.405 83.4642C780.303 85.2839 781.647 86.8475 783.31 88.01C786.743 90.47 792.19 92.4467 799.65 93.94L811.74 95.94C825.913 98.6467 836.133 102.7 842.4 108.1C848.667 113.5 851.8 120.96 851.8 130.48C851.8 141.667 847.547 150.36 839.04 156.56C830.533 162.76 818.67 165.853 803.45 165.84Z"></path>
-      <path d="M972.2 162.93H946.46L909.76 104.52L890.51 123.32V162.93H868.36V3.58008H890.51V97.5801L941.32 47.4501H969.32L925.65 90.0001L972.2 162.93Z"></path>
-      <path d="M1088.58 44.7601C1101.25 44.7601 1111.17 48.3034 1118.35 55.3901C1125.53 62.4767 1129.11 72.5101 1129.09 85.4901V162.93H1106.71V88.6301C1106.71 72.5101 1098.58 64.4534 1082.31 64.4601C1074.85 64.4601 1068.14 67.2934 1062.17 72.9601C1056.17 78.7801 1053.17 87.0601 1053.17 97.8001V162.93H1030.79V3.58008H1053.17V63.3401C1062 50.9601 1073.81 44.7667 1088.58 44.7601Z"></path>
-      <path d="M1258.67 106.09V112.58H1171.61C1172.65 123.913 1176.01 132.453 1181.68 138.2C1187.35 143.947 1195.04 146.82 1204.74 146.82C1219.36 146.82 1228.91 140.403 1233.38 127.57H1256C1252.86 139.363 1246.78 148.653 1237.76 155.44C1228.74 162.227 1217.59 165.62 1204.3 165.62C1187.74 165.62 1174.39 160.1 1164.24 149.06C1154.09 138.02 1149.01 123.397 1149 105.19C1149 86.99 1154.07 72.3667 1164.22 61.32C1174.37 50.2733 1187.57 44.7533 1203.83 44.76C1220.84 44.76 1234.27 50.5067 1244.12 62C1253.82 73.4867 1258.67 88.1833 1258.67 106.09ZM1203.84 63.56C1195.04 63.56 1187.84 66.2467 1182.24 71.62C1176.64 76.9934 1173.17 84.7534 1171.84 94.9H1235.62C1234.58 85.4867 1231.25 77.9133 1225.62 72.18C1219.99 66.4467 1212.73 63.5734 1203.84 63.56Z"></path>
-      <path d="M1301 162.93H1278.62V3.58008H1301V162.93Z"></path>
-      <path d="M1368.78 165.84C1336.7 165.84 1319.84 152.637 1318.2 126.23H1340.58C1341.48 134.29 1344.09 139.957 1348.42 143.23C1352.75 146.503 1359.61 148.143 1369.01 148.15C1386.02 148.15 1394.53 142.78 1394.52 132.04C1394.61 129.941 1394.16 127.855 1393.22 125.976C1392.28 124.097 1390.88 122.488 1389.15 121.3C1385.57 118.76 1379.15 116.67 1369.9 115.03L1358 112.8C1333.53 108.32 1321.3 96.83 1321.29 78.33C1321.29 68.0433 1325.25 59.8767 1333.16 53.83C1341.07 47.7833 1351.96 44.76 1365.83 44.76C1397.62 44.76 1413.89 57.6667 1414.62 83.48H1393C1392.56 75.72 1390.17 70.2367 1385.84 67.03C1381.51 63.8233 1374.87 62.22 1365.92 62.22C1358.76 62.22 1353.24 63.5533 1349.36 66.22C1347.49 67.4618 1345.97 69.164 1344.96 71.1625C1343.94 73.161 1343.45 75.3884 1343.54 77.63C1343.45 79.6583 1343.88 81.6756 1344.78 83.4952C1345.68 85.3148 1347.03 86.8779 1348.69 88.04C1352.12 90.5 1357.56 92.4767 1365.03 93.97L1377.11 95.97C1391.29 98.6367 1401.51 102.667 1407.77 108.06C1414.03 113.453 1417.17 120.913 1417.18 130.44C1417.18 141.627 1412.93 150.32 1404.42 156.52C1395.91 162.72 1384.03 165.827 1368.78 165.84Z"></path>
-      <path d="M1538 106.09V112.58H1450.94C1451.98 123.913 1455.34 132.453 1461.01 138.2C1466.68 143.947 1474.35 146.82 1484.01 146.82C1498.63 146.82 1508.18 140.403 1512.66 127.57H1535.26C1532.13 139.363 1526.05 148.653 1517.02 155.44C1507.99 162.227 1496.83 165.62 1483.56 165.62C1467 165.62 1453.65 160.1 1443.5 149.06C1433.35 138.02 1428.28 123.397 1428.28 105.19C1428.28 86.99 1433.35 72.3667 1443.5 61.32C1453.65 50.2733 1466.85 44.7533 1483.12 44.76C1500.13 44.76 1513.55 50.5067 1523.4 62C1533.13 73.4867 1538 88.1833 1538 106.09ZM1483.17 63.56C1474.36 63.56 1467.16 66.2467 1461.57 71.62C1455.98 76.9934 1452.51 84.7534 1451.14 94.9H1514.93C1513.88 85.4867 1510.54 77.9133 1504.93 72.18C1499.32 66.4467 1492.06 63.5734 1483.15 63.56H1483.17Z"></path>
-      <path d="M1615.64 44.76C1628.31 44.76 1638.23 48.3033 1645.4 55.39C1652.57 62.4767 1656.16 72.51 1656.15 85.49V162.93H1633.77V88.63C1633.77 72.51 1625.64 64.4533 1609.37 64.46C1601.91 64.46 1595.2 67.2933 1589.23 72.96C1583.23 78.78 1580.23 87.06 1580.23 97.8V162.93H1557.9V47.45H1579.38V64.68C1588.18 51.4 1600.27 44.76 1615.64 44.76Z"></path>
-      <path d="M1785.73 106.09V112.58H1698.67C1699.71 123.913 1703.07 132.453 1708.74 138.2C1714.41 143.947 1722.08 146.82 1731.74 146.82C1746.36 146.82 1755.91 140.403 1760.39 127.57H1783C1779.87 139.363 1773.79 148.653 1764.76 155.44C1755.73 162.227 1744.57 165.62 1731.3 165.62C1714.74 165.62 1701.39 160.1 1691.24 149.06C1681.09 138.02 1676.02 123.397 1676.02 105.19C1676.02 86.99 1681.09 72.3667 1691.24 61.32C1701.39 50.2733 1714.59 44.7533 1730.86 44.76C1747.87 44.76 1761.29 50.5067 1771.14 62C1780.87 73.4867 1785.73 88.1833 1785.73 106.09ZM1730.9 63.56C1722.09 63.56 1714.89 66.2467 1709.3 71.62C1703.71 76.9934 1700.24 84.7534 1698.89 94.9H1762.68C1761.63 85.4867 1758.29 77.9133 1752.68 72.18C1747.07 66.4467 1739.81 63.5734 1730.9 63.56Z"></path>
-      <path d="M1918 65.8001V47.4501H1894.72V14.3301H1872.34V47.4501H1830.94V14.3301H1808.56V47.4501H1790V65.8001H1808.58V137.19C1808.58 146.45 1811.19 153.167 1816.41 157.34C1821.63 161.513 1829.69 163.6 1840.58 163.6C1844.76 163.6 1849.31 163.377 1854.24 162.93V145H1844.16C1839.39 145 1835.99 144.217 1833.98 142.65C1831.97 141.083 1830.97 138.583 1830.98 135.15V65.8001H1872.38V137.19C1872.38 146.45 1874.99 153.167 1880.22 157.34C1885.45 161.513 1893.5 163.6 1904.39 163.6C1908.56 163.6 1913.12 163.38 1918.04 162.93V145H1907.97C1903.19 145 1899.8 144.217 1897.79 142.65C1895.78 141.083 1894.78 138.583 1894.79 135.15V65.8001H1918Z"></path>
-    </svg>
-      </span>
+        <span class="h-15 sm:h-15 md:h-2" aria-hidden="true">
+            <svg style="max-width: 25vw;" width="1918" height="25" viewBox="0 0 1918 166" fill="#015945"
+                xmlns="http://www.w3.org/2000/svg" class="fill-current h-full w-auto max-w-full my-auto">
+                <title>Forsiden til Norsk Helsenett</title>
+                <path
+                    d="M270.55 12.1301C262.784 4.36501 252.252 0.00268555 241.27 0.00268555C230.288 0.00268555 219.756 4.36501 211.99 12.1301L154.05 70.0701C161.545 62.1949 165.64 51.6871 165.451 40.8172C165.262 29.9474 160.804 19.5882 153.041 11.9781C145.277 4.36804 134.831 0.118062 123.959 0.146497C113.088 0.174932 102.664 4.4795 94.94 12.1301L12.13 94.9401C4.3658 102.704 0.00390625 113.235 0.00390625 124.215C0.00390625 135.195 4.3658 145.726 12.13 153.49C19.8942 161.254 30.4248 165.616 41.405 165.616C52.3853 165.616 62.9158 161.254 70.68 153.49L128.63 95.5501C121.135 103.425 117.04 113.933 117.229 124.803C117.418 135.673 121.876 146.032 129.639 153.642C137.403 161.252 147.849 165.502 158.721 165.474C169.592 165.445 180.016 161.141 187.74 153.49L270.55 70.6801C274.395 66.8357 277.444 62.2717 279.525 57.2487C281.606 52.2257 282.677 46.842 282.677 41.4051C282.677 35.9682 281.606 30.5845 279.525 25.5615C277.444 20.5385 274.395 15.9745 270.55 12.1301Z">
+                </path>
+                <path
+                    d="M506 51.9201V3.58008H529V162.93H501.54L452.54 85.7201C438.18 63.3401 427.803 46.2567 421.41 34.4701C422.01 52.2234 422.31 78.9301 422.31 114.59V162.93H399V3.58008H426.53L475.8 80.8001C489.08 101.833 499.45 118.99 506.91 132.27C506.303 114.37 506 87.5867 506 51.9201Z">
+                </path>
+                <path
+                    d="M648.8 149.06C638.213 160.1 624.413 165.62 607.4 165.62C590.387 165.62 576.587 160.1 566 149.06C555.413 138.02 550.117 123.397 550.11 105.19C550.11 86.8434 555.407 72.1467 566 61.1C576.453 50.2133 590.257 44.7667 607.41 44.76C624.563 44.7533 638.36 50.2 648.8 61.1C659.253 71.9867 664.477 86.6834 664.47 105.19C664.47 123.543 659.247 138.167 648.8 149.06ZM582.56 135.4C588.667 142.733 596.947 146.4 607.4 146.4C617.853 146.4 626.097 142.733 632.13 135.4C638.17 128.067 641.193 117.997 641.2 105.19C641.207 92.3834 638.183 82.32 632.13 75C626.09 67.6667 617.847 64 607.4 64C596.953 64 588.673 67.6667 582.56 75C576.44 82.3334 573.38 92.4034 573.38 105.21C573.38 118.017 576.44 128.08 582.56 135.4Z">
+                </path>
+                <path
+                    d="M741.68 45.66C743.846 45.6124 746.012 45.6859 748.17 45.88V67.14H742.58C731.087 67.14 722.207 69.9767 715.94 75.65C709.673 81.3234 706.543 89.53 706.55 100.27V162.93H684.16V47.45H705.65V68C712.963 53.1067 724.973 45.66 741.68 45.66Z">
+                </path>
+                <path
+                    d="M803.45 165.84C771.37 165.84 754.51 152.637 752.87 126.23H775.25C776.15 134.29 778.763 139.957 783.09 143.23C787.417 146.503 794.28 148.143 803.68 148.15C820.693 148.15 829.197 142.78 829.19 132.04C829.279 129.941 828.832 127.855 827.893 125.976C826.954 124.097 825.552 122.488 823.82 121.3C820.24 118.76 813.823 116.67 804.57 115.03L792.71 112.79C768.237 108.317 756 96.83 756 78.33C756 68.0433 759.953 59.8767 767.86 53.83C775.767 47.7833 786.657 44.76 800.53 44.76C832.323 44.76 848.587 57.6667 849.32 83.48H827.62C827.207 75.72 824.82 70.2267 820.46 67C816.1 63.7733 809.46 62.17 800.54 62.19C793.38 62.19 787.86 63.5233 783.98 66.19C782.113 67.4323 780.597 69.1349 779.579 71.1335C778.562 73.1321 778.076 75.3592 778.17 77.6C778.082 79.6275 778.506 81.6445 779.405 83.4642C780.303 85.2839 781.647 86.8475 783.31 88.01C786.743 90.47 792.19 92.4467 799.65 93.94L811.74 95.94C825.913 98.6467 836.133 102.7 842.4 108.1C848.667 113.5 851.8 120.96 851.8 130.48C851.8 141.667 847.547 150.36 839.04 156.56C830.533 162.76 818.67 165.853 803.45 165.84Z">
+                </path>
+                <path
+                    d="M972.2 162.93H946.46L909.76 104.52L890.51 123.32V162.93H868.36V3.58008H890.51V97.5801L941.32 47.4501H969.32L925.65 90.0001L972.2 162.93Z">
+                </path>
+                <path
+                    d="M1088.58 44.7601C1101.25 44.7601 1111.17 48.3034 1118.35 55.3901C1125.53 62.4767 1129.11 72.5101 1129.09 85.4901V162.93H1106.71V88.6301C1106.71 72.5101 1098.58 64.4534 1082.31 64.4601C1074.85 64.4601 1068.14 67.2934 1062.17 72.9601C1056.17 78.7801 1053.17 87.0601 1053.17 97.8001V162.93H1030.79V3.58008H1053.17V63.3401C1062 50.9601 1073.81 44.7667 1088.58 44.7601Z">
+                </path>
+                <path
+                    d="M1258.67 106.09V112.58H1171.61C1172.65 123.913 1176.01 132.453 1181.68 138.2C1187.35 143.947 1195.04 146.82 1204.74 146.82C1219.36 146.82 1228.91 140.403 1233.38 127.57H1256C1252.86 139.363 1246.78 148.653 1237.76 155.44C1228.74 162.227 1217.59 165.62 1204.3 165.62C1187.74 165.62 1174.39 160.1 1164.24 149.06C1154.09 138.02 1149.01 123.397 1149 105.19C1149 86.99 1154.07 72.3667 1164.22 61.32C1174.37 50.2733 1187.57 44.7533 1203.83 44.76C1220.84 44.76 1234.27 50.5067 1244.12 62C1253.82 73.4867 1258.67 88.1833 1258.67 106.09ZM1203.84 63.56C1195.04 63.56 1187.84 66.2467 1182.24 71.62C1176.64 76.9934 1173.17 84.7534 1171.84 94.9H1235.62C1234.58 85.4867 1231.25 77.9133 1225.62 72.18C1219.99 66.4467 1212.73 63.5734 1203.84 63.56Z">
+                </path>
+                <path d="M1301 162.93H1278.62V3.58008H1301V162.93Z"></path>
+                <path
+                    d="M1368.78 165.84C1336.7 165.84 1319.84 152.637 1318.2 126.23H1340.58C1341.48 134.29 1344.09 139.957 1348.42 143.23C1352.75 146.503 1359.61 148.143 1369.01 148.15C1386.02 148.15 1394.53 142.78 1394.52 132.04C1394.61 129.941 1394.16 127.855 1393.22 125.976C1392.28 124.097 1390.88 122.488 1389.15 121.3C1385.57 118.76 1379.15 116.67 1369.9 115.03L1358 112.8C1333.53 108.32 1321.3 96.83 1321.29 78.33C1321.29 68.0433 1325.25 59.8767 1333.16 53.83C1341.07 47.7833 1351.96 44.76 1365.83 44.76C1397.62 44.76 1413.89 57.6667 1414.62 83.48H1393C1392.56 75.72 1390.17 70.2367 1385.84 67.03C1381.51 63.8233 1374.87 62.22 1365.92 62.22C1358.76 62.22 1353.24 63.5533 1349.36 66.22C1347.49 67.4618 1345.97 69.164 1344.96 71.1625C1343.94 73.161 1343.45 75.3884 1343.54 77.63C1343.45 79.6583 1343.88 81.6756 1344.78 83.4952C1345.68 85.3148 1347.03 86.8779 1348.69 88.04C1352.12 90.5 1357.56 92.4767 1365.03 93.97L1377.11 95.97C1391.29 98.6367 1401.51 102.667 1407.77 108.06C1414.03 113.453 1417.17 120.913 1417.18 130.44C1417.18 141.627 1412.93 150.32 1404.42 156.52C1395.91 162.72 1384.03 165.827 1368.78 165.84Z">
+                </path>
+                <path
+                    d="M1538 106.09V112.58H1450.94C1451.98 123.913 1455.34 132.453 1461.01 138.2C1466.68 143.947 1474.35 146.82 1484.01 146.82C1498.63 146.82 1508.18 140.403 1512.66 127.57H1535.26C1532.13 139.363 1526.05 148.653 1517.02 155.44C1507.99 162.227 1496.83 165.62 1483.56 165.62C1467 165.62 1453.65 160.1 1443.5 149.06C1433.35 138.02 1428.28 123.397 1428.28 105.19C1428.28 86.99 1433.35 72.3667 1443.5 61.32C1453.65 50.2733 1466.85 44.7533 1483.12 44.76C1500.13 44.76 1513.55 50.5067 1523.4 62C1533.13 73.4867 1538 88.1833 1538 106.09ZM1483.17 63.56C1474.36 63.56 1467.16 66.2467 1461.57 71.62C1455.98 76.9934 1452.51 84.7534 1451.14 94.9H1514.93C1513.88 85.4867 1510.54 77.9133 1504.93 72.18C1499.32 66.4467 1492.06 63.5734 1483.15 63.56H1483.17Z">
+                </path>
+                <path
+                    d="M1615.64 44.76C1628.31 44.76 1638.23 48.3033 1645.4 55.39C1652.57 62.4767 1656.16 72.51 1656.15 85.49V162.93H1633.77V88.63C1633.77 72.51 1625.64 64.4533 1609.37 64.46C1601.91 64.46 1595.2 67.2933 1589.23 72.96C1583.23 78.78 1580.23 87.06 1580.23 97.8V162.93H1557.9V47.45H1579.38V64.68C1588.18 51.4 1600.27 44.76 1615.64 44.76Z">
+                </path>
+                <path
+                    d="M1785.73 106.09V112.58H1698.67C1699.71 123.913 1703.07 132.453 1708.74 138.2C1714.41 143.947 1722.08 146.82 1731.74 146.82C1746.36 146.82 1755.91 140.403 1760.39 127.57H1783C1779.87 139.363 1773.79 148.653 1764.76 155.44C1755.73 162.227 1744.57 165.62 1731.3 165.62C1714.74 165.62 1701.39 160.1 1691.24 149.06C1681.09 138.02 1676.02 123.397 1676.02 105.19C1676.02 86.99 1681.09 72.3667 1691.24 61.32C1701.39 50.2733 1714.59 44.7533 1730.86 44.76C1747.87 44.76 1761.29 50.5067 1771.14 62C1780.87 73.4867 1785.73 88.1833 1785.73 106.09ZM1730.9 63.56C1722.09 63.56 1714.89 66.2467 1709.3 71.62C1703.71 76.9934 1700.24 84.7534 1698.89 94.9H1762.68C1761.63 85.4867 1758.29 77.9133 1752.68 72.18C1747.07 66.4467 1739.81 63.5734 1730.9 63.56Z">
+                </path>
+                <path
+                    d="M1918 65.8001V47.4501H1894.72V14.3301H1872.34V47.4501H1830.94V14.3301H1808.56V47.4501H1790V65.8001H1808.58V137.19C1808.58 146.45 1811.19 153.167 1816.41 157.34C1821.63 161.513 1829.69 163.6 1840.58 163.6C1844.76 163.6 1849.31 163.377 1854.24 162.93V145H1844.16C1839.39 145 1835.99 144.217 1833.98 142.65C1831.97 141.083 1830.97 138.583 1830.98 135.15V65.8001H1872.38V137.19C1872.38 146.45 1874.99 153.167 1880.22 157.34C1885.45 161.513 1893.5 163.6 1904.39 163.6C1908.56 163.6 1913.12 163.38 1918.04 162.93V145H1907.97C1903.19 145 1899.8 144.217 1897.79 142.65C1895.78 141.083 1894.78 138.583 1894.79 135.15V65.8001H1918Z">
+                </path>
+            </svg>
+        </span>
     </header>
 
     <div class="container">
-      <div class="upload-section" id="uploadSection">
-          <h1>Vi <span>deler</span> filer sikkert</h1>
-          <p class="description">
-              Del filer sikkert med ende-til-ende-kryptering. Filene krypteres i nettleseren din før de lastes opp, og dekrypteres først når mottakeren laster dem ned.
-          </p>
+        <div class="upload-section" id="uploadSection">
+            <h1>Vi <span>deler</span> filer sikkert</h1>
+            <p class="description">
+                Del filer sikkert med ende-til-ende-kryptering. Filene krypteres i nettleseren din før de lastes opp, og
+                dekrypteres først når mottakeren laster dem ned.
+            </p>
 
-          <div class="file-input-container" id="file-input-container">
-              <input type="file" id="fileInput" class="file-input" hidden/>
-              <button class="button" onclick="handleUpload()" id="uploadButton">Last opp</button>
-              <div class="selected-file" id="selectedFile"></div>
-          </div>
+            <div class="file-input-container" id="file-input-container">
+                <input type="file" id="fileInput" class="file-input" hidden />
+                <button class="button" onclick="handleUpload()" id="uploadButton">Last opp</button>
+                <div class="selected-file" id="selectedFile"></div>
+            </div>
 
-          <div class="file-info" id="fileInfo" style="display: none;">
-              <div class="progress-title">Filinformasjon</div>
-              <div class="file-info-item" id="fileNameInfo"></div>
-              <div class="file-info-item" id="fileSizeInfo"></div>
-          </div>
-          
-          <div class="progress-container" id="progressContainer">
-              <div class="progress-title" id="progressTitle">Fremgang</div>
-              <div class="progress-bar">
-                  <div class="progress" id="progressBar"></div>
-              </div>
-              <div class="progress-text" id="progressText">0%</div>
-          </div>
+            <div class="file-info" id="fileInfo" style="display: none;">
+                <div class="progress-title">Filinformasjon</div>
+                <div class="file-info-item" id="fileNameInfo"></div>
+                <div class="file-info-item" id="fileSizeInfo"></div>
+            </div>
 
-          <div class="url-container" id="urlContainer">
-              <input type="text" class="url-field" id="urlField" readonly>
-              <button class="button" onclick="copyUrl()">Kopier lenke</button>
-          </div>
-      </div>
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-title" id="progressTitle">Fremgang</div>
+                <div class="progress-bar">
+                    <div class="progress" id="progressBar"></div>
+                </div>
+                <div class="progress-text" id="progressText">0%</div>
+            </div>
 
-      <div class="download-container" id="downloadContainer">
-          <div class="progress-title">Last ned fil</div>
-          <div class="file-info">
-              <div class="file-info-item" id="downloadFileName">Henter filinformasjon...</div>
-          </div>
-          <button class="button" onclick="downloadFile()" id="downloadButton">Last ned</button>
-      </div>
-  </div>
-</div>
+            <div class="url-container" id="urlContainer">
+                <input type="text" class="url-field" id="urlField" readonly>
+                <button class="button" onclick="copyUrl()">Kopier lenke</button>
+            </div>
+        </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    <script>
-      const maxFileSize = 5 * 1024 * 1024 * 1024; // 5GB in bytes
-      let encryptionKey = null;
+        <div class="download-container" id="downloadContainer">
+            <div class="progress-title">Last ned fil</div>
+            <div class="file-info">
+                <div class="file-info-item" id="downloadFileName">Henter filinformasjon...</div>
+            </div>
+            <button class="button" onclick="downloadFile()" id="downloadButton">Last ned</button>
+        </div>
+    </div>
+    </div>
 
-      // Format file size in human readable format
-      function formatFileSize(bytes) {
-          const units = ['B', 'KB', 'MB', 'GB'];
-          let size = bytes;
-          let unitIndex = 0;
-          while (size >= 1024 && unitIndex < units.length - 1) {
-              size /= 1024;
-              unitIndex++;
-          }
-          return `${size.toFixed(2)} ${units[unitIndex]}`;
-      }
+<script>
+    const maxFileSize = 5 * 1024 * 1024 * 1024; // 5GB in bytes
+let encryptionKey = null;
 
-      async function fetchFileMetadata() {
-        if (!window.location.pathname.length > 1) return;
-        
-        const fileId = window.location.pathname.slice(1);
+// Format file size in human readable format
+function formatFileSize(bytes) {
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
+    return `${size.toFixed(2)} ${units[unitIndex]}`;
+}
+
+async function generateKey() {
+    const key = await window.crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+    );
+    const exportedKey = await window.crypto.subtle.exportKey("raw", key);
+    const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
+    window.location.hash = `key=${keyBase64}`;
+    return keyBase64;
+}
+
+async function importKey(keyBase64) {
+    try {
+        const decodedKey = atob(keyBase64);
+        const keyBytes = new Uint8Array(decodedKey.length);
+        for (let i = 0; i < decodedKey.length; i++) {
+            keyBytes[i] = decodedKey.charCodeAt(i);
+        }
+        return window.crypto.subtle.importKey(
+            "raw",
+            keyBytes,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["encrypt", "decrypt"]
+        );
+    } catch (error) {
+        throw new Error('Invalid encryption key format');
+    }
+}
+
+function showFileInfo(file) {
+    const fileInfo = document.getElementById('fileInfo');
+    const fileNameInfo = document.getElementById('fileNameInfo');
+    const fileSizeInfo = document.getElementById('fileSizeInfo');
+
+    fileNameInfo.textContent = `Filnavn: ${file.name}`;
+    fileSizeInfo.textContent = `Størrelse: ${formatFileSize(file.size)}`;
+    fileInfo.style.display = 'block';
+}
+
+async function updateProgress(progress, action) {
+    if (progress >= 100) {
+        document.getElementById('progressContainer').style.display = 'none';
+        return;
+    }
+
+    document.getElementById('progressContainer').style.display = 'block';
+    document.getElementById('progressTitle').textContent = action;
+    document.getElementById('progressBar').style.width = `${progress}%`;
+    document.getElementById('progressText').textContent = `${Math.round(progress)}%`;
+}
+
+function copyUrl() {
+    const urlField = document.getElementById('urlField');
+    urlField.select();
+    document.execCommand('copy');
+    alert('Lenke kopiert til utklippstavlen!');
+}
+
+async function encryptFile(file) {
+    const keyBase64 = encryptionKey || await generateKey();
+    const key = await importKey(keyBase64);
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+    const metadata = {
+        filename: file.name,
+        contentType: file.type
+    };
+
+    const fileBuffer = await file.arrayBuffer();
+    const metadataBuffer = new TextEncoder().encode(JSON.stringify(metadata));
+
+    const encryptedMetadata = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        metadataBuffer
+    );
+
+    const encryptedContent = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        fileBuffer
+    );
+
+    // Combine IV, encrypted metadata length, encrypted metadata and encrypted content
+    const metadataLengthBytes = new Uint8Array(4);
+    new DataView(metadataLengthBytes.buffer).setUint32(0, encryptedMetadata.byteLength, true);
+
+    const combinedBuffer = new Uint8Array(
+        iv.length +
+        metadataLengthBytes.length +
+        encryptedMetadata.byteLength +
+        encryptedContent.byteLength
+    );
+
+    let offset = 0;
+    combinedBuffer.set(iv, offset);
+    offset += iv.length;
+    combinedBuffer.set(metadataLengthBytes, offset);
+    offset += metadataLengthBytes.length;
+    combinedBuffer.set(new Uint8Array(encryptedMetadata), offset);
+    offset += encryptedMetadata.byteLength;
+    combinedBuffer.set(new Uint8Array(encryptedContent), offset);
+
+    return combinedBuffer;
+}
+
+async function decryptFile(encryptedData) {
+    if (!encryptionKey) {
+        throw new Error('No encryption key found in URL');
+    }
+
+    const key = await importKey(encryptionKey);
+    const dataArray = new Uint8Array(encryptedData);
+
+    // Extract IV and metadata length
+    const iv = dataArray.slice(0, 12);
+    const metadataLength = new DataView(dataArray.buffer).getUint32(12, true);
+
+    // Extract and decrypt metadata
+    const encryptedMetadata = dataArray.slice(16, 16 + metadataLength);
+    const metadataBuffer = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        key,
+        encryptedMetadata
+    );
+    const metadata = JSON.parse(new TextDecoder().decode(metadataBuffer));
+
+    // Extract and decrypt content
+    const encryptedContent = dataArray.slice(16 + metadataLength);
+    const content = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        key,
+        encryptedContent
+    );
+
+    return {
+        data: new Uint8Array(content),
+        filename: metadata.filename,
+        contentType: metadata.contentType
+    };
+}
+
+function handleUpload() {
+    const fileInput = document.getElementById('fileInput');
+    if (!fileInput.files.length) {
+        fileInput.click();
+    }
+    uploadFile();
+}
+
+async function uploadFile() {
+    const fileInput = document.getElementById('fileInput');
+    const file = fileInput.files[0];
+
+    if (!file) {
+        alert('Velg en fil først!');
+        return;
+    }
+
+    if (file.size > maxFileSize) {
+        alert('Filen er for stor! Maksimal størrelse er 5GB');
+        return;
+    }
+
+    document.getElementById('file-input-container').hidden = true;
+    document.getElementById('fileInfo').style.display = 'none';
+
+    try {
+        updateProgress(0, 'Krypterer...');
+        const encrypted = await encryptFile(file);
+        updateProgress(50, 'Laster opp...');
+
+        const formData = new FormData();
+        formData.append('file', new Blob([encrypted]), 'encrypted_container');
+
+        const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) throw new Error('Opplasting feilet');
+
+        const result = await response.json();
+        updateProgress(100, 'Fullført!');
+
+        const url = `${window.location.origin}/${result.id}${window.location.hash}`;
+        window.history.replaceState(null, '', url);
+        document.getElementById('urlField').value = url;
+        document.getElementById('urlContainer').style.display = 'block';
+    } catch (error) {
+        alert('Feil: ' + error.message);
+        document.getElementById('uploadButton').disabled = false;
+    }
+}
+
+async function downloadFile() {
+    const fileId = window.location.pathname.slice(1);
+
+    try {
+        updateProgress(0, 'Laster ned...');
+        const response = await fetch(`/download/${fileId}`);
+
+        if (!response.ok) throw new Error('Nedlasting feilet');
+
+        const encryptedData = await response.arrayBuffer();
+        updateProgress(50, 'Dekrypterer...');
+
+        const decrypted = await decryptFile(encryptedData);
+        updateProgress(100, 'Fullført!');
+
+        const blob = new Blob([decrypted.data], { type: decrypted.contentType });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = decrypted.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        alert('Feil: ' + error.message);
+    }
+}
+
+async function fetchFileMetadata() {
+    if (!window.location.pathname.length > 1) return;
+
+    const fileId = window.location.pathname.slice(1);
+    try {
+        const response = await fetch(`/metadata/${fileId}`);
+        if (!response.ok) throw new Error('Kunne ikke hente filinformasjon');
+
+        const encryptedData = await response.arrayBuffer();
+        if (!encryptionKey) {
+            document.getElementById('downloadFileName').textContent = 'Mangler dekrypteringsnøkkel';
+            return;
+        }
+
         try {
-            const response = await fetch(`/metadata/${fileId}`);
-            if (!response.ok) throw new Error('Kunne ikke hente filinformasjon');
-            
-            const encryptedData = await response.text();
-            if (!encryptionKey) {
-                document.getElementById('downloadFileName').textContent = 'Mangler dekrypteringsnøkkel';
-                return;
-            }
-
-            try {
-                // Decrypt only the metadata portion
-                const decrypted = CryptoJS.AES.decrypt(encryptedData, encryptionKey);
-                const textRaw = decrypted.toString(CryptoJS.enc.Utf8);
-                const jsonMatch = textRaw.match(/^{\"metadata[^}]+}/);
-                if (jsonMatch) {
-                    const metadataJson = JSON.parse(jsonMatch[0] + '}');
-                    document.getElementById('downloadFileName').textContent = `Fil: ${metadataJson.metadata.filename}`;
-                }                                
-            } catch (error) {
-                document.getElementById('downloadFileName').textContent = 'Kunne ikke dekryptere filinformasjon';
-            }
+            const decrypted = await decryptFile(encryptedData);
+            document.getElementById('downloadFileName').textContent = `Fil: ${decrypted.filename}`;
         } catch (error) {
-            document.getElementById('downloadFileName').textContent = 'Kunne ikke hente filinformasjon';
+            document.getElementById('downloadFileName').textContent = 'Kunne ikke dekryptere filinformasjon';
         }
+    } catch (error) {
+        document.getElementById('downloadFileName').textContent = 'Kunne ikke hente filinformasjon';
     }
+}
 
-      // Check for encryption key in URL and determine page mode
-      window.onload = function() {
-        const urlParams = new URLSearchParams(window.location.hash.slice(1));
-        encryptionKey = urlParams.get('key');
-        
-        if (window.location.pathname.length > 1) {
-            // We're in download mode
-            document.getElementById('uploadSection').style.display = 'none';
-            document.getElementById('downloadContainer').style.display = 'block';
-            fetchFileMetadata(); // Fetch metadata when in download mode
-        }
+// Initialize application
+window.onload = function() {
+    const urlParams = new URLSearchParams(window.location.hash.slice(1));
+    encryptionKey = urlParams.get('key');
+
+    if (window.location.pathname.length > 1) {
+        document.getElementById('uploadSection').style.display = 'none';
+        document.getElementById('downloadContainer').style.display = 'block';
+        fetchFileMetadata();
     }
+}
 
-      function showFileInfo(file) {
-          const fileInfo = document.getElementById('fileInfo');
-          const fileNameInfo = document.getElementById('fileNameInfo');
-          const fileSizeInfo = document.getElementById('fileSizeInfo');
-
-          fileNameInfo.textContent = `Filnavn: ${file.name}`;
-          fileSizeInfo.textContent = `Størrelse: ${formatFileSize(file.size)}`;
-          fileInfo.style.display = 'block';
-      }
-
-      async function updateProgress(progress, action) {
-
-        if (progress >= 100) {
-          document.getElementById('progressContainer').style.display = 'none';
-          return
-        }
-
-        document.getElementById('progressContainer').style.display = 'block';
-        document.getElementById('progressTitle').textContent = action;
-        document.getElementById('progressBar').style.width = `${progress}%`;
-        document.getElementById('progressText').textContent = `${Math.round(progress)}%`;
-      }
-
-      function copyUrl() {
-          const urlField = document.getElementById('urlField');
-          urlField.select();
-          document.execCommand('copy');
-          // Optional: Show feedback that URL was copied
-          alert('Lenke kopiert til utklippstavlen!');
-      }
-
-      function handleUpload() {
-          const fileInput = document.getElementById('fileInput');
-          if (!fileInput.files.length) {
-              fileInput.click();
-              // return; // wait for fileinput file before continuing?
-          }
-          uploadFile();
-      }
-
-      // File input change handler
-      document.getElementById('fileInput').addEventListener('change', function(e) {
-          const file = e.target.files[0];
-          if (file) {
-              document.getElementById('selectedFile').textContent = file.name;
-              showFileInfo(file);
-          }
-      });
-
-
-      async function uploadFile() {
-          const fileInput = document.getElementById('fileInput');
-          const file = fileInput.files[0];
-          
-          if (!file) {
-              alert('Velg en fil først!');
-              return;
-          }
-
-          if (file.size > maxFileSize) {
-              alert('Filen er for stor! Maksimal størrelse er 5GB');
-              return;
-          }
-
-          document.getElementById('file-input-container').hidden = true;
-          document.getElementById('fileInfo').style.display = 'none';
-
-          try {
-              updateProgress(0, 'Krypterer...');
-              const encrypted = await encryptFile(file);
-              updateProgress(50, 'Laster opp...');
-
-              const formData = new FormData();
-              formData.append('file', new Blob([encrypted]), 'encrypted_container');
-
-              const response = await fetch('/upload', {
-                  method: 'POST',
-                  body: formData
-              });
-
-              if (!response.ok) throw new Error('Opplasting feilet');
-
-              const result = await response.json();
-              updateProgress(100, 'Fullført!');
-
-              const url = `${window.location.origin}/${result.id}${window.location.hash}`;
-              window.history.replaceState(null, '', url);
-              document.getElementById('urlField').value = url;
-              document.getElementById('urlContainer').style.display = 'block';
-          } catch (error) {
-              alert('Feil: ' + error.message);
-              document.getElementById('uploadButton').disabled = false;
-          }
-      }
-
-      async function downloadFile() {
-          const fileId = window.location.pathname.slice(1);
-          
-          try {
-              updateProgress(0, 'Laster ned...');
-              const response = await fetch(`/download/${fileId}`);
-              
-              if (!response.ok) throw new Error('Nedlasting feilet');
-              
-              const encryptedData = await response.text();
-              updateProgress(50, 'Dekrypterer...');
-              
-              const decrypted = await decryptFile(encryptedData);
-              console.log(decrypted)
-              updateProgress(100, 'Fullført!');
-
-              const blob = new Blob([decrypted.data], { type: decrypted.contentType });
-              const url = window.URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = decrypted.filename;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              window.URL.revokeObjectURL(url);
-          } catch (error) {
-              alert('Feil: ' + error.message);
-          }
-      }
-
-        async function encryptFile(file) {
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = async function(e) {
-                    const key = encryptionKey || await generateKey();
-                    
-                    // Create a metadata object with filename
-                    const metadata = {
-                        filename: file.name,
-                        contentType: file.type
-                    };
-                    
-                    // Convert file content to WordArray
-                    const wordArray = CryptoJS.lib.WordArray.create(e.target.result);
-                    
-                    // Create a container object with metadata and content
-                    const container = {
-                        metadata: metadata,
-                        content: wordArray.toString(CryptoJS.enc.Base64)
-                    };
-                    
-                    // Encrypt the entire container
-                    const encrypted = CryptoJS.AES.encrypt(
-                        JSON.stringify(container),
-                        key
-                    ).toString();
-                    
-                    resolve(encrypted);
-                };
-                reader.readAsArrayBuffer(file);
-            });
-        }
-
-        async function decryptFile(encryptedData) {
-            if (!encryptionKey) {
-                alert('No encryption key found in URL!');
-                return;
-            }
-
-            try {
-                // Decrypt the container
-                const decrypted = CryptoJS.AES.decrypt(encryptedData, encryptionKey);
-                const container = JSON.parse(decrypted.toString(CryptoJS.enc.Utf8));
-                
-                // Extract metadata and content
-                const { metadata, content } = container;
-                
-                // Convert Base64 content back to bytes
-                const contentWords = CryptoJS.enc.Base64.parse(content);
-                const typedArray = new Uint8Array(contentWords.sigBytes);
-                
-                for (let i = 0; i < contentWords.sigBytes; i++) {
-                    typedArray[i] = contentWords.words[i >>> 2] >>> (24 - (i % 4) * 8) & 0xff;
-                }
-                
-                return {
-                    data: typedArray,
-                    filename: metadata.filename,
-                    contentType: metadata.contentType
-                };
-            } catch (error) {
-                alert('Failed to decrypt file: ' + error.message);
-                throw error;
-            }
-        }
-
-        async function generateKey() {
-            const key = CryptoJS.lib.WordArray.random(256/8).toString();
-            window.location.hash = `key=${key}`;
-            return key;
-        }
-    </script>
+// Add event listeners
+document.getElementById('fileInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+        document.getElementById('selectedFile').textContent = file.name;
+        showFileInfo(file);
+    }
+});
+</script>
 </body>
+
 </html>
