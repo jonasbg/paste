@@ -1,5 +1,5 @@
 apiVersion: v2
-name: SFSEM
+name: droply
 description: Share files in a secure and easy manner
 
 # A chart can be either an 'application' or a 'library' chart.
