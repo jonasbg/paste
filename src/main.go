@@ -25,6 +25,16 @@ func main() {
 	http.HandleFunc("/download/", handleDownload)
 	http.HandleFunc("/metadata/", handleMetadata)
 
+	http.HandleFunc("/wasm_exec.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		http.ServeFile(w, r, "wasm_exec.js")
+	})
+
+	http.HandleFunc("/encryption.wasm", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/wasm")
+		http.ServeFile(w, r, "encryption.wasm")
+	})
+
 	log.Println("Server starting on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
