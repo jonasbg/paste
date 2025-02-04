@@ -623,6 +623,39 @@
             }
         }
 
+        async function decryptMetadata(encryptedData) {
+            try {
+                if (!encryptionKey) {
+                    throw new Error('Mangler dekrypteringsnøkkel');
+                }
+
+                const key = await importKey(encryptionKey);
+                const dataArray = new Uint8Array(encryptedData);
+
+                // Extract IV and metadata length
+                const iv = dataArray.slice(0, 12);
+                const metadataLength = new DataView(dataArray.buffer).getUint32(12, true);
+
+                // Ensure we have enough data for metadata
+                if (dataArray.length < 16 + metadataLength) {
+                    throw new Error('Ufullstendig metadata');
+                }
+
+                // Extract and decrypt only metadata
+                const encryptedMetadata = dataArray.slice(16, 16 + metadataLength);
+                const metadataBuffer = await window.crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv },
+                    key,
+                    encryptedMetadata
+                );
+
+                return JSON.parse(new TextDecoder().decode(metadataBuffer));
+            } catch (error) {
+                console.error('Metadata decryption error:', error);
+                throw new Error('Kunne ikke dekryptere metadata: ' + error.message);
+            }
+        }
+
         async function fetchFileMetadata() {
             if (!window.location.pathname.length > 1) return;
 
@@ -638,8 +671,8 @@
                 }
 
                 try {
-                    const decrypted = await decryptFile(encryptedData);
-                    document.getElementById('downloadFileName').textContent = `Fil: ${decrypted.filename}`;
+                    const metadata = await decryptMetadata(encryptedData);
+                    document.getElementById('downloadFileName').textContent = `Fil: ${metadata.filename}`;
                 } catch (error) {
                     document.getElementById('downloadFileName').textContent = 'Kunne ikke dekryptere filinformasjon';
                 }
@@ -647,7 +680,6 @@
                 document.getElementById('downloadFileName').textContent = 'Kunne ikke hente filinformasjon';
             }
         }
-
         // Initialize application
         window.onload = function () {
             const urlParams = new URLSearchParams(window.location.hash.slice(1));
