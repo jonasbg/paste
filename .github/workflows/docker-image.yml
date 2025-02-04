@@ -1,4 +1,4 @@
-name: SHARE CI/CD Build
+name: DROPLY CI/CD Build
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -82,9 +82,9 @@ jobs:
       - name: Push Helm chart
         if: github.ref == 'refs/heads/main'
         run: |
-          helm pull oci://${{ vars.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')/share
-          file=$(ls share-*.tgz)
-          CURRENT_VERSION=$(echo $file | grep -oP 'share-\K[0-9]+\.[0-9]+\.[0-9]+')
+          helm pull oci://${{ vars.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')/droply
+          file=$(ls droply-*.tgz)
+          CURRENT_VERSION=$(echo $file | grep -oP 'droply-\K[0-9]+\.[0-9]+\.[0-9]+')
           NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
           echo $NEW_VERSION
           sed -i "s/version: 0.0.1/version: $NEW_VERSION/" .helm/Chart.yaml
