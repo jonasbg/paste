@@ -1,5 +1,5 @@
 deployment:
-  repository: ghcr.io/norskhelsenett/deling
+  repository: ghcr.io/jonasbg/droply
   pullPolicy: Always
   tag: "latest"
   deployment: deployment
