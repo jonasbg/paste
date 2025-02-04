@@ -1,0 +1,19 @@
+{{- range $key, $value := .Values }}
+{{- if $value.services }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $key }}-service
+spec:
+  type: {{ default "ClusterIP" (index $value.services 0).type }}
+  selector:
+    app: {{ $key }}
+  ports:
+  {{- range $value.services }}
+  - name: {{ .name }}
+    port: {{ .port }}
+    targetPort: {{ .port }}
+  {{- end }}
+{{- end }}
+---
+{{- end }}

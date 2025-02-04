@@ -1,0 +1,16 @@
+{{- range $key, $value := .Values }}
+  {{- range $value.mounts }}
+    {{- if not (or .fromSecret .inMemory .config .statefulSet) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $key }}-{{ .name }}-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .storage | default "1Gi" }}
+    {{- end }}
+  {{- end }}
+{{- end }}
