@@ -16,7 +16,7 @@ A simple and secure file sharing server written in Go, supporting client-side en
 
 ### Prerequisites
 
-- Go 1.22 or later
+- Go 1.23 or later
 - Docker (optional)
 
 ### Local Setup
