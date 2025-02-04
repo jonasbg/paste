@@ -1,0 +1,13 @@
+{{- range $key, $value := .Values }}
+  {{- with $value.hostRule }}
+apiVersion: ako.vmware.com/v1alpha1
+kind: HostRule
+metadata:
+  name: {{ $.Chart.Name }}-{{ $key }}-hostrule
+spec:
+  virtualhost:
+    fqdn: {{ $value.host }}
+    datascripts: {{ toYaml .datascripts | nindent 6 }}
+---
+  {{- end }}
+{{- end }}

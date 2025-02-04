@@ -1,0 +1,169 @@
+{{- range $key, $value := .Values }}
+{{- if eq $value.deployment "statefulSet" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $key }}
+  labels:
+    app: {{ $key }}
+spec:
+  serviceName: "{{ $key }}"
+  replicas: {{ $value.replicaCount | default 1}}
+  selector:
+    matchLabels:
+      app: {{ $key }}
+  template:
+    metadata:
+      labels:
+        app: {{ $key }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 101
+        fsGroupChangePolicy: "OnRootMismatch"
+        supplementalGroups:
+          - 100
+        runAsNonRoot: true
+        runAsUser: 101
+      initContainers:
+      - name: volume-permissions
+        image: busybox
+        command: ["sh", "-c", "touch /data/.initialized"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          privileged: false
+          runAsNonRoot: true
+          runAsUser: 101
+          runAsGroup: 101
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      containers:
+      - name: {{ $key }}
+        image: {{ $value.repository }}:{{ $value.tag | default "latest" }}
+        resources:
+          {{- if $value.resources }}
+          {{- toYaml $value.resources | nindent 10 }}
+          {{- else }}
+          requests:
+            memory: "100Mi"  # Request 100 MiB of memory
+            cpu: "100m"      # Request 100 millicpu (0.1 CPU cores)
+          limits:
+            memory: "200Mi"  # Limit to 200 MiB of memory
+            cpu: "500m"      # Limit to 500 millicpu (0.5 CPU cores)
+          {{- end }}
+        imagePullPolicy: {{ $value.pullPolicy }}
+        ports:
+        {{- range $value.services }}
+        - name: {{ .name }}
+          containerPort: {{ .port }}
+        {{- end }}
+        env:
+        {{- with $value.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        volumeMounts:
+        {{- range $value.mounts }}
+        - name: {{ .name }}
+          mountPath: {{ .mountPath }}
+          readOnly: {{ .readOnly | default false }}
+        {{- end }}
+        securityContext:
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+          privileged: false
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 101
+          runAsGroup: 101
+          readOnlyRootFilesystem: true
+
+      {{- if $value.sidecar }}
+      {{- if $value.sidecar.enabled }}
+      - name: {{ $value.sidecar.name }}
+        image: {{ $value.sidecar.repository }}:{{ $value.sidecar.tag }}
+        imagePullPolicy: {{ $value.sidecar.pullPolicy }}
+        resources:
+          {{- toYaml $value.sidecar.resources | nindent 10 }}
+        {{- if $value.sidecar.env }}
+        env:
+        {{- with $value.sidecar.env }}
+        {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- end }}
+        volumeMounts:
+          {{- range $value.sidecar.mounts }}
+          - name: {{ .name }}
+            mountPath: {{ .mountPath }}
+            readOnly: {{ .readOnly | default false }}
+          {{- end }}
+        securityContext:
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+          privileged: false
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 101
+          runAsGroup: 101
+          readOnlyRootFilesystem: true
+      {{- end }}
+      {{- end }}
+
+      volumes:
+      {{- range $value.mounts }}
+      {{- if or .fromSecret .inMemory .config }}
+      - name: {{ .name }}
+        {{- if .fromSecret }}
+        secret:
+          secretName: {{ .fromSecret }}
+        {{- else if .inMemory }}
+        emptyDir:
+          medium: Memory
+          sizeLimit: {{ .storage | default "64Mi" }}
+        {{- else if .config }}
+        configMap:
+          name: {{ .name }}
+        {{- end }}
+      {{- end }}
+      {{- end }}
+
+      {{- if $value.sidecar }}
+      {{- if $value.sidecar.enabled }}
+      {{- range $value.sidecar.mounts }}
+      {{- if .inMemory }}
+      - name: {{ .name }}
+        emptyDir:
+          medium: Memory
+          sizeLimit: {{ .storage | default "64Mi" }}
+      {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- end }}
+
+  volumeClaimTemplates:
+  {{- range $value.mounts }}
+  {{- if not (or .fromSecret .inMemory .config) }}
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: {{ .name }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ .storage | default "1Gi" }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,107 @@
+{{- range $key, $value := .Values }}
+{{- if eq $value.deployment "deployment" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $key }}
+  labels:
+    app: {{ $key }}
+spec:
+  replicas: {{ $value.replicaCount | default 1}}
+  selector:
+    matchLabels:
+      app: {{ $key }}
+  template:
+    metadata:
+      labels:
+        app: {{ $key }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        supplementalGroups:
+          - 100
+        fsGroup: 1001
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+      - name: {{ $key }}
+        image: {{ $value.repository }}:{{ $value.tag | default "latest" }}
+        resources:
+        {{- if $value.resources }}
+        {{- toYaml $value.resources | nindent 10 }}
+        {{- else }}
+          requests:
+            memory: "50Mi"   # Request 50 MiB of memory
+            cpu: "50m"       # Request 50 millicpu (0.05 CPU cores)
+          limits:
+            memory: "100Mi"  # Limit to 100 MiB of memory
+            cpu: "200m"      # Limit to 200 millicpu (0.2 CPU cores)
+          {{- end }}
+        imagePullPolicy: {{ $value.pullPolicy }}
+        ports:
+        {{- range $value.services }}
+        - name: {{ .name }}
+          containerPort: {{ .port }}
+        {{- end }}
+        env:
+        {{- range $value.env }}
+        - name: {{ .name }}
+          value: "{{ .value }}"
+        {{- end }}
+        volumeMounts:
+        {{- range $value.mounts }}
+        - name: {{ .name }}
+          mountPath: {{ .mountPath }}
+          {{- if .subPath }}
+          subPath: {{ .subPath }}
+          {{- end }}
+          readOnly: {{ .readOnly | default false }}
+        {{- end }}
+        # livenessProbe:
+        #   httpGet:
+        #     path: /healthz
+        #     port: 8080
+        #   initialDelaySeconds: 5
+        #   periodSeconds: 10
+        #   failureThreshold: 2
+        # readinessProbe:
+        #   httpGet:
+        #     path: /healthz
+        #     port: 8080
+        #   initialDelaySeconds: 3
+        #   periodSeconds: 2
+        securityContext:
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+          privileged: false
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          readOnlyRootFilesystem: true
+      volumes:
+      {{- range $value.mounts }}
+      - name: {{ .name }}
+        {{- if .fromSecret }}
+        secret:
+          secretName: {{ .fromSecret }}
+        {{- else if .inMemory }}
+        emptyDir:
+          medium: Memory
+          sizeLimit: {{ .storage | default "64Mi" }}
+        {{- else if .config}}
+        configMap:
+          name: {{ .name }}
+        {{- else }}
+        persistentVolumeClaim:
+          claimName: {{ $key }}-{{ .name }}-pvc
+        {{- end }}
+      {{- end }}
+---
+{{- end }}
+{{- end }}

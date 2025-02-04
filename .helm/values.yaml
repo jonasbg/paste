@@ -1,0 +1,23 @@
+deployment:
+  repository: ghcr.io/norskhelsenett/deling
+  pullPolicy: Always
+  tag: "latest"
+  deployment: deployment
+  mounts:
+  - name: upload
+    mountPath: /upload
+    readOnly: false
+    storage: 10Gi
+    statefulSet: false
+  - name: tmp
+    inMemory: true
+    mountPath: /tmp
+    readOnly: false
+    storage: 50Mi
+  host: chase.example.com
+  env:
+  - name: UPLOAD_FOLDER
+    value: "/upload"
+  services:
+  - name: http
+    port: 8080
