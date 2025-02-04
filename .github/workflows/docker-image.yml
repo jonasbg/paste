@@ -59,14 +59,13 @@ jobs:
         uses: docker/build-push-action@v6
         id: build-docker-image
         with:
-          context: .
+          context: src/
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
-
 
       # # Move cache to prevent it from growing indefinitely
       - name: Move cache
