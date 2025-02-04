@@ -292,294 +292,383 @@
     </div>
     </div>
 
-<script>
-    const maxFileSize = 5 * 1024 * 1024 * 1024; // 5GB in bytes
-let encryptionKey = null;
+    <script>
+        const maxFileSize = 5 * 1024 * 1024 * 1024; // 5GB in bytes
+        let encryptionKey = null;
 
-// Format file size in human readable format
-function formatFileSize(bytes) {
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-        size /= 1024;
-        unitIndex++;
-    }
-    return `${size.toFixed(2)} ${units[unitIndex]}`;
-}
-
-async function generateKey() {
-    const key = await window.crypto.subtle.generateKey(
-        { name: "AES-GCM", length: 256 },
-        true,
-        ["encrypt", "decrypt"]
-    );
-    const exportedKey = await window.crypto.subtle.exportKey("raw", key);
-    const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
-    window.location.hash = `key=${keyBase64}`;
-    return keyBase64;
-}
-
-async function importKey(keyBase64) {
-    try {
-        const decodedKey = atob(keyBase64);
-        const keyBytes = new Uint8Array(decodedKey.length);
-        for (let i = 0; i < decodedKey.length; i++) {
-            keyBytes[i] = decodedKey.charCodeAt(i);
+        // Format file size in human readable format
+        function formatFileSize(bytes) {
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let size = bytes;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            return `${size.toFixed(2)} ${units[unitIndex]}`;
         }
-        return window.crypto.subtle.importKey(
-            "raw",
-            keyBytes,
-            { name: "AES-GCM", length: 256 },
-            false,
-            ["encrypt", "decrypt"]
-        );
-    } catch (error) {
-        throw new Error('Invalid encryption key format');
-    }
-}
 
-function showFileInfo(file) {
-    const fileInfo = document.getElementById('fileInfo');
-    const fileNameInfo = document.getElementById('fileNameInfo');
-    const fileSizeInfo = document.getElementById('fileSizeInfo');
+        async function generateKey() {
+            const key = await window.crypto.subtle.generateKey(
+                { name: "AES-GCM", length: 256 },
+                true,
+                ["encrypt", "decrypt"]
+            );
+            const exportedKey = await window.crypto.subtle.exportKey("raw", key);
+            const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
+            window.location.hash = `key=${keyBase64}`;
+            return keyBase64;
+        }
 
-    fileNameInfo.textContent = `Filnavn: ${file.name}`;
-    fileSizeInfo.textContent = `Størrelse: ${formatFileSize(file.size)}`;
-    fileInfo.style.display = 'block';
-}
+        async function importKey(keyBase64) {
+            try {
+                const decodedKey = atob(keyBase64);
+                const keyBytes = new Uint8Array(decodedKey.length);
+                for (let i = 0; i < decodedKey.length; i++) {
+                    keyBytes[i] = decodedKey.charCodeAt(i);
+                }
+                return window.crypto.subtle.importKey(
+                    "raw",
+                    keyBytes,
+                    { name: "AES-GCM", length: 256 },
+                    false,
+                    ["encrypt", "decrypt"]
+                );
+            } catch (error) {
+                throw new Error('Invalid encryption key format');
+            }
+        }
 
-async function updateProgress(progress, action) {
-    if (progress >= 100) {
-        document.getElementById('progressContainer').style.display = 'none';
-        return;
-    }
+        function showFileInfo(file) {
+            const fileInfo = document.getElementById('fileInfo');
+            const fileNameInfo = document.getElementById('fileNameInfo');
+            const fileSizeInfo = document.getElementById('fileSizeInfo');
 
-    document.getElementById('progressContainer').style.display = 'block';
-    document.getElementById('progressTitle').textContent = action;
-    document.getElementById('progressBar').style.width = `${progress}%`;
-    document.getElementById('progressText').textContent = `${Math.round(progress)}%`;
-}
+            fileNameInfo.textContent = `Filnavn: ${file.name}`;
+            fileSizeInfo.textContent = `Størrelse: ${formatFileSize(file.size)}`;
+            fileInfo.style.display = 'block';
+        }
 
-function copyUrl() {
-    const urlField = document.getElementById('urlField');
-    urlField.select();
-    document.execCommand('copy');
-    alert('Lenke kopiert til utklippstavlen!');
-}
+        async function updateProgress(progress, action) {
+            if (progress >= 100) {
+                document.getElementById('progressContainer').style.display = 'none';
+                return;
+            }
 
-async function encryptFile(file) {
-    const keyBase64 = encryptionKey || await generateKey();
-    const key = await importKey(keyBase64);
-    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressTitle').textContent = action;
+            document.getElementById('progressBar').style.width = `${progress}%`;
+            document.getElementById('progressText').textContent = `${Math.round(progress)}%`;
+        }
 
-    const metadata = {
-        filename: file.name,
-        contentType: file.type
-    };
+        function copyUrl() {
+            const urlField = document.getElementById('urlField');
+            urlField.select();
+            document.execCommand('copy');
+            alert('Lenke kopiert til utklippstavlen!');
+        }
 
-    const fileBuffer = await file.arrayBuffer();
-    const metadataBuffer = new TextEncoder().encode(JSON.stringify(metadata));
+        async function encryptFile(file) {
+            try {
+                const keyBase64 = encryptionKey || await generateKey();
+                const key = await importKey(keyBase64);
+                const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
-    const encryptedMetadata = await window.crypto.subtle.encrypt(
-        { name: "AES-GCM", iv },
-        key,
-        metadataBuffer
-    );
+                const metadata = {
+                    filename: file.name,
+                    contentType: file.type,
+                    size: file.size
+                };
 
-    const encryptedContent = await window.crypto.subtle.encrypt(
-        { name: "AES-GCM", iv },
-        key,
-        fileBuffer
-    );
+                const metadataBuffer = new TextEncoder().encode(JSON.stringify(metadata));
+                const encryptedMetadata = await window.crypto.subtle.encrypt(
+                    { name: "AES-GCM", iv },
+                    key,
+                    metadataBuffer
+                );
 
-    // Combine IV, encrypted metadata length, encrypted metadata and encrypted content
-    const metadataLengthBytes = new Uint8Array(4);
-    new DataView(metadataLengthBytes.buffer).setUint32(0, encryptedMetadata.byteLength, true);
+                // Read file in chunks
+                const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB chunks
+                const chunks = Math.ceil(file.size / CHUNK_SIZE);
+                const encryptedChunks = [];
 
-    const combinedBuffer = new Uint8Array(
-        iv.length +
-        metadataLengthBytes.length +
-        encryptedMetadata.byteLength +
-        encryptedContent.byteLength
-    );
+                for (let i = 0; i < chunks; i++) {
+                    const start = i * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, file.size);
+                    const chunk = await file.slice(start, end).arrayBuffer();
 
-    let offset = 0;
-    combinedBuffer.set(iv, offset);
-    offset += iv.length;
-    combinedBuffer.set(metadataLengthBytes, offset);
-    offset += metadataLengthBytes.length;
-    combinedBuffer.set(new Uint8Array(encryptedMetadata), offset);
-    offset += encryptedMetadata.byteLength;
-    combinedBuffer.set(new Uint8Array(encryptedContent), offset);
+                    const encryptedChunk = await window.crypto.subtle.encrypt(
+                        { name: "AES-GCM", iv },
+                        key,
+                        chunk
+                    );
+                    encryptedChunks.push(new Uint8Array(encryptedChunk));
 
-    return combinedBuffer;
-}
+                    // Update progress
+                    updateProgress((i + 1) * 25 / chunks, 'Krypterer...');
+                }
 
-async function decryptFile(encryptedData) {
-    if (!encryptionKey) {
-        throw new Error('No encryption key found in URL');
-    }
+                // Calculate total size
+                const totalSize = encryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
 
-    const key = await importKey(encryptionKey);
-    const dataArray = new Uint8Array(encryptedData);
+                // Combine all parts
+                const metadataLengthBytes = new Uint8Array(4);
+                new DataView(metadataLengthBytes.buffer).setUint32(0, encryptedMetadata.byteLength, true);
 
-    // Extract IV and metadata length
-    const iv = dataArray.slice(0, 12);
-    const metadataLength = new DataView(dataArray.buffer).getUint32(12, true);
+                const combinedBuffer = new Uint8Array(
+                    iv.length +
+                    metadataLengthBytes.length +
+                    encryptedMetadata.byteLength +
+                    totalSize
+                );
 
-    // Extract and decrypt metadata
-    const encryptedMetadata = dataArray.slice(16, 16 + metadataLength);
-    const metadataBuffer = await window.crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
-        key,
-        encryptedMetadata
-    );
-    const metadata = JSON.parse(new TextDecoder().decode(metadataBuffer));
+                let offset = 0;
+                combinedBuffer.set(iv, offset);
+                offset += iv.length;
+                combinedBuffer.set(metadataLengthBytes, offset);
+                offset += metadataLengthBytes.length;
+                combinedBuffer.set(new Uint8Array(encryptedMetadata), offset);
+                offset += encryptedMetadata.byteLength;
 
-    // Extract and decrypt content
-    const encryptedContent = dataArray.slice(16 + metadataLength);
-    const content = await window.crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
-        key,
-        encryptedContent
-    );
+                for (const chunk of encryptedChunks) {
+                    combinedBuffer.set(chunk, offset);
+                    offset += chunk.length;
+                }
 
-    return {
-        data: new Uint8Array(content),
-        filename: metadata.filename,
-        contentType: metadata.contentType
-    };
-}
+                return combinedBuffer;
+            } catch (error) {
+                console.error('Encryption error:', error);
+                throw new Error('Kunne ikke kryptere filen: ' + error.message);
+            }
+        }
 
-function handleUpload() {
-    const fileInput = document.getElementById('fileInput');
-    if (!fileInput.files.length) {
-        fileInput.click();
-    }
-    uploadFile();
-}
+        async function decryptFile(encryptedData) {
+            try {
+                if (!encryptionKey) {
+                    throw new Error('Mangler dekrypteringsnøkkel');
+                }
 
-async function uploadFile() {
-    const fileInput = document.getElementById('fileInput');
-    const file = fileInput.files[0];
+                const key = await importKey(encryptionKey);
+                const dataArray = new Uint8Array(encryptedData);
 
-    if (!file) {
-        alert('Velg en fil først!');
-        return;
-    }
+                // Extract IV and metadata length
+                const iv = dataArray.slice(0, 12);
+                const metadataLength = new DataView(dataArray.buffer).getUint32(12, true);
 
-    if (file.size > maxFileSize) {
-        alert('Filen er for stor! Maksimal størrelse er 5GB');
-        return;
-    }
+                // Extract and decrypt metadata
+                const encryptedMetadata = dataArray.slice(16, 16 + metadataLength);
+                const metadataBuffer = await window.crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv },
+                    key,
+                    encryptedMetadata
+                );
+                const metadata = JSON.parse(new TextDecoder().decode(metadataBuffer));
 
-    document.getElementById('file-input-container').hidden = true;
-    document.getElementById('fileInfo').style.display = 'none';
+                // Extract and decrypt content in chunks
+                const encryptedContent = dataArray.slice(16 + metadataLength);
+                const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB chunks
+                const chunks = Math.ceil(encryptedContent.length / CHUNK_SIZE);
+                const decryptedChunks = [];
 
-    try {
-        updateProgress(0, 'Krypterer...');
-        const encrypted = await encryptFile(file);
-        updateProgress(50, 'Laster opp...');
+                for (let i = 0; i < chunks; i++) {
+                    const start = i * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, encryptedContent.length);
+                    const chunk = encryptedContent.slice(start, end);
 
-        const formData = new FormData();
-        formData.append('file', new Blob([encrypted]), 'encrypted_container');
+                    const decryptedChunk = await window.crypto.subtle.decrypt(
+                        { name: "AES-GCM", iv },
+                        key,
+                        chunk
+                    );
+                    decryptedChunks.push(new Uint8Array(decryptedChunk));
 
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData
+                    // Update progress
+                    updateProgress(50 + (i + 1) * 25 / chunks, 'Dekrypterer...');
+                }
+
+                // Combine all decrypted chunks
+                const totalSize = decryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                const combinedBuffer = new Uint8Array(totalSize);
+                let offset = 0;
+
+                for (const chunk of decryptedChunks) {
+                    combinedBuffer.set(chunk, offset);
+                    offset += chunk.length;
+                }
+
+                return {
+                    data: combinedBuffer,
+                    filename: metadata.filename,
+                    contentType: metadata.contentType
+                };
+            } catch (error) {
+                console.error('Decryption error:', error);
+                throw new Error('Kunne ikke dekryptere filen: ' + error.message);
+            }
+        }
+
+        function handleUpload() {
+            const fileInput = document.getElementById('fileInput');
+            if (!fileInput.files.length) {
+                fileInput.click();
+            }
+            uploadFile();
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                alert('Velg en fil først!');
+                return;
+            }
+
+            if (file.size > maxFileSize) {
+                alert('Filen er for stor! Maksimal størrelse er 5GB');
+                return;
+            }
+
+            document.getElementById('file-input-container').hidden = true;
+            document.getElementById('fileInfo').style.display = 'none';
+
+            try {
+                updateProgress(0, 'Krypterer...');
+                const encrypted = await encryptFile(file);
+                updateProgress(50, 'Laster opp...');
+
+                const formData = new FormData();
+                formData.append('file', new Blob([encrypted]), 'encrypted_container');
+
+                const xhr = new XMLHttpRequest();
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const progress = (event.loaded / event.total) * 50 + 50; // 50-100%
+                        updateProgress(progress, 'Laster opp...');
+                    }
+                };
+
+                const response = await new Promise((resolve, reject) => {
+                    xhr.onload = () => resolve(new Response(xhr.response, {
+                        status: xhr.status,
+                        statusText: xhr.statusText
+                    }));
+                    xhr.onerror = () => reject(new Error('Network error'));
+                    xhr.open('POST', '/upload');
+                    xhr.send(formData);
+                });
+
+                if (!response.ok) throw new Error('Opplasting feilet');
+
+                const result = await response.json();
+                updateProgress(100, 'Fullført!');
+
+                const url = `${window.location.origin}/${result.id}${window.location.hash}`;
+                window.history.replaceState(null, '', url);
+                document.getElementById('urlField').value = url;
+                document.getElementById('urlContainer').style.display = 'block';
+            } catch (error) {
+                alert('Feil: ' + error.message);
+                document.getElementById('uploadButton').disabled = false;
+            }
+        }
+
+        async function downloadFile() {
+            const fileId = window.location.pathname.slice(1);
+
+            try {
+                updateProgress(0, 'Laster ned...');
+                const response = await fetch(`/download/${fileId}`);
+
+                if (!response.ok) throw new Error('Nedlasting feilet');
+
+                const reader = response.body.getReader();
+                const contentLength = +response.headers.get('Content-Length');
+                let receivedLength = 0;
+                const chunks = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    chunks.push(value);
+                    receivedLength += value.length;
+                    const downloadProgress = (receivedLength / contentLength) * 50; // 0-50%
+                    updateProgress(downloadProgress, 'Laster ned...');
+                }
+
+                const encryptedData = new Uint8Array(receivedLength);
+                let position = 0;
+                for (const chunk of chunks) {
+                    encryptedData.set(chunk, position);
+                    position += chunk.length;
+                }
+
+                updateProgress(50, 'Dekrypterer...');
+                const decrypted = await decryptFile(encryptedData);
+                updateProgress(100, 'Fullført!');
+
+                const blob = new Blob([decrypted.data], { type: decrypted.contentType });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = decrypted.filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('Feil: ' + error.message);
+            }
+        }
+
+        async function fetchFileMetadata() {
+            if (!window.location.pathname.length > 1) return;
+
+            const fileId = window.location.pathname.slice(1);
+            try {
+                const response = await fetch(`/metadata/${fileId}`);
+                if (!response.ok) throw new Error('Kunne ikke hente filinformasjon');
+
+                const encryptedData = await response.arrayBuffer();
+                if (!encryptionKey) {
+                    document.getElementById('downloadFileName').textContent = 'Mangler dekrypteringsnøkkel';
+                    return;
+                }
+
+                try {
+                    const decrypted = await decryptFile(encryptedData);
+                    document.getElementById('downloadFileName').textContent = `Fil: ${decrypted.filename}`;
+                } catch (error) {
+                    document.getElementById('downloadFileName').textContent = 'Kunne ikke dekryptere filinformasjon';
+                }
+            } catch (error) {
+                document.getElementById('downloadFileName').textContent = 'Kunne ikke hente filinformasjon';
+            }
+        }
+
+        // Initialize application
+        window.onload = function () {
+            const urlParams = new URLSearchParams(window.location.hash.slice(1));
+            encryptionKey = urlParams.get('key');
+
+            if (window.location.pathname.length > 1) {
+                document.getElementById('uploadSection').style.display = 'none';
+                document.getElementById('downloadContainer').style.display = 'block';
+                fetchFileMetadata();
+            }
+        }
+
+        // Add event listeners
+        document.getElementById('fileInput').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('selectedFile').textContent = file.name;
+                showFileInfo(file);
+            }
         });
-
-        if (!response.ok) throw new Error('Opplasting feilet');
-
-        const result = await response.json();
-        updateProgress(100, 'Fullført!');
-
-        const url = `${window.location.origin}/${result.id}${window.location.hash}`;
-        window.history.replaceState(null, '', url);
-        document.getElementById('urlField').value = url;
-        document.getElementById('urlContainer').style.display = 'block';
-    } catch (error) {
-        alert('Feil: ' + error.message);
-        document.getElementById('uploadButton').disabled = false;
-    }
-}
-
-async function downloadFile() {
-    const fileId = window.location.pathname.slice(1);
-
-    try {
-        updateProgress(0, 'Laster ned...');
-        const response = await fetch(`/download/${fileId}`);
-
-        if (!response.ok) throw new Error('Nedlasting feilet');
-
-        const encryptedData = await response.arrayBuffer();
-        updateProgress(50, 'Dekrypterer...');
-
-        const decrypted = await decryptFile(encryptedData);
-        updateProgress(100, 'Fullført!');
-
-        const blob = new Blob([decrypted.data], { type: decrypted.contentType });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = decrypted.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-    } catch (error) {
-        alert('Feil: ' + error.message);
-    }
-}
-
-async function fetchFileMetadata() {
-    if (!window.location.pathname.length > 1) return;
-
-    const fileId = window.location.pathname.slice(1);
-    try {
-        const response = await fetch(`/metadata/${fileId}`);
-        if (!response.ok) throw new Error('Kunne ikke hente filinformasjon');
-
-        const encryptedData = await response.arrayBuffer();
-        if (!encryptionKey) {
-            document.getElementById('downloadFileName').textContent = 'Mangler dekrypteringsnøkkel';
-            return;
-        }
-
-        try {
-            const decrypted = await decryptFile(encryptedData);
-            document.getElementById('downloadFileName').textContent = `Fil: ${decrypted.filename}`;
-        } catch (error) {
-            document.getElementById('downloadFileName').textContent = 'Kunne ikke dekryptere filinformasjon';
-        }
-    } catch (error) {
-        document.getElementById('downloadFileName').textContent = 'Kunne ikke hente filinformasjon';
-    }
-}
-
-// Initialize application
-window.onload = function() {
-    const urlParams = new URLSearchParams(window.location.hash.slice(1));
-    encryptionKey = urlParams.get('key');
-
-    if (window.location.pathname.length > 1) {
-        document.getElementById('uploadSection').style.display = 'none';
-        document.getElementById('downloadContainer').style.display = 'block';
-        fetchFileMetadata();
-    }
-}
-
-// Add event listeners
-document.getElementById('fileInput').addEventListener('change', function(e) {
-    const file = e.target.files[0];
-    if (file) {
-        document.getElementById('selectedFile').textContent = file.name;
-        showFileInfo(file);
-    }
-});
-</script>
+    </script>
 </body>
 
 </html>
