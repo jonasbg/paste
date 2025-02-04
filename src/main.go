@@ -12,32 +12,41 @@ import (
 )
 
 const (
-	uploadDir   = "./uploads"
 	maxFileSize = 5 * 1024 * 1024 * 1024 // 5GB
 )
 
+// getUploadDir returns the upload directory from environment variable or default
+func getUploadDir() string {
+	if dir := os.Getenv("UPLOAD_DIR"); dir != "" {
+		return dir
+	}
+	return "./uploads"
+}
+
 func main() {
+	uploadDir := getUploadDir()
+
 	// Create uploads directory if it doesn't exist
-	os.MkdirAll(uploadDir, 0755)
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		log.Fatalf("Failed to create upload directory: %v", err)
+	}
 
-	// Serve static files
-	http.HandleFunc("/", serveFile)
-	http.HandleFunc("/upload", handleUpload)
-	http.HandleFunc("/download/", handleDownload)
-	http.HandleFunc("/metadata/", handleMetadata)
+	// Initialize router with new pattern matching
+	mux := http.NewServeMux()
 
-	http.HandleFunc("/wasm_exec.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript")
-		http.ServeFile(w, r, "wasm_exec.js")
-	})
+	// Static file routes
+	mux.HandleFunc("GET /", handleIndex)
+	mux.HandleFunc("GET /{id}", handleIndex)
+	mux.HandleFunc("GET /wasm_exec.js", handleWasmExec)
+	mux.HandleFunc("GET /encryption.wasm", handleWasmFile)
 
-	http.HandleFunc("/encryption.wasm", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/wasm")
-		http.ServeFile(w, r, "encryption.wasm")
-	})
+	// API routes
+	mux.HandleFunc("POST /upload", handleUpload(uploadDir))
+	mux.HandleFunc("GET /download/{id}", handleDownload(uploadDir))
+	mux.HandleFunc("GET /metadata/{id}", handleMetadata(uploadDir))
 
-	log.Println("Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Printf("Server starting on :8080 with upload directory: %s", uploadDir)
+	log.Fatal(http.ListenAndServe(":8080", mux))
 }
 
 func generateID() (string, error) {
@@ -48,165 +57,135 @@ func generateID() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func serveFile(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" {
-		// Serve the main HTML file
-		http.ServeFile(w, r, "index.html")
-		return
-	}
-
-	// Check if path looks like a file ID
-	if len(r.URL.Path) == 33 { // "/" + 32 hex chars
-		http.ServeFile(w, r, "index.html")
-		return
-	}
-
-	http.NotFound(w, r)
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "index.html")
 }
 
-func handleMetadata(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func handleWasmExec(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript")
+	http.ServeFile(w, r, "wasm_exec.js")
+}
 
-	// Extract file ID from path
-	id := filepath.Base(r.URL.Path)
-	if len(id) != 32 {
-		http.Error(w, "Invalid file ID", http.StatusBadRequest)
-		return
-	}
+func handleWasmFile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/wasm")
+	http.ServeFile(w, r, "encryption.wasm")
+}
 
-	// Open file
-	file, err := os.Open(filepath.Join(uploadDir, id))
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "File not found", http.StatusNotFound)
-		} else {
-			http.Error(w, "Error opening file", http.StatusInternalServerError)
+func handleMetadata(uploadDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if len(id) != 32 {
+			http.Error(w, "Invalid file ID", http.StatusBadRequest)
+			return
 		}
-		return
-	}
-	defer file.Close()
 
-	// Read header to get metadata length (16 bytes: 12 for IV + 4 for length)
-	header := make([]byte, 16)
-	_, err = io.ReadFull(file, header)
-	if err != nil {
-		http.Error(w, "Error reading file header", http.StatusInternalServerError)
-		return
-	}
-
-	// Extract metadata length from bytes 12-15
-	metadataLen := binary.LittleEndian.Uint32(header[12:16])
-
-	// Sanity check on metadata length
-	if metadataLen > 1024*1024 { // 1MB max for metadata
-		http.Error(w, "Invalid metadata length", http.StatusInternalServerError)
-		return
-	}
-
-	// Allocate buffer for full metadata section (header + encrypted metadata)
-	fullMetadata := make([]byte, 16+int(metadataLen))
-	copy(fullMetadata[:16], header)
-
-	// Read the encrypted metadata portion
-	_, err = io.ReadFull(file, fullMetadata[16:])
-	if err != nil {
-		http.Error(w, "Error reading metadata", http.StatusInternalServerError)
-		return
-	}
-
-	// Set headers
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-
-	// Write the complete metadata section
-	w.Write(fullMetadata)
-}
-
-func handleUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Limit request body size
-	r.Body = http.MaxBytesReader(w, r.Body, maxFileSize)
-
-	// Parse multipart form
-	err := r.ParseMultipartForm(maxFileSize)
-	if err != nil {
-		http.Error(w, "File too large", http.StatusBadRequest)
-		return
-	}
-
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "Error retrieving file", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	// Generate unique ID for file
-	id, err := generateID()
-	if err != nil {
-		http.Error(w, "Error generating ID", http.StatusInternalServerError)
-		return
-	}
-
-	// Create file
-	dst, err := os.Create(filepath.Join(uploadDir, id))
-	if err != nil {
-		http.Error(w, "Error creating file", http.StatusInternalServerError)
-		return
-	}
-	defer dst.Close()
-
-	// Copy file contents
-	_, err = io.Copy(dst, file)
-	if err != nil {
-		http.Error(w, "Error saving file", http.StatusInternalServerError)
-		return
-	}
-
-	// Return file ID
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"id":"` + id + `"}`))
-}
-
-func handleDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract file ID from path
-	id := filepath.Base(r.URL.Path)
-	if len(id) != 32 {
-		http.Error(w, "Invalid file ID", http.StatusBadRequest)
-		return
-	}
-
-	// Open file
-	file, err := os.Open(filepath.Join(uploadDir, id))
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "File not found", http.StatusNotFound)
-		} else {
-			http.Error(w, "Error opening file", http.StatusInternalServerError)
+		file, err := os.Open(filepath.Join(uploadDir, id))
+		if err != nil {
+			if os.IsNotExist(err) {
+				http.Error(w, "File not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "Error opening file", http.StatusInternalServerError)
+			}
+			return
 		}
-		return
+		defer file.Close()
+
+		// Read header to get metadata length (16 bytes: 12 for IV + 4 for length)
+		header := make([]byte, 16)
+		if _, err = io.ReadFull(file, header); err != nil {
+			http.Error(w, "Error reading file header", http.StatusInternalServerError)
+			return
+		}
+
+		// Extract metadata length from bytes 12-15
+		metadataLen := binary.LittleEndian.Uint32(header[12:16])
+
+		// Sanity check on metadata length
+		if metadataLen > 1024*1024 { // 1MB max for metadata
+			http.Error(w, "Invalid metadata length", http.StatusInternalServerError)
+			return
+		}
+
+		// Allocate buffer for full metadata section
+		fullMetadata := make([]byte, 16+int(metadataLen))
+		copy(fullMetadata[:16], header)
+
+		// Read the encrypted metadata portion
+		if _, err = io.ReadFull(file, fullMetadata[16:]); err != nil {
+			http.Error(w, "Error reading metadata", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(fullMetadata)
 	}
-	defer file.Close()
+}
 
-	// Set headers
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+func handleUpload(uploadDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Limit request body size
+		r.Body = http.MaxBytesReader(w, r.Body, maxFileSize)
 
-	// Stream file to response
-	_, err = io.Copy(w, file)
-	if err != nil {
-		log.Printf("Error streaming file: %v", err)
+		if err := r.ParseMultipartForm(maxFileSize); err != nil {
+			http.Error(w, "File too large", http.StatusBadRequest)
+			return
+		}
+
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "Error retrieving file", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		id, err := generateID()
+		if err != nil {
+			http.Error(w, "Error generating ID", http.StatusInternalServerError)
+			return
+		}
+
+		dst, err := os.Create(filepath.Join(uploadDir, id))
+		if err != nil {
+			http.Error(w, "Error creating file", http.StatusInternalServerError)
+			return
+		}
+		defer dst.Close()
+
+		if _, err = io.Copy(dst, file); err != nil {
+			http.Error(w, "Error saving file", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"` + id + `"}`))
+	}
+}
+
+func handleDownload(uploadDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if len(id) != 32 {
+			http.Error(w, "Invalid file ID", http.StatusBadRequest)
+			return
+		}
+
+		file, err := os.Open(filepath.Join(uploadDir, id))
+		if err != nil {
+			if os.IsNotExist(err) {
+				http.Error(w, "File not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "Error opening file", http.StatusInternalServerError)
+			}
+			return
+		}
+		defer file.Close()
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		if _, err = io.Copy(w, file); err != nil {
+			log.Printf("Error streaming file: %v", err)
+		}
 	}
 }

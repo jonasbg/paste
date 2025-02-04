@@ -1,1 +1,4 @@
 */uploads/**
+.DS_Store
+*/wasm_exec.js
+*/encryption.wasm
