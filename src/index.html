@@ -409,72 +409,81 @@
                 return { header, encryptedContent };
             }
             async decryptFile(encryptedData, key, progressCallback) {
-                if (encryptedData.length < 16) {
-                    throw new Error('Invalid encrypted data');
-                }
+    if (encryptedData.length < 16) {
+        throw new Error('Invalid encrypted data');
+    }
 
-                try {
-                    // Handle metadata first
-                    const metadataLength = new DataView(encryptedData.buffer).getUint32(12, true);
-                    const headerLength = 16 + metadataLength;
+    try {
+        // Handle metadata first
+        const metadataLength = new DataView(encryptedData.buffer).getUint32(12, true);
+        const headerLength = 16 + metadataLength;
 
-                    if (encryptedData.length < headerLength) {
-                        throw new Error('Invalid header length');
-                    }
+        if (encryptedData.length < headerLength) {
+            throw new Error('Invalid header length');
+        }
 
-                    await progressCallback(0, 'Dekrypterer metadata...');
-                    const metadata = await wasmInstance.decryptMetadata(key, encryptedData.slice(0, headerLength));
+        await progressCallback(0, 'Dekrypterer metadata...');
+        const metadata = await wasmInstance.decryptMetadata(key, encryptedData.slice(0, headerLength));
 
-                    // Get the IV and encrypted content
-                    const contentStartPos = headerLength;
-                    const iv = encryptedData.slice(contentStartPos, contentStartPos + 12);
-                    const encryptedContent = encryptedData.slice(contentStartPos + 12);
+        // Get the IV and encrypted content
+        const contentStartPos = headerLength;
+        const iv = encryptedData.slice(contentStartPos, contentStartPos + 12);
+        const encryptedContent = encryptedData.slice(contentStartPos + 12);
 
-                    // Initialize decryption stream with IV
-                    const success = wasmInstance.createDecryptionStream(key, iv);
-                    if (!success) {
-                        throw new Error('Failed to initialize decryption stream');
-                    }
+        // Initialize decryption stream with IV
+        const success = wasmInstance.createDecryptionStream(key, iv);
+        if (!success) {
+            throw new Error('Failed to initialize decryption stream');
+        }
 
-                    // Process content in chunks
-                    const chunks = [];
-                    const chunkSizeWithTag = this.chunkSize + 16; // AES-GCM tag size is 16 bytes
-                    const totalChunks = Math.ceil(encryptedContent.length / chunkSizeWithTag);
+        // Process content in chunks
+        const chunks = [];
+        const chunkSizeWithTag = this.chunkSize + 16; // AES-GCM tag size is 16 bytes
+        const totalChunks = Math.ceil(encryptedContent.length / chunkSizeWithTag);
 
-                    console.log('Decryption details:', {
-                        totalLength: encryptedContent.length,
-                        chunkSize: this.chunkSize,
-                        chunkSizeWithTag,
-                        totalChunks
-                    });
+        console.log('Decryption details:', {
+            totalLength: encryptedContent.length,
+            chunkSize: this.chunkSize,
+            chunkSizeWithTag,
+            totalChunks
+        });
 
-                    for (let i = 0; i < totalChunks; i++) {
-                        const start = i * chunkSizeWithTag;
-                        const end = Math.min(start + chunkSizeWithTag, encryptedContent.length);
-                        const chunk = encryptedContent.slice(start, end);
-                        const isLastChunk = i === totalChunks - 1;
+        // Process chunks with controlled timing
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * chunkSizeWithTag;
+            const end = Math.min(start + chunkSizeWithTag, encryptedContent.length);
+            const chunk = encryptedContent.slice(start, end);
+            const isLastChunk = i === totalChunks - 1;
 
-                        console.log(`Processing chunk ${i}:`, {
-                            start,
-                            end,
-                            chunkLength: chunk.length,
-                            isLastChunk
-                        });
+            console.log(`Processing chunk ${i}:`, {
+                start,
+                end,
+                chunkLength: chunk.length,
+                isLastChunk
+            });
 
-                        const decryptedChunk = wasmInstance.decryptChunk(chunk, isLastChunk);
-                        if (!decryptedChunk) {
-                            throw new Error(`Failed to decrypt chunk ${i}`);
-                        }
+            const decryptedChunk = wasmInstance.decryptChunk(chunk, isLastChunk);
+            if (!decryptedChunk) {
+                throw new Error(`Failed to decrypt chunk ${i}`);
+            }
 
-                        chunks.push(decryptedChunk);
+            chunks.push(decryptedChunk);
 
-                        // Calculate progress (40% to 90% of total progress)
-                        const decryptProgress = 40 + ((i + 1) / totalChunks) * 50;
-                        await progressCallback(
-                            decryptProgress,
-                            `Dekrypterer... (${Math.round((i + 1) / totalChunks * 100)}%)`
-                        );
-                    }
+            // Calculate and update progress with proper scaling
+            const currentProgress = (i + 1) / totalChunks;
+            const scaledProgress = 40 + (currentProgress * 50); // Scale between 40% and 90%
+
+            // Ensure UI update happens
+            await new Promise(resolve => {
+                requestAnimationFrame(async () => {
+                    await progressCallback(
+                        scaledProgress,
+                        `Dekrypterer... (${Math.round(currentProgress * 100)}%)`
+                    );
+                    resolve();
+                });
+            });
+        }
 
                     // Combine all decrypted chunks
                     const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
@@ -495,25 +504,30 @@
         }
 
         async function updateDownloadProgress(progress, action) {
-            const progressContainer = document.getElementById('downloadProgress');
-            const progressTitle = document.getElementById('downloadProgressTitle');
-            const progressBar = document.getElementById('downloadProgressBar');
-            const progressText = document.getElementById('downloadProgressText');
-            const downloadButton = document.getElementById('downloadButton');
+    const progressContainer = document.getElementById('downloadProgress');
+    const progressTitle = document.getElementById('downloadProgressTitle');
+    const progressBar = document.getElementById('downloadProgressBar');
+    const progressText = document.getElementById('downloadProgressText');
+    const downloadButton = document.getElementById('downloadButton');
 
-            if (progress >= 100) {
-                progressContainer.style.display = 'none';
-                downloadButton.classList.remove('hidden');
-                return;
-            }
+    // Ensure progress is a valid number between 0 and 100
+    progress = Math.min(Math.max(0, progress), 100);
+    if (!Number.isFinite(progress)) {
+        progress = 0;
+    }
 
-            progressContainer.style.display = 'block';
-            downloadButton.classList.add('hidden');
-            progressTitle.textContent = action;
-            progressBar.style.width = `${progress}%`;
-            progressText.textContent = `${Math.round(progress)}%`;
-        }
+    if (progress >= 100) {
+        progressContainer.style.display = 'none';
+        downloadButton.classList.remove('hidden');
+        return;
+    }
 
+    progressContainer.style.display = 'block';
+    downloadButton.classList.add('hidden');
+    progressTitle.textContent = action;
+    progressBar.style.width = `${progress}%`;
+    progressText.textContent = `${Math.round(progress)}%`;
+}
         async function downloadFile() {
             const fileId = window.location.pathname.slice(1);
             try {
@@ -526,13 +540,13 @@
                 const response = await fetch(`/download/${fileId}`);
                 if (!response.ok) throw new Error('Nedlasting feilet');
 
-                const contentLength = +response.headers.get('Content-Length');
+                const contentLength = +response.headers.get('Content-Length') || 0;
                 const reader = response.body.getReader();
                 const chunks = [];
                 let receivedLength = 0;
 
                 while (true) {
-                    const {done, value} = await reader.read();
+                    const { done, value } = await reader.read();
 
                     if (done) break;
 
@@ -540,11 +554,16 @@
                     receivedLength += value.length;
 
                     // Download progress (0% to 40% of total progress)
-                    const downloadProgress = (receivedLength / contentLength) * 40;
-                    await updateDownloadProgress(
-                        downloadProgress,
-                        `Laster ned... (${Math.round(downloadProgress * 2.5)}%)`
-                    );
+                    // Only calculate progress if contentLength is valid
+                    if (contentLength > 0) {
+                        const downloadProgress = Math.min((receivedLength / contentLength) * 40, 40);
+                        await updateDownloadProgress(
+                            downloadProgress,
+                            `Laster ned... (${Math.round((receivedLength / contentLength) * 100)}%)`
+                        );
+                    } else {
+                        await updateDownloadProgress(20, 'Laster ned...');
+                    }
                 }
 
                 // Combine downloaded chunks
@@ -555,20 +574,20 @@
                     position += chunk.length;
                 }
 
-                console.log('Download complete:', {
-                    totalSize: encryptedData.length,
-                    chunks: chunks.length
-                });
+                await updateDownloadProgress(40, 'Dekrypterer...');
 
                 // Decrypt with progress updates
                 const processor = new ChunkedFileProcessor();
                 const { decrypted, metadata } = await processor.decryptFile(
                     encryptedData,
                     encryptionKey,
-                    updateDownloadProgress
+                    async (progress, message) => {
+                        // Ensure progress is between 40 and 90
+                        const adjustedProgress = 40 + (Math.min(Math.max(0, progress), 100) * 0.5);
+                        await updateDownloadProgress(adjustedProgress, message);
+                    }
                 );
 
-                // Prepare final download (90% to 100%)
                 await updateDownloadProgress(90, 'Forbereder nedlasting...');
 
                 const blob = new Blob([decrypted], { type: metadata.contentType || 'application/octet-stream' });
@@ -589,6 +608,7 @@
                 document.getElementById('downloadProgress').style.display = 'none';
             }
         }
+
         // Initialize WebAssembly
         async function initWasm() {
             const go = new Go();

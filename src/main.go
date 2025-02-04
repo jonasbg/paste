@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"log"
@@ -88,20 +89,40 @@ func handleMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Read first chunk of file (metadata should be at the start)
-	buffer := make([]byte, 1024) // Usually metadata is small
-	n, err := file.Read(buffer)
-	if err != nil && err != io.EOF {
-		http.Error(w, "Error reading file", http.StatusInternalServerError)
+	// Read header to get metadata length (16 bytes: 12 for IV + 4 for length)
+	header := make([]byte, 16)
+	_, err = io.ReadFull(file, header)
+	if err != nil {
+		http.Error(w, "Error reading file header", http.StatusInternalServerError)
+		return
+	}
+
+	// Extract metadata length from bytes 12-15
+	metadataLen := binary.LittleEndian.Uint32(header[12:16])
+
+	// Sanity check on metadata length
+	if metadataLen > 1024*1024 { // 1MB max for metadata
+		http.Error(w, "Invalid metadata length", http.StatusInternalServerError)
+		return
+	}
+
+	// Allocate buffer for full metadata section (header + encrypted metadata)
+	fullMetadata := make([]byte, 16+int(metadataLen))
+	copy(fullMetadata[:16], header)
+
+	// Read the encrypted metadata portion
+	_, err = io.ReadFull(file, fullMetadata[16:])
+	if err != nil {
+		http.Error(w, "Error reading metadata", http.StatusInternalServerError)
 		return
 	}
 
 	// Set headers
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	// Write the chunk containing metadata
-	w.Write(buffer[:n])
+	// Write the complete metadata section
+	w.Write(fullMetadata)
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
