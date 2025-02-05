@@ -229,6 +229,89 @@
         .hidden {
             display: none !important;
         }
+
+        .success-message {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background-color: #F0FDF4;
+            border: 1px solid #DCFCE7;
+            border-radius: 8px;
+            margin-top: 16px;
+        }
+
+        .success-message svg {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            color: #16A34A;
+        }
+
+        .success-message p {
+            margin: 0;
+            color: #166534;
+            font-weight: 500;
+            line-height: 1.5;
+        }
+
+        .error-message {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background-color: #FEF2F2;
+            border: 1px solid #FEE2E2;
+            border-radius: 8px;
+            margin-top: 16px;
+        }
+
+        .error-message svg {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            color: #DC2626;
+        }
+
+        .error-message p {
+            margin: 0;
+            color: #991B1B;
+            font-weight: 500;
+            line-height: 1.5;
+        }
+
+        .key-prompt {
+            background-color: var(--light-gray);
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            margin-top: 1rem;
+        }
+
+        .key-prompt h2 {
+            font-size: 1.25rem;
+            margin: 0 0 1rem 0;
+            font-weight: 500;
+        }
+
+        .key-prompt p {
+            margin-bottom: 1rem;
+            color: #666;
+        }
+
+        .key-input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #E0E0E0;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            font-family: inherit;
+        }
+
+        .key-input:focus {
+            outline: none;
+            border-color: var(--primary-green);
+            box-shadow: 0 0 0 2px rgba(64, 184, 123, 0.2);
+        }
     </style>
 </head>
 
@@ -320,6 +403,24 @@
             <div class="progress-title">Last ned fil</div>
             <div class="file-info">
                 <div class="file-info-item" id="downloadFileName">Henter filinformasjon...</div>
+            </div>
+
+            <div id="keyPrompt" class="key-prompt" style="display: none;">
+                <h2>Dekrypteringsnøkkel kreves</h2>
+                <p>Du trenger en dekrypteringsnøkkel for å få tilgang til denne filen.
+                    Vennligst lim inn nøkkelen du har mottatt.</p>
+                <input type="text" id="keyInput" class="key-input" placeholder="Lim inn dekrypteringsnøkkel her">
+                <button class="button" onclick="submitKey()">Fortsett</button>
+            </div>
+
+            <div id="finished-downloading" class="success-message" style="display: none;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                </svg>
+                <p>Filen er lastet ned og sikkert slettet fra serveren vår. Takk for at du bruker vår sikre
+                    fildelingstjeneste!</p>
             </div>
             <button class="button" onclick="downloadFile()" id="downloadButton">Last ned</button>
 
@@ -510,6 +611,7 @@
             const progressBar = document.getElementById('downloadProgressBar');
             const progressText = document.getElementById('downloadProgressText');
             const downloadButton = document.getElementById('downloadButton');
+            const finishedDownloading = document.getElementById('finished-downloading');
 
             // Ensure progress is a valid number between 0 and 100
             progress = Math.min(Math.max(0, progress), 100);
@@ -519,6 +621,7 @@
 
             if (progress >= 100) {
                 progressContainer.style.display = 'none';
+                finishedDownloading.style.display = 'block';
                 return;
             }
 
@@ -732,8 +835,24 @@
             if (!(window.location.pathname.length > 1)) return;
 
             const fileId = window.location.pathname.slice(1);
+            const downloadContainer = document.getElementById('downloadContainer');
+
             try {
                 const response = await fetch(`/metadata/${fileId}`);
+                if (response.status === 404) {
+                    // Clear existing content and show 404 message
+                    downloadContainer.innerHTML = `
+                <div class="error-message">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    <p>Beklager, men filen du leter etter finnes ikke eller har utløpt.
+                    Vennligst kontakt avsenderen for å få en ny delingslenke.</p>
+                </div>`;
+                    return;
+                }
                 if (!response.ok) throw new Error('Kunne ikke hente filinformasjon');
 
                 const encryptedData = await response.arrayBuffer();
@@ -752,7 +871,6 @@
                 document.getElementById('downloadFileName').textContent = 'Kunne ikke hente filinformasjon';
             }
         }
-
         function handleUpload() {
             const fileInput = document.getElementById('fileInput');
             if (!fileInput.files.length) {
