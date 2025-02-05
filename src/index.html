@@ -692,8 +692,21 @@
                 formData.append('file', blob, 'encrypted_container');
 
                 const xhr = new XMLHttpRequest();
+                const expectedSize = blob.size;
+                console.log('Expected upload size:', expectedSize, 'bytes');
+
                 xhr.upload.onprogress = (event) => {
                     if (event.lengthComputable) {
+                        // Verify upload size matches expected size
+                        // Allow for 1KB variance due to headers/encoding
+                        if (Math.abs(event.total - expectedSize) > 1024) {
+                            console.error('Upload size mismatch:', {
+                                expected: expectedSize,
+                                actual: event.total
+                            });
+                            xhr.abort();
+                            throw new Error('Upload size verification failed');
+                        }
                         const progress = (event.loaded / event.total) * 50 + 50;
                         updateProgress(progress, 'Laster opp...');
                     }
