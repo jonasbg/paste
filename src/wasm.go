@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"syscall/js"
 )
 
@@ -51,15 +52,30 @@ func encrypt(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
+	// Decode the key using base64 URL-safe encoding
 	keyBase64 := args[0].String()
-	data := make([]byte, args[1].Length())
-	js.CopyBytesToGo(data, args[1])
 
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
+	// Handle base64 padding (add '=' if it's missing)
+	if len(keyBase64)%4 != 0 {
+		keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
+	}
+
+	// Decode the base64 encoded key (using URL-safe base64)
+	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
 		return handleError(err)
 	}
 
+	// Validate key length (must be 16, 24, or 32 bytes)
+	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
+		return handleError(errors.New("invalid key length"))
+	}
+
+	// Copy the data into a byte slice
+	data := make([]byte, args[1].Length())
+	js.CopyBytesToGo(data, args[1])
+
+	// Generate a 12-byte IV for GCM mode
 	iv := make([]byte, 12)
 	if _, err := rand.Read(iv); err != nil {
 		return handleError(err)
@@ -76,6 +92,7 @@ func encrypt(_ js.Value, args []js.Value) interface{} {
 	}
 
 	encrypted := aead.Seal(nil, iv, data, nil)
+
 	result := append(iv, encrypted...)
 
 	uint8Array := js.Global().Get("Uint8Array").New(len(result))
@@ -96,7 +113,7 @@ func decrypt(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid encrypted data: no IV"))
 	}
 
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
+	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
 		return handleError(err)
 	}
@@ -130,7 +147,7 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 	}
 
 	keyBase64 := args[0].String()
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
+	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
 		return handleError(err)
 	}
@@ -170,7 +187,7 @@ func createDecryptionStream(_ js.Value, args []js.Value) interface{} {
 	iv := make([]byte, args[1].Length())
 	js.CopyBytesToGo(iv, args[1])
 
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
+	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
 		return handleError(err)
 	}
@@ -254,7 +271,7 @@ func generateKey(_ js.Value, _ []js.Value) interface{} {
 	if _, err := rand.Read(key); err != nil {
 		return handleError(err)
 	}
-	return base64.StdEncoding.EncodeToString(key)
+	return base64.URLEncoding.EncodeToString(key)
 }
 
 func decryptMetadata(_ js.Value, args []js.Value) interface{} {
@@ -277,7 +294,7 @@ func decryptMetadata(_ js.Value, args []js.Value) interface{} {
 	}
 	encryptedMetadata := data[16 : 16+metadataLen]
 
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
+	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
 		return handleError(err)
 	}
