@@ -302,7 +302,8 @@ func handleDownload(uploadDir string) http.HandlerFunc {
 			return
 		}
 
-		file, err := os.Open(filepath.Join(uploadDir, id))
+		filePath := filepath.Join(uploadDir, id)
+		file, err := os.Open(filePath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				log.Printf("%s[ERROR]%s File not found for download: %s", red, reset, id)
@@ -322,6 +323,11 @@ func handleDownload(uploadDir string) http.HandlerFunc {
 		if err != nil {
 			log.Printf("%s[ERROR]%s Streaming file %s: %v", red, reset, id, err)
 			return
+		}
+
+		file.Close() // Close before deletion
+		if err := os.Remove(filePath); err != nil {
+			log.Printf("%s[ERROR]%s Deleting file %s: %v", red, reset, id, err)
 		}
 	}
 }
