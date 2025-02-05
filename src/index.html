@@ -740,6 +740,26 @@
             return `${size.toFixed(2)} ${units[unitIndex]}`;
         }
 
+        window.addEventListener('beforeunload', function () {
+            // Clear the file input
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput) {
+                fileInput.value = '';
+            }
+
+            // Also clear the selected file display if it exists
+            const selectedFileDisplay = document.getElementById('selectedFile');
+            if (selectedFileDisplay) {
+                selectedFileDisplay.textContent = '';
+            }
+
+            // Hide the file info display if it exists
+            const fileInfo = document.getElementById('fileInfo');
+            if (fileInfo) {
+                fileInfo.style.display = 'none';
+            }
+        });
+
         async function updateProgress(progress, action) {
             if (progress >= 100) {
                 document.getElementById('progressContainer').style.display = 'none';
