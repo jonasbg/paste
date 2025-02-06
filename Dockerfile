@@ -57,6 +57,7 @@ COPY --from=wasm-builder --chown=101:101 /wasm/wasm_exec.js /web/wasm_exec.js
 
 # Define any necessary volumes
 VOLUME ["/uploads"]
+VOLUME ["/data"]
 
 # Set user 101
 USER 101
