@@ -4,20 +4,20 @@ deployment:
   tag: "latest"
   deployment: deployment
   mounts:
-  - name: upload
-    mountPath: /upload
+  - name: uploads
+    mountPath: /uploads
     readOnly: false
     storage: 10Gi
-    statefulSet: false
-  - name: tmp
-    inMemory: true
-    mountPath: /tmp
+  - name: data
+    mountPath: /data
     readOnly: false
-    storage: 50Mi
+    storage: 500Mi
   host: chase.example.com
   env:
   - name: UPLOAD_DIR
-    value: "/upload"
+    value: "/uploads"
+  - name: DATABASE_PATH
+    value: "/data"
   services:
   - name: http
     port: 8080
