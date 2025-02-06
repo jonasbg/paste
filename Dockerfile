@@ -51,8 +51,8 @@ COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # Copy the binary and web files as user 101
 COPY --from=backend-builder --chown=101:101 /app/backend/paste /paste
 COPY --from=frontend-builder --chown=101:101 /app/frontend/build /web
-COPY --from=wasm-builder --chown=101:101 /wasm/encryption.wasm /web/static/encryption.wasm
-COPY --from=wasm-builder --chown=101:101 /wasm/wasm_exec.js /web/static/wasm_exec.js
+COPY --from=wasm-builder --chown=101:101 /wasm/encryption.wasm /web/encryption.wasm
+COPY --from=wasm-builder --chown=101:101 /wasm/wasm_exec.js /web/wasm_exec.js
 
 # Define any necessary volumes
 VOLUME ["/uploads"]
