@@ -7,6 +7,7 @@
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import UrlShare from '$lib/components/UrlShare/UrlShare.svelte';
+    import { replaceState } from '$app/navigation';
 	import { fade } from 'svelte/transition';
 
 	let fileInput: HTMLInputElement;
@@ -44,7 +45,7 @@
 			});
 
 			shareUrl = `${window.location.origin}/${fileId}#key=${key}`;
-			window.history.replaceState(null, '', shareUrl);
+			replaceState('', shareUrl);
 		} catch (error) {
 			console.error('Feil: ' + (error as Error).message);
 		} finally {
@@ -89,7 +90,7 @@
         event.stopPropagation();
         isDragging = false;
         dragCounter = 0;
-        
+
         const files = event.dataTransfer?.files;
         if (files?.length) {
             selectedFile = files[0];
@@ -115,7 +116,7 @@ on:drop={handleDrop}>
 							Del filer sikkert med ende-til-ende-kryptering. Filene krypteres i nettleseren din før de
 							lastes opp, og dekrypteres først når mottakeren laster dem ned.
 					</p>
-					
+
 					{#if !isUploading && !shareUrl}
 							{#if selectedFile}
 									<FileInfo
@@ -147,7 +148,7 @@ on:drop={handleDrop}>
 
 
 {#if isDragging}
-    <div 
+    <div
         class="drop-overlay"
         transition:fade={{ duration: 200 }}
         on:dragenter={handleDragEnter}
@@ -157,14 +158,14 @@ on:drop={handleDrop}>
     >
         <div class="drop-overlay-content">
             <div class="drop-icon">
-                <svg 
-                    width="48" 
-                    height="48" 
-                    viewBox="0 0 24 24" 
-                    fill="none" 
-                    stroke="currentColor" 
+                <svg
+                    width="48"
+                    height="48"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
                     stroke-width="2"
-                    stroke-linecap="round" 
+                    stroke-linecap="round"
                     stroke-linejoin="round"
                 >
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -225,7 +226,7 @@ on:drop={handleDrop}>
 	.file-input {
 		display: none;
 	}
-	
+
 	.drop-overlay {
         position: fixed;
         top: 0;
