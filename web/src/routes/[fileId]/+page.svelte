@@ -110,9 +110,11 @@
             <FileInfo filename={metadata.filename} />
 
             {#if !isDownloadComplete}
+            {#if !isDownloading}
                 <button class="button" on:click={initiateDownload} disabled={!canDownload}>
                     {isDownloading ? 'Laster ned...' : 'Last ned'}
                 </button>
+                {/if}
             {/if}
 
             {#if isDownloading || isDownloadComplete}
