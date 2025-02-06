@@ -159,6 +159,12 @@ dd if=/dev/urandom bs=1024 count=1 >> testfile.bin
 curl -v -X POST 'http://localhost:5173/api/upload' -H 'Content-Type: multipart/form-data' -F 'file=@testfile.bin'
 ```
 
+#### Using /dev/urandom and xxd
+```bash
+magic=$(head -c 4 /dev/urandom | xxd -p)
+echo "0x$magic"
+```
+
 ### Rate limiting
 
 ```bash
