@@ -70,9 +70,9 @@ func main() {
 	api := r.Group("/api")
 	api.Use(middleware.RateLimit(limiter), middleware.Logger(database))
 	{
-		api.POST("/upload", handlers.HandleUpload(uploadDir, database))
+		api.POST("/upload", handlers.HandleUpload(uploadDir))
 		api.GET("/metadata/:id", handlers.HandleMetadata(uploadDir))
-		api.GET("/download/:id", handlers.HandleDownload(uploadDir, database))
+		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
 
 		api.GET("/metrics/activity", handlers.HandleActivity(database))
 		api.GET("/metrics/storage", handlers.HandleStorage(database))
