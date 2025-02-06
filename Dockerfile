@@ -1,8 +1,12 @@
 # Stage 1: Build WASM binaries and dependencies
 FROM golang:1.23-alpine AS wasm-builder
+
+ARG MAGIC_NUMBER=0x4E48464C
+ENV MAGIC_NUMBER=${MAGIC_NUMBER}
+
 WORKDIR /wasm
 COPY wasm/ .
-RUN GOOS=js GOARCH=wasm go build -o encryption.wasm wasm.go
+RUN GOOS=js GOARCH=wasm go build -ldflags="-X main.magicNumber=${MAGIC_NUMBER}" -o encryption.wasm wasm.go
 RUN cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" .
 
 # Stage 2: Build the SvelteKit frontend with Bun
@@ -23,6 +27,9 @@ RUN NODE_ENV=production npm run build
 
 # Stage 3: Build the Go backend
 FROM golang:1.23-alpine AS backend-builder
+ARG MAGIC_NUMBER=0x4E48464C
+ENV MAGIC_NUMBER=${MAGIC_NUMBER}
+
 RUN apk add --update gcc musl-dev --no-cache
 WORKDIR /app/backend
 
@@ -37,7 +44,7 @@ COPY api .
 
 # Build with security flags and optimizations
 RUN CGO_ENABLED=1 GOOS=linux go build -a \
-    -ldflags='-w -s -linkmode external -extldflags "-static"' \
+    -ldflags='-w -s -linkmode external -extldflags "-static" -X main.magicNumber=${MAGIC_NUMBER}' \
     -o paste .
 
 # Stage 4: Final stage

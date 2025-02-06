@@ -10,9 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strconv"
 	"strings"
 	"syscall/js"
 )
+
+var magicNumberStr = "0x4E48464C"
 
 const (
 	chunkSize = 1 * 1024 * 1024 // 1MB chunks
@@ -166,6 +170,18 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 	if _, err := rand.Read(iv); err != nil {
 		return handleError(err)
 	}
+
+	parsed, err := strconv.ParseUint(magicNumberStr[2:], 16, 32) // Remove "0x" prefix
+	if err != nil {
+		panic("Invalid magic number: " + err.Error())
+	}
+	magicNumber := uint32(parsed)
+
+	// Create initial header with magic number
+	header := make([]byte, 16)
+	binary.LittleEndian.PutUint32(header[0:4], magicNumber) // Write magic number
+	// bytes 4-12 reserved, keep as zeros
+	// bytes 12-16 will be metadata length, set when metadata is written
 
 	activeCipher = &StreamingCipher{
 		gcm:   aead,
@@ -330,4 +346,51 @@ func decryptMetadata(_ js.Value, args []js.Value) interface{} {
 func handleError(err error) interface{} {
 	errorConstructor := js.Global().Get("Error")
 	return errorConstructor.New(err.Error())
+}
+
+func verifyEncryptedFile(r io.Reader) error {
+	// Read first 16 bytes (header)
+	header := make([]byte, 16)
+	n, err := io.ReadFull(r, header)
+	if err != nil {
+		if err == io.ErrUnexpectedEOF {
+			return fmt.Errorf("invalid file: header too short (%d bytes)", n)
+		}
+		return fmt.Errorf("invalid file: couldn't read header: %w", err)
+	}
+
+	parsed, err := strconv.ParseUint(magicNumberStr[2:], 16, 32) // Remove "0x" prefix
+	if err != nil {
+		panic("Invalid magic number: " + err.Error())
+	}
+	magicNumber := uint32(parsed)
+
+	// Verify magic number (first 4 bytes)
+	magic := binary.LittleEndian.Uint32(header[0:4])
+	if magic != magicNumber {
+		return fmt.Errorf("invalid file: not encrypted with our service (got: %08x, want: %08x)", magic, magicNumber)
+	}
+
+	// Verify version if you have one (bytes 4-8)
+	// Currently reserved, could be used later
+	// version := binary.LittleEndian.Uint32(header[4:8])
+
+	// Check metadata length (bytes 12-16)
+	metadataLen := binary.LittleEndian.Uint32(header[12:16])
+	if metadataLen == 0 {
+		return fmt.Errorf("invalid file: no metadata present")
+	}
+	if metadataLen > 1024*1024 { // 1MB max metadata
+		return fmt.Errorf("invalid file: metadata too large (%d bytes)", metadataLen)
+	}
+
+	// Reserved bytes check (8-12)
+	// Currently not used, but verify they're zeros for future compatibility
+	for i := 8; i < 12; i++ {
+		if header[i] != 0 {
+			return fmt.Errorf("invalid file: reserved bytes must be zero")
+		}
+	}
+
+	return nil
 }

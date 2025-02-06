@@ -145,3 +145,14 @@ go test ./...
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+
+## Testing
+
+```bash
+printf '\x4C\x46\x48\x4E\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00' > testfile.bin
+
+dd if=/dev/urandom bs=1024 count=1 >> testfile.bin
+
+curl -v -X POST 'http://localhost:5173/api/upload' -H 'Content-Type: multipart/form-data' -F 'file=@testfile.bin'
+```

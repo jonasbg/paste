@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
@@ -9,12 +10,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/Norskhelsenett/deling/m/v2/spa"
 	"github.com/gin-gonic/gin"
 
 	"github.com/Norskhelsenett/deling/m/v2/utils"
 )
+
+var magicNumberStr = "0x4E48464C"
 
 const (
 	maxFileSize = 5 * 1024 * 1024 * 1024 // 5GB
@@ -112,36 +116,24 @@ func handleMetadata(uploadDir string) gin.HandlerFunc {
 
 func handleUpload(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Check content length
+
 		if c.Request.ContentLength > maxFileSize {
 			c.String(http.StatusBadRequest, "File too large")
 			return
 		}
 
-		// Generate ID first
 		id, err := generateID()
 		if err != nil {
 			c.String(http.StatusInternalServerError, "Error generating ID")
 			return
 		}
 
-		// Open destination file
-		dst := filepath.Join(uploadDir, id)
-		out, err := os.Create(dst)
-		if err != nil {
-			c.String(http.StatusInternalServerError, "Error creating file")
-			return
-		}
-		defer out.Close()
-
-		// Get multipart reader
 		reader, err := c.Request.MultipartReader()
 		if err != nil {
 			c.String(http.StatusBadRequest, "Error reading multipart form")
 			return
 		}
 
-		// Stream the file
 		part, err := reader.NextPart()
 		if err != nil {
 			c.String(http.StatusBadRequest, "Error reading file part")
@@ -152,11 +144,60 @@ func handleUpload(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
+		// Buffer for reading header
+		var buf bytes.Buffer
+		tee := io.TeeReader(part, &buf)
+
+		// Read and verify header
+		header := make([]byte, 16)
+		if _, err := io.ReadFull(tee, header); err != nil {
+			c.String(http.StatusBadRequest, "Invalid file format")
+			return
+		}
+
+		// Verify magic number
+		magic := binary.LittleEndian.Uint32(header[0:4])
+		parsed, err := strconv.ParseUint(magicNumberStr[2:], 16, 32) // Remove "0x" prefix
+		if err != nil {
+			panic("Invalid magic number: " + err.Error())
+		}
+		magicNumber := uint32(parsed)
+		if magic != magicNumber {
+			c.String(http.StatusBadRequest, "File not properly encrypted")
+			return
+		}
+
+		// Verify metadata length
+		metadataLen := binary.LittleEndian.Uint32(header[12:16])
+		if metadataLen == 0 || metadataLen > 1024*1024 {
+			c.String(http.StatusBadRequest, "Invalid metadata length")
+			return
+		}
+
+		// Create and write to destination file
+		dst := filepath.Join(uploadDir, id)
+		out, err := os.Create(dst)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error creating file")
+			return
+		}
+		defer out.Close()
+
+		// Write the buffered header first
+		if _, err := io.Copy(out, &buf); err != nil {
+			os.Remove(dst)
+			c.String(http.StatusInternalServerError, "Error writing file")
+			return
+		}
+
+		// Write the rest of the file
 		written, err := io.Copy(out, part)
 		if err != nil {
+			os.Remove(dst)
 			c.String(http.StatusInternalServerError, "Error saving file")
 			return
 		}
+
 		if written > maxFileSize {
 			os.Remove(dst)
 			c.String(http.StatusBadRequest, "File too large")

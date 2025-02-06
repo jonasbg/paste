@@ -58,10 +58,13 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         id: build-docker-image
+
         with:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: |
+            MAGIC_NUMBER=${{ secrets.FILE_MAGIC_NUMBER }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache

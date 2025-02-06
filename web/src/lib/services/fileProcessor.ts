@@ -28,7 +28,6 @@ export class FileProcessor {
         const wasmInstance = getWasmInstance();
         if (!wasmInstance) throw new Error('WASM not initialized');
 
-        // Yield to event loop before initial progress
         await new Promise(resolve => setTimeout(resolve, 0));
         await onProgress(0, 'Forbereder kryptering...');
 
@@ -40,12 +39,22 @@ export class FileProcessor {
 
         const metadataBytes = new TextEncoder().encode(JSON.stringify(metadata));
         const encryptedMetadata = wasmInstance.encrypt(key, metadataBytes);
+
+        // Create header
         const header = new Uint8Array(16 + encryptedMetadata.length - 12);
-        header.set(encryptedMetadata.slice(0, 12), 0);
+
+        // Set magic number in first 4 bytes (0x4E48464C = "NHFL")
+        new DataView(header.buffer).setUint32(0, 0x4E48464C, true);  // Add this line
+
+        // Set metadata length
         new DataView(header.buffer).setUint32(12, encryptedMetadata.length - 12, true);
+
+        // Set encrypted metadata
         header.set(encryptedMetadata.slice(12), 16);
 
         const iv = wasmInstance.createEncryptionStream(key);
+
+        // Rest of your function remains the same...
         const chunks = [];
         const totalChunks = Math.ceil(file.size / this.chunkSize);
 
