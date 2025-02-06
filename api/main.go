@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Norskhelsenett/deling/m/v2/spa"
+	"github.com/jonasbg/paste/m/v2/spa"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 
-	"github.com/Norskhelsenett/deling/m/v2/utils"
+	"github.com/jonasbg/paste/m/v2/utils"
 )
 
 const (
