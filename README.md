@@ -149,10 +149,20 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Testing
 
+### Magic byte
+
 ```bash
 printf '\x4C\x46\x48\x4E\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00' > testfile.bin
 
 dd if=/dev/urandom bs=1024 count=1 >> testfile.bin
 
 curl -v -X POST 'http://localhost:5173/api/upload' -H 'Content-Type: multipart/form-data' -F 'file=@testfile.bin'
+```
+
+### Rate limiting
+
+```bash
+for i in {1..30}; do
+    curl -i http://localhost:5173/api/metadata/1234567890123456789012345678901234 &
+done
 ```
