@@ -112,26 +112,54 @@ func handleMetadata(uploadDir string) gin.HandlerFunc {
 
 func handleUpload(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		file, err := c.FormFile("file")
-		if err != nil {
-			c.String(http.StatusBadRequest, "Error retrieving file")
-			return
-		}
-
-		if file.Size > maxFileSize {
+		// Check content length
+		if c.Request.ContentLength > maxFileSize {
 			c.String(http.StatusBadRequest, "File too large")
 			return
 		}
 
+		// Generate ID first
 		id, err := generateID()
 		if err != nil {
 			c.String(http.StatusInternalServerError, "Error generating ID")
 			return
 		}
 
+		// Open destination file
 		dst := filepath.Join(uploadDir, id)
-		if err := c.SaveUploadedFile(file, dst); err != nil {
+		out, err := os.Create(dst)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error creating file")
+			return
+		}
+		defer out.Close()
+
+		// Get multipart reader
+		reader, err := c.Request.MultipartReader()
+		if err != nil {
+			c.String(http.StatusBadRequest, "Error reading multipart form")
+			return
+		}
+
+		// Stream the file
+		part, err := reader.NextPart()
+		if err != nil {
+			c.String(http.StatusBadRequest, "Error reading file part")
+			return
+		}
+		if part.FormName() != "file" {
+			c.String(http.StatusBadRequest, "Invalid form field")
+			return
+		}
+
+		written, err := io.Copy(out, part)
+		if err != nil {
 			c.String(http.StatusInternalServerError, "Error saving file")
+			return
+		}
+		if written > maxFileSize {
+			os.Remove(dst)
+			c.String(http.StatusBadRequest, "File too large")
 			return
 		}
 
