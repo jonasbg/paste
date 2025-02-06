@@ -2,11 +2,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
 	import { initWasm, getWasmInstance } from '$lib/utils/wasm-loader';
 
 	let encryptionKey: string;
-	let wasmInstance = getWasmInstance();
+  let isLoading = false;
 	let isWasmLoaded = false;
 	const maxFileSize = 1 * 1024 * 1024 * 1024; // 1GB in bytes
 
@@ -607,25 +606,11 @@
 			sans-serif;
 	}
 
-	body {
-		margin: 0;
-		padding: 0;
-		color: var(--dark-text);
-		background-color: white;
-	}
 
 	.container {
 		max-width: 1200px;
 		margin: 0 auto;
 		padding: 2rem;
-	}
-
-	.header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 1rem 2rem;
-		border-bottom: 1px solid var(--light-gray);
 	}
 
 	h1 {
@@ -672,15 +657,6 @@
 
 	.file-input {
 		display: none;
-	}
-
-	.file-input-label {
-		display: inline-block;
-		padding: 0.75rem 1.5rem;
-		background-color: var(--light-gray);
-		border-radius: var(--border-radius);
-		cursor: pointer;
-		margin-right: 1rem;
 	}
 
 	.progress-container {
@@ -821,10 +797,6 @@
 		color: #666;
 	}
 
-	.hidden {
-		display: none !important;
-	}
-
 	.success-message {
 		display: flex;
 		align-items: center;
@@ -846,31 +818,6 @@
 	.success-message p {
 		margin: 0;
 		color: #166534;
-		font-weight: 500;
-		line-height: 1.5;
-	}
-
-	.error-message {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 16px;
-		background-color: #fef2f2;
-		border: 1px solid #fee2e2;
-		border-radius: 8px;
-		margin-top: 16px;
-	}
-
-	.error-message svg {
-		flex-shrink: 0;
-		width: 24px;
-		height: 24px;
-		color: #dc2626;
-	}
-
-	.error-message p {
-		margin: 0;
-		color: #991b1b;
 		font-weight: 500;
 		line-height: 1.5;
 	}
