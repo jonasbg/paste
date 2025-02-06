@@ -4,6 +4,31 @@
 	"name": "Go",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "mcr.microsoft.com/devcontainers/go:1-1.23-bookworm",
+	"features": {
+		"ghcr.io/devcontainers/features/node:1": {},
+		"ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+			"version": "latest",
+			"helm": "latest",
+			"minikube": "none"
+		}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go",
+				"dbaeumer.vscode-eslint",
+				"svelte.svelte-vscode",
+				"qwtel.sqlite-viewer",
+				"ms-kubernetes-tools.vscode-kubernetes-tools"
+			]
+		}
+	},
+
+	"portsAttributes": {
+    "8080": {
+      "onAutoForward": "ignore"
+    }
+  },
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
@@ -12,7 +37,7 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "cp \"$(go env GOROOT)/misc/wasm/wasm_exec.js\" src/. && GOOS=js GOARCH=wasm go build -o scr/encryption.wasm scr/wasm.go"
+	"postCreateCommand": "cp \"$(go env GOROOT)/misc/wasm/wasm_exec.js\" src/. && cd web && npm install && GOOS=js GOARCH=wasm go build -o scr/encryption.wasm scr/wasm.go"
 
 	// Configure tool-specific properties.
 	// "customizations": {},
@@ -20,3 +45,4 @@
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "root"
 }
+

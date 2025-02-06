@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Norskhelsenett/deling/m/v2/spa"
 	"github.com/gin-gonic/gin"
+
+	"github.com/Norskhelsenett/deling/m/v2/utils"
 )
 
 const (
@@ -40,27 +43,23 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
+	api := r.Group("/api")
+	{
+		// API routes
+		api.POST("/upload", handleUpload(uploadDir))
+		api.GET("/download/:id", handleDownload(uploadDir))
+		api.GET("/metadata/:id", handleMetadata(uploadDir))
+	}
+	spaDirectory := utils.GetEnv("WEB_DIR", "../web")
 
-	// Static routes
-	r.GET("/", func(c *gin.Context) {
-		c.File("index.html")
-	})
-	r.GET("/:id", func(c *gin.Context) {
-		c.File("index.html")
-	})
-	r.GET("/wasm_exec.js", func(c *gin.Context) {
-		c.Header("Content-Type", "application/javascript")
-		c.File("wasm_exec.js")
-	})
-	r.GET("/encryption.wasm", func(c *gin.Context) {
-		c.Header("Content-Type", "application/wasm")
-		c.File("encryption.wasm")
-	})
+	spaDirectory = filepath.Clean(spaDirectory)
 
-	// API routes
-	r.POST("/upload", handleUpload(uploadDir))
-	r.GET("/download/:id", handleDownload(uploadDir))
-	r.GET("/metadata/:id", handleMetadata(uploadDir))
+	// Ensure static directory exists
+	if _, err := os.Stat(spaDirectory); os.IsNotExist(err) {
+		log.Fatalf("Static files directory does not exist: %s", spaDirectory)
+	}
+
+	r.Use(spa.Middleware("/", spaDirectory))
 
 	log.Printf("Starting server on :8080 with upload directory: %s", uploadDir)
 	log.Fatal(r.Run(":8080"))
