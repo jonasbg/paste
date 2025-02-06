@@ -67,7 +67,7 @@ func Logger(database *db.DB) gin.HandlerFunc {
 			}
 
 			// Only log if we have a valid file ID
-			if tx.FileID != "" && statusCode != 200 {
+			if tx.FileID != "" || statusCode != 200 {
 				if err := database.LogTransaction(tx); err != nil {
 					c.Error(err)
 				}

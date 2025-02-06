@@ -2,3 +2,4 @@
 .DS_Store
 **/wasm_exec.js
 **/encryption.wasm
+api/__debug_**
