@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,15 +40,25 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
-		file, err := os.Open(filepath.Join(uploadDir, id))
+		filePath := filepath.Join(uploadDir, id)
+
+		// Get file info to get size
+		fileInfo, err := os.Stat(filePath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				fmt.Println("Error: File not found:", id)
 				c.JSON(http.StatusNotFound, gin.H{"error": "Resource not found"})
 			} else {
-				fmt.Println("Error: Failed to open file:", err)
+				fmt.Println("Error: Failed to get file info:", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			}
+			return
+		}
+
+		file, err := os.Open(filePath)
+		if err != nil {
+			fmt.Println("Error: Failed to open file:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 		defer file.Close()
@@ -75,8 +86,14 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
+		// Get total file size
+		fileSize := fileInfo.Size()
+
+		// Add size to response headers
 		c.Header("Content-Type", "application/octet-stream")
 		c.Header("Cache-Control", "no-cache")
+		c.Header("X-File-Size", strconv.FormatInt(fileSize, 10))
+
 		c.Writer.Write(fullMetadata)
 	}
 }

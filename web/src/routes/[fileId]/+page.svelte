@@ -7,18 +7,20 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
-	import FileInfo from '$lib/components/FileInfo.svelte';
+	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import { replaceState } from '$app/navigation';
+	import { getFileMetadata } from '$lib/api';
 
 	let encryptionKey: string = '';
-	let manualKeyInput: string = '';
-	let metadata: any = null;
-	let downloadProgress = 0;
-	let downloadMessage = '';
-	let isDownloading = false;
-	let downloadError: string | null = null;
-	let isDownloadComplete = false;
-	let keyError: string | null = null;
+    let manualKeyInput: string = '';
+    let metadata: any = null;
+    let fileSize: string | undefined;
+    let downloadProgress = 0;
+    let downloadMessage = '';
+    let isDownloading = false;
+    let downloadError: string | null = null;
+    let isDownloadComplete = false;
+    let keyError: string | null = null;
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
@@ -50,6 +52,21 @@
 		return input;
 	}
 
+	async function getMetadata() {
+        try {
+            const fileId = $page.params.fileId;
+            const response = await getFileMetadata(fileId);
+            const metadataResponse = await fetchMetadata(fileId, encryptionKey);
+
+            metadata = metadataResponse;
+            // Convert number to string for FileInfo component
+            fileSize = response.size?.toString();
+        } catch (error) {
+            console.error('Metadata error:', error);
+            metadata = { error: (error as Error).message };
+        }
+    }
+
 	// Function to safely handle encryption key without exposing it in URL
 	function setEncryptionKey(key: string) {
 		encryptionKey = key;
@@ -60,25 +77,25 @@
 	}
 
 	async function handleManualKeySubmit() {
-		if (!manualKeyInput.trim()) return;
+        if (!manualKeyInput.trim()) return;
 
-		try {
-			keyError = null;
-			const extractedKey = validateAndExtractKey(manualKeyInput.trim());
+        try {
+            keyError = null;
+            const extractedKey = validateAndExtractKey(manualKeyInput.trim());
 
-			if (extractedKey) {
-				setEncryptionKey(extractedKey);
-				await getFileMetadata();
+            if (extractedKey) {
+                setEncryptionKey(extractedKey);
+                await getMetadata();
 
-				if (!downloadError && !metadata?.error) {
-					await initiateDownload();
-				}
-			}
-		} catch (error) {
-			keyError = (error as Error).message;
-			console.error('Key validation error:', error);
-		}
-	}
+                if (!downloadError && !metadata?.error) {
+                    await initiateDownload();
+                }
+            }
+        } catch (error) {
+            keyError = (error as Error).message;
+            console.error('Key validation error:', error);
+        }
+    }
 
 	async function initiateDownload() {
     if (!encryptionKey || isDownloading) return;
@@ -138,69 +155,61 @@
     }
 }
 
-	async function getFileMetadata() {
-		try {
-			const fileId = $page.params.fileId;
-			metadata = await fetchMetadata(fileId, encryptionKey);
-		} catch (error) {
-			console.error('Metadata error:', error);
-			metadata = { error: (error as Error).message };
-		}
-	}
+onMount(async () => {
+        if (!browser) return;
 
-	onMount(async () => {
-		if (!browser) return;
+        try {
+            await initWasm();
+            const urlParams = new URLSearchParams(window.location.hash.slice(1));
+            const key = urlParams.get('key');
+            if (key) {
+                try {
+                    const validatedKey = validateAndExtractKey(key);
+                    if (validatedKey) {
+                        setEncryptionKey(validatedKey);
+                        await getMetadata();
+                    }
+                } catch (error) {
+                    keyError = (error as Error).message;
+                }
+            }
+        } catch (error) {
+            console.error('Failed to initialize:', error);
+            downloadError = 'Failed to initialize the application';
+        }
+    });;
 
-		try {
-			await initWasm();
-			// Check URL hash only once on initial load
-			const urlParams = new URLSearchParams(window.location.hash.slice(1));
-			const key = urlParams.get('key');
-			if (key) {
-				try {
-					const validatedKey = validateAndExtractKey(key);
-					if (validatedKey) {
-						setEncryptionKey(validatedKey);
-						await getFileMetadata();
-					}
-				} catch (error) {
-					keyError = (error as Error).message;
-				}
-			}
-		} catch (error) {
-			console.error('Failed to initialize:', error);
-			downloadError = 'Failed to initialize the application';
-		}
-	});
-
-	$: canDownload = !!(
-		metadata &&
-		!metadata.error &&
-		!isDownloading &&
-		!isDownloadComplete &&
-		encryptionKey
-	);
+		$: canDownload = !!(
+        metadata &&
+        !metadata.error &&
+        !isDownloading &&
+        !isDownloadComplete &&
+        encryptionKey
+    );
 </script>
 
 <div class="container">
 	<div class="download-container">
-		<h1>Last ned fil</h1>
+			<h1>Last ned fil</h1>
 
-		{#if downloadError}
-			<ErrorMessage message={downloadError} />
-		{:else if metadata?.error}
-			<ErrorMessage message={metadata.error} />
-		{:else}
-			{#if metadata?.filename}
-				<FileInfo filename={metadata.filename} />
-				{#if !isDownloadComplete}
-					{#if !isDownloading}
-						<button class="button" on:click={initiateDownload} disabled={!canDownload}>
-							{isDownloading ? 'Laster ned...' : 'Last ned'}
-						</button>
+			{#if downloadError}
+					<ErrorMessage message={downloadError} />
+			{:else if metadata?.error}
+					<ErrorMessage message={metadata.error} />
+			{:else}
+					{#if metadata?.filename}
+							<FileInfo
+									fileName={metadata.filename}
+									fileSize={fileSize}
+							/>
+							{#if !isDownloadComplete}
+									{#if !isDownloading}
+											<button class="button" on:click={initiateDownload} disabled={!canDownload}>
+													{isDownloading ? 'Laster ned...' : 'Last ned'}
+											</button>
+									{/if}
+							{/if}
 					{/if}
-				{/if}
-			{/if}
 
 			{#if isDownloading || isDownloadComplete}
 				<ProgressBar

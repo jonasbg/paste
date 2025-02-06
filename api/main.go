@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	requestsPerSecond = 5
-	burstSize         = 20
+	requestsPerSecond = 2
+	burstSize         = 10
 )
 
 func getUploadDir() string {
