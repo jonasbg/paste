@@ -9,16 +9,97 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/Norskhelsenett/deling/m/v2/spa"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 
 	"github.com/Norskhelsenett/deling/m/v2/utils"
 )
 
 const (
 	maxFileSize = 5 * 1024 * 1024 * 1024 // 5GB
+
+	// Rate limiting constants
+	requestsPerSecond = 5
+	burstSize         = 20
 )
+
+type limiterInfo struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+type IPRateLimiter struct {
+	ips map[string]*limiterInfo
+	mu  *sync.RWMutex
+	r   rate.Limit
+	b   int
+}
+
+// Create a new rate limiter
+func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
+	i := &IPRateLimiter{
+		ips: make(map[string]*limiterInfo),
+		mu:  &sync.RWMutex{},
+		r:   r,
+		b:   b,
+	}
+
+	// Start a goroutine to clean up old entries
+	go i.cleanupLoop()
+	return i
+}
+func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	info, exists := i.ips[ip]
+	if !exists {
+		info = &limiterInfo{
+			limiter:  rate.NewLimiter(i.r, i.b),
+			lastSeen: time.Now(),
+		}
+		i.ips[ip] = info
+	} else {
+		info.lastSeen = time.Now()
+	}
+
+	return info.limiter
+}
+
+// Cleanup old IP entries periodically
+func (i *IPRateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(time.Hour)
+	for range ticker.C {
+		i.mu.Lock()
+		for ip, info := range i.ips {
+			if time.Since(info.lastSeen) > time.Hour {
+				delete(i.ips, ip)
+			}
+		}
+		i.mu.Unlock()
+	}
+}
+
+// Rate limiting middleware
+func rateLimitMiddleware(limiter *IPRateLimiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		l := limiter.GetLimiter(ip)
+		if !l.Allow() {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":       "Too many requests",
+				"retry_after": "1s",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
 
 func getUploadDir() string {
 	if dir := os.Getenv("UPLOAD_DIR"); dir != "" {
@@ -41,9 +122,12 @@ func main() {
 		log.Fatalf("Failed to create upload directory: %v", err)
 	}
 
+	limiter := NewIPRateLimiter(rate.Limit(requestsPerSecond), burstSize)
+
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 	api := r.Group("/api")
+	api.Use(rateLimitMiddleware(limiter))
 	{
 		// API routes
 		api.POST("/upload", handleUpload(uploadDir))
