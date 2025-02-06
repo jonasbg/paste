@@ -8,6 +8,7 @@
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import FileInfo from '$lib/components/FileInfo.svelte';
+	import { replaceState } from '$app/navigation';
 
 	let encryptionKey: string = '';
 	let manualKeyInput: string = '';
@@ -54,7 +55,7 @@
 		encryptionKey = key;
 		// Clear any sensitive data from URL without adding to history
 		if (browser) {
-			window.history.replaceState(null, '', window.location.pathname);
+			replaceState('', window.location.pathname);
 		}
 	}
 
