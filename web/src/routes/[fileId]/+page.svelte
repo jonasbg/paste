@@ -96,9 +96,20 @@
 				}
 			);
 
+			// Check if we actually got decrypted data
+			if (!decrypted || decrypted.length === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+			}
+
 			const blob = new Blob([decrypted], {
 				type: fileMetadata.contentType || 'application/octet-stream'
 			});
+
+			// Additional check for blob size
+			if (blob.size === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+			}
+
 			const url = window.URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
@@ -116,6 +127,9 @@
 		} catch (error) {
 			console.error('Download error:', error);
 			downloadError = (error as Error).message;
+			// Reset progress when error occurs
+			downloadProgress = 0;
+			downloadMessage = '';
 		} finally {
 			isDownloading = false;
 		}
