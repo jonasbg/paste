@@ -201,7 +201,6 @@ on:drop={handleDrop}>
         flex: 1;
         display: flex;
         flex-direction: column;
-				max-width: 50vw;
     }
 
 	h1 {
