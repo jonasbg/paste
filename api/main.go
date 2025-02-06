@@ -162,8 +162,8 @@ func handleDownload(uploadDir string) gin.HandlerFunc {
 		c.File(filePath)
 
 		// Delete after sending
-		go func() {
-			os.Remove(filePath)
-		}()
+		// go func() {
+		// 	os.Remove(filePath)
+		// }()
 	}
 }

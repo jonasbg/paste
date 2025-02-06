@@ -6,7 +6,7 @@
     import { downloadAndDecryptFile, fetchMetadata } from '$lib/services/fileService';
     import ErrorMessage from '$lib/components/ErrorMessage.svelte';
     import SuccessMessage from '$lib/components/SuccessMessage.svelte';
-    import ProgressBar from '$lib/components/ProgressBar.svelte';
+    import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
     import FileInfo from '$lib/components/FileInfo.svelte';
 
     let encryptionKey: string = '';
@@ -17,47 +17,43 @@
     let downloadError: string | null = null;
     let isDownloadComplete = false;
 
-    async function updateProgress(progress: number, message: string) {
-        downloadProgress = progress;
-        downloadMessage = message;
-    }
-
     async function initiateDownload() {
-        if (!encryptionKey || isDownloading) return;
-        isDownloading = true;
-        downloadError = null;
+    if (!encryptionKey || isDownloading) return;
+    isDownloading = true;
+    downloadError = null;
 
-        try {
-            const fileId = $page.params.fileId;
-            const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
-                fileId,
-                encryptionKey,
-                updateProgress
-            );
+    try {
+        const fileId = $page.params.fileId;
 
-            await updateProgress(90, 'Forbereder nedlasting...');
+        const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
+            fileId,
+            encryptionKey,
+            async (progress, message) => {
+                downloadProgress = progress;
+				downloadMessage = message;
+            }
+        );
 
-            const blob = new Blob([decrypted], {
-                type: fileMetadata.contentType || 'application/octet-stream'
-            });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileMetadata.filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+        const blob = new Blob([decrypted], {
+            type: fileMetadata.contentType || 'application/octet-stream'
+        });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileMetadata.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
 
-            isDownloadComplete = true;
-            await updateProgress(100, 'Fullført!');
-        } catch (error) {
-            console.error('Download error:', error);
-            downloadError = (error as Error).message;
-        } finally {
-            isDownloading = false;
-        }
+        isDownloadComplete = true;
+    } catch (error) {
+        console.error('Download error:', error);
+        downloadError = (error as Error).message;
+    } finally {
+        isDownloading = false;
     }
+}
 
     async function getFileMetadata() {
         try {
@@ -120,7 +116,7 @@
             {/if}
 
             {#if isDownloading || isDownloadComplete}
-                <ProgressBar progress={downloadProgress} message={downloadMessage} />
+                <ProgressBar progress={downloadProgress} message={downloadMessage} isVisible={isDownloading} />
             {/if}
 
             {#if isDownloadComplete}
