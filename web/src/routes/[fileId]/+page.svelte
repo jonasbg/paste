@@ -81,60 +81,62 @@
 	}
 
 	async function initiateDownload() {
-		if (!encryptionKey || isDownloading) return;
-		isDownloading = true;
-		downloadError = null;
+    if (!encryptionKey || isDownloading) return;
+    isDownloading = true;
+    downloadError = null;
 
-		try {
-			const fileId = $page.params.fileId;
+    try {
+        const fileId = $page.params.fileId;
 
-			const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
-				fileId,
-				encryptionKey,
-				async (progress, message) => {
-					downloadProgress = progress;
-					downloadMessage = message;
+        const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
+            fileId,
+            encryptionKey,
+            async (progress, message) => {
+                downloadProgress = progress;
+                downloadMessage = message;
+            }
+        );
+
+        if (!decrypted || decrypted.length === 0) {
+            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+        }
+
+        const blob = new Blob([decrypted], {
+            type: fileMetadata.contentType || 'application/octet-stream'
+        });
+
+        if (blob.size === 0) {
+            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+        }
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileMetadata.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        isDownloadComplete = true;
+
+        // Clear sensitive data and reset URL to domain root
+        encryptionKey = '';
+        manualKeyInput = '';
+
+        if (browser) {
+            // Clean the URL without redirecting
+            window.history.replaceState({}, '', '/');
 				}
-			);
-
-			// Check if we actually got decrypted data
-			if (!decrypted || decrypted.length === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-			}
-
-			const blob = new Blob([decrypted], {
-				type: fileMetadata.contentType || 'application/octet-stream'
-			});
-
-			// Additional check for blob size
-			if (blob.size === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-			}
-
-			const url = window.URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = fileMetadata.filename;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-			window.URL.revokeObjectURL(url);
-
-			isDownloadComplete = true;
-
-			// Clear encryption key after successful download
-			encryptionKey = '';
-			manualKeyInput = '';
-		} catch (error) {
-			console.error('Download error:', error);
-			downloadError = (error as Error).message;
-			// Reset progress when error occurs
-			downloadProgress = 0;
-			downloadMessage = '';
-		} finally {
-			isDownloading = false;
-		}
-	}
+    } catch (error) {
+        console.error('Download error:', error);
+        downloadError = (error as Error).message;
+        downloadProgress = 0;
+        downloadMessage = '';
+    } finally {
+        isDownloading = false;
+    }
+}
 
 	async function getFileMetadata() {
 		try {
