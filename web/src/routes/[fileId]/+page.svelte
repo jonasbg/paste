@@ -12,15 +12,15 @@
 	import { getFileMetadata } from '$lib/api';
 
 	let encryptionKey: string = '';
-    let manualKeyInput: string = '';
-    let metadata: any = null;
-    let fileSize: string | undefined;
-    let downloadProgress = 0;
-    let downloadMessage = '';
-    let isDownloading = false;
-    let downloadError: string | null = null;
-    let isDownloadComplete = false;
-    let keyError: string | null = null;
+	let manualKeyInput: string = '';
+	let metadata: any = null;
+	let fileSize: string | undefined;
+	let downloadProgress = 0;
+	let downloadMessage = '';
+	let isDownloading = false;
+	let downloadError: string | null = null;
+	let isDownloadComplete = false;
+	let keyError: string | null = null;
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
@@ -53,19 +53,19 @@
 	}
 
 	async function getMetadata() {
-        try {
-            const fileId = $page.params.fileId;
-            const response = await getFileMetadata(fileId);
-            const metadataResponse = await fetchMetadata(fileId, encryptionKey);
+		try {
+			const fileId = $page.params.fileId;
+			const response = await getFileMetadata(fileId);
+			const metadataResponse = await fetchMetadata(fileId, encryptionKey);
 
-            metadata = metadataResponse;
-            // Convert number to string for FileInfo component
-            fileSize = response.size?.toString();
-        } catch (error) {
-            console.error('Metadata error:', error);
-            metadata = { error: (error as Error).message };
-        }
-    }
+			metadata = metadataResponse;
+			// Convert number to string for FileInfo component
+			fileSize = response.size?.toString();
+		} catch (error) {
+			console.error('Metadata error:', error);
+			metadata = { error: (error as Error).message };
+		}
+	}
 
 	// Function to safely handle encryption key without exposing it in URL
 	function setEncryptionKey(key: string) {
@@ -77,139 +77,136 @@
 	}
 
 	async function handleManualKeySubmit() {
-        if (!manualKeyInput.trim()) return;
+		if (!manualKeyInput.trim()) return;
 
-        try {
-            keyError = null;
-            const extractedKey = validateAndExtractKey(manualKeyInput.trim());
+		try {
+			keyError = null;
+			const extractedKey = validateAndExtractKey(manualKeyInput.trim());
 
-            if (extractedKey) {
-                setEncryptionKey(extractedKey);
-                await getMetadata();
+			if (extractedKey) {
+				setEncryptionKey(extractedKey);
+				await getMetadata();
 
-                if (!downloadError && !metadata?.error) {
-                    await initiateDownload();
-                }
-            }
-        } catch (error) {
-            keyError = (error as Error).message;
-            console.error('Key validation error:', error);
-        }
-    }
+				if (!downloadError && !metadata?.error) {
+					await initiateDownload();
+				}
+			}
+		} catch (error) {
+			keyError = (error as Error).message;
+			console.error('Key validation error:', error);
+		}
+	}
 
 	async function initiateDownload() {
-    if (!encryptionKey || isDownloading) return;
-    isDownloading = true;
-    downloadError = null;
+		if (!encryptionKey || isDownloading) return;
+		isDownloading = true;
+		downloadError = null;
 
-    try {
-        const fileId = $page.params.fileId;
+		try {
+			const fileId = $page.params.fileId;
 
-        const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
-            fileId,
-            encryptionKey,
-            async (progress, message) => {
-                downloadProgress = progress;
-                downloadMessage = message;
-            }
-        );
-
-        if (!decrypted || decrypted.length === 0) {
-            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-        }
-
-        const blob = new Blob([decrypted], {
-            type: fileMetadata.contentType || 'application/octet-stream'
-        });
-
-        if (blob.size === 0) {
-            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-        }
-
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileMetadata.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-
-        isDownloadComplete = true;
-
-        // Clear sensitive data and reset URL to domain root
-        encryptionKey = '';
-        manualKeyInput = '';
-
-        if (browser) {
-            // Clean the URL without redirecting
-            window.history.replaceState({}, '', '/');
+			const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
+				fileId,
+				encryptionKey,
+				async (progress, message) => {
+					downloadProgress = progress;
+					downloadMessage = message;
 				}
-    } catch (error) {
-        console.error('Download error:', error);
-        downloadError = (error as Error).message;
-        downloadProgress = 0;
-        downloadMessage = '';
-    } finally {
-        isDownloading = false;
-    }
-}
+			);
 
-onMount(async () => {
-        if (!browser) return;
+			if (!decrypted || decrypted.length === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+			}
 
-        try {
-            await initWasm();
-            const urlParams = new URLSearchParams(window.location.hash.slice(1));
-            const key = urlParams.get('key');
-            if (key) {
-                try {
-                    const validatedKey = validateAndExtractKey(key);
-                    if (validatedKey) {
-                        setEncryptionKey(validatedKey);
-                        await getMetadata();
-                    }
-                } catch (error) {
-                    keyError = (error as Error).message;
-                }
-            }
-        } catch (error) {
-            console.error('Failed to initialize:', error);
-            downloadError = 'Failed to initialize the application';
-        }
-    });;
+			const blob = new Blob([decrypted], {
+				type: fileMetadata.contentType || 'application/octet-stream'
+			});
 
-		$: canDownload = !!(
-        metadata &&
-        !metadata.error &&
-        !isDownloading &&
-        !isDownloadComplete &&
-        encryptionKey
-    );
+			if (blob.size === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+			}
+
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = fileMetadata.filename;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			window.URL.revokeObjectURL(url);
+
+			isDownloadComplete = true;
+
+			// Clear sensitive data and reset URL to domain root
+			encryptionKey = '';
+			manualKeyInput = '';
+
+			if (browser) {
+				// Clean the URL without redirecting
+				window.history.replaceState({}, '', '/');
+			}
+		} catch (error) {
+			console.error('Download error:', error);
+			downloadError = (error as Error).message;
+			downloadProgress = 0;
+			downloadMessage = '';
+		} finally {
+			isDownloading = false;
+		}
+	}
+
+	onMount(async () => {
+		if (!browser) return;
+
+		try {
+			await initWasm();
+			const urlParams = new URLSearchParams(window.location.hash.slice(1));
+			const key = urlParams.get('key');
+			if (key) {
+				try {
+					const validatedKey = validateAndExtractKey(key);
+					if (validatedKey) {
+						setEncryptionKey(validatedKey);
+						await getMetadata();
+					}
+				} catch (error) {
+					keyError = (error as Error).message;
+				}
+			}
+		} catch (error) {
+			console.error('Failed to initialize:', error);
+			downloadError = 'Failed to initialize the application';
+		}
+	});
+
+	$: canDownload = !!(
+		metadata &&
+		!metadata.error &&
+		!isDownloading &&
+		!isDownloadComplete &&
+		encryptionKey
+	);
 </script>
 
 <div class="container">
 	<div class="download-container">
-			<h1>Last ned fil</h1>
+		<h1>Last ned fil</h1>
 
-			{#if downloadError}
-					<ErrorMessage message={downloadError} />
-			{:else if metadata?.error}
-					<ErrorMessage message={metadata.error} />
-			{:else}
-					{#if metadata?.filename}
-							<FileInfo
-									fileName={metadata.filename}
-									fileSize={fileSize}
-							/>
-							{#if !isDownloadComplete}
-									{#if !isDownloading}
-											<button class="button" on:click={initiateDownload} disabled={!canDownload}>
-													{isDownloading ? 'Laster ned...' : 'Last ned'}
-											</button>
-									{/if}
-							{/if}
+		{#if downloadError}
+			<ErrorMessage message={downloadError} />
+		{:else if metadata?.error}
+			<ErrorMessage message={metadata.error} />
+		{:else}
+			{#if metadata?.filename}
+				<FileInfo fileName={metadata.filename} {fileSize} />
+				{#if !isDownloadComplete}
+					{#if !isDownloading}
+						<button class="button" on:click={initiateDownload} disabled={!canDownload}>
+							{isDownloading ? 'Laster ned...' : 'Last ned'}
+						</button>
 					{/if}
+				{/if}
+			{/if}
 
 			{#if isDownloading || isDownloadComplete}
 				<ProgressBar
