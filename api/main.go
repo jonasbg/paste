@@ -127,18 +127,18 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	r.GET("/wasm_exec.js", func(c *gin.Context) {
-		c.Header("Content-Type", "application/javascript")
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.File("/web/wasm_exec.js")
-	})
+	// r.GET("/wasm_exec.js", func(c *gin.Context) {
+	// 	c.Header("Content-Type", "application/javascript")
+	// 	c.Header("X-Content-Type-Options", "nosniff")
+	// 	c.File("/web/wasm_exec.js")
+	// })
 
-	r.GET("/encryption.wasm", func(c *gin.Context) {
-		c.Header("Content-Type", "application/wasm")
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("Cache-Control", "no-cache")
-		c.File("/web/encryption.wasm")
-	})
+	// r.GET("/encryption.wasm", func(c *gin.Context) {
+	// 	c.Header("Content-Type", "application/wasm")
+	// 	c.Header("X-Content-Type-Options", "nosniff")
+	// 	c.Header("Cache-Control", "no-cache")
+	// 	c.File("/web/encryption.wasm")
+	// })
 
 	api := r.Group("/api")
 	api.Use(rateLimitMiddleware(limiter))
