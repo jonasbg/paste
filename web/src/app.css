@@ -1,7 +1,7 @@
 :root {
-	--primary-green: #40B87B;
-	--dark-text: #1A2634;
-	--light-gray: #F5F6F7;
+	--primary-green: #40b87b;
+	--dark-text: #1a2634;
+	--light-gray: #f5f6f7;
 	--border-radius: 8px;
 	--error-bg: #fef2f2;
 	--error-border: #fee2e2;
@@ -11,7 +11,13 @@
 	--success-border: #dcfce7;
 	--success-text: #166534;
 	--success-icon: #16a34a;
-	font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	font-family:
+		system-ui,
+		-apple-system,
+		BlinkMacSystemFont,
+		'Segoe UI',
+		Roboto,
+		sans-serif;
 }
 
 :global(body) {
