@@ -67,7 +67,8 @@
 			Del filer sikkert med ende-til-ende-kryptering. Filene krypteres i nettleseren din før de
 			lastes opp, og dekrypteres først når mottakeren laster dem ned.
 		</p>
-
+{#if !isUploading}
+{#if !shareUrl}
 		<div class="file-input-container">
 			<input
 				type="file"
@@ -88,7 +89,8 @@
 				isVisible={true}
 			/>
 		{/if}
-
+{/if}
+{/if}
 		<ProgressBar progress={uploadProgress} message={uploadMessage} isVisible={isUploading} />
 
 		<UrlShare url={shareUrl} isVisible={!!shareUrl} />
