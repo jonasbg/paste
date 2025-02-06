@@ -16,7 +16,7 @@ deployment:
     storage: 50Mi
   host: chase.example.com
   env:
-  - name: UPLOAD_FOLDER
+  - name: UPLOAD_DIR
     value: "/upload"
   services:
   - name: http
