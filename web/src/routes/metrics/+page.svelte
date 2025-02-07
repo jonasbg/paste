@@ -298,6 +298,9 @@
 				<div>
 					<span class="metric-card-value">{data.storage?.current_files || 0}</span>
 					<span class="metric-card-subvalue">({formatBytes(data.storage?.current_size || 0)})</span>
+					<span>/</span>
+					<span class="metric-card-value">{data.storage?.total_files || 0}</span>
+					<span class="metric-card-subvalue">({formatBytes(data.storage?.total_size_bytes || 0)})</span>
 				</div>
 			</div>
 
