@@ -64,7 +64,7 @@ export class FileProcessor {
 			// Yield to event loop before progress update
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			await onProgress(
-				10 + (i / totalChunks) * 30,
+				(i / totalChunks) * 50,
 				`Krypterer... (${Math.round(((i + 1) / totalChunks) * 100)}%)`
 			);
 		}
@@ -81,7 +81,7 @@ export class FileProcessor {
 
 		// Yield to event loop before final progress
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		await onProgress(40, 'Kryptering fullført');
+		await onProgress(50, 'Kryptering fullført');
 
 		return { header, encryptedContent };
 	}
