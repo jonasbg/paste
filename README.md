@@ -102,13 +102,13 @@ Yes. All encryption happens in your browser using AES-GCM with 256-bit keys befo
 We use AES-GCM (Galois/Counter Mode) which provides both confidentiality and authentication. For streaming large files, we implement chunked encryption with unique nonces per chunk. Keys are 256-bit by default and generated using cryptographically secure random number generation in the browser.
 
 ### How long are files stored?
-Files are stored indefinitely unless deleted by the uploader using their deletion key. We recommend backing up important files as we don't guarantee permanent storage.
+Files are deleted after 7 days after uploading.
 
 ### Are there file size limits?
 Files are processed in 1MB chunks, allowing for efficient handling of large files. While there's no hard size limit, browser memory constraints and network conditions may affect performance for extremely large files.
 
 ### Can I delete files after upload?
-Yes, each upload generates a deletion key that can be used to remove the file from the server. Keep this key safe as files cannot be deleted without it.
+Yes, by downloading the blob.
 
 ## 📝 License
 
