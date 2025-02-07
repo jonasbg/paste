@@ -1,166 +1,77 @@
-# Droply
+# Paste (pɛjstə)
 
-A simple and secure file sharing server written in Go, supporting client-side encryption and large file uploads.
+Zero-knowledge file sharing server with client-side encryption in Golang. The server never sees unencrypted file contents or metadata.
 
-## Features
+## 🔒 Security Design
 
-- Client-side file encryption using WebAssembly
-- Large file support (up to 1GB)
-- Configurable upload directory
-- Fast and efficient file serving
-- Docker support
-- Minimal dependencies
-- Error logging with request context
+- All encryption/decryption happens in the browser using WebAssembly
+- Server stores only encrypted blobs
+- No metadata or filenames stored server-side
+- Encryption keys never leave the client
+- Each file gets a unique identifier
 
-## Installation
+## 📸 Screenshots
 
-### Prerequisites
+### Upload
+![encryption](.github/docs/encyption.png)
+*Client-side WASM encryption before upload*
 
-- Go 1.23 or later
-- Docker (optional)
+### Share
+![sharesheet](.github/docs/sharesheet.png)
+*Share encrypted file ID and key*
 
-### Local Setup
+### Download
+![download](.github/docs/download.png)
+*Client-side decryption with provided key*
 
-1. Clone the repository:
+## 🚀 Development
+
+### Using Dev Container (Recommended)
+
+1. Install [VS Code](https://code.visualstudio.com/) and [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+
+2. Clone and open:
 ```bash
-git clone https://github.com/yourusername/droply
-cd droply
+git clone https://github.com/jonasbg/paste
+code paste
 ```
 
-2. Build the project:
-```bash
-go build -o droply
-```
+3. When prompted, click "Reopen in Container"
 
-3. Run the server:
-```bash
-./droply
-```
+The dev container provides:
+- Go 1.23 with debugging
+- Node.js for SvelteKit
+- SQLite for access logging only
+- Auto-built WASM encryption
 
-### Docker Setup
-
-1. Build the Docker image:
-```bash
-docker build -t droply .
-```
-
-2. Run the container:
-```bash
-docker run -d \
-  --name droply \
-  -p 8080:8080 \
-  -v $(pwd)/uploads:/uploads \
-  -e UPLOAD_DIR=/uploads \
-  droply
-```
-
-## Configuration
-
-The server can be configured using environment variables:
-
-- `UPLOAD_DIR`: Directory where uploaded files will be stored (default: "./uploads")
-
-## API Endpoints
-
-### File Upload
-```
-POST /upload
-Content-Type: multipart/form-data
-
-Form field: file
-```
-
-Response:
-```json
-{
-    "id": "generated-file-id"
-}
-```
-
-### File Download
-```
-GET /download/{id}
-```
-
-### File Metadata
-```
-GET /metadata/{id}
-```
-
-## File Format
-
-Files are stored with the following structure:
-- First 12 bytes: Initialization Vector (IV)
-- Next 4 bytes: Metadata length (little-endian uint32)
-- Next N bytes: Encrypted metadata (JSON)
-- Remaining bytes: Encrypted file content
-
-## Security
-
-- All file encryption is performed client-side using WebAssembly
-- Server never receives unencrypted data
-- Each file gets a unique 32-character hexadecimal identifier
-- Files are stored with encrypted metadata separate from content
-- Access requires the complete file ID
-
-## Development
-
-### Requirements
-
-- Go 1.22+
-- make (optional, for build scripts)
-- Docker (optional, for containerization)
-
-### Build Commands
-
-Build the server:
-```bash
-go build
-```
-
-Run tests:
-```bash
-go test ./...
-```
-
-### Directory Structure
-
-```
-.
-├── main.go          # Server entry point
-├── Dockerfile       # Docker configuration
-├── index.html       # Web client
-├── wasm_exec.js     # Go WebAssembly support
-└── encryption.wasm  # WebAssembly encryption module
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-
-## Testing
-
-### Docker
+### Manual Setup
 
 ```bash
-docker build . -t test
+# Build WASM
+mkdir -p web/static
+cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" web/static/
+GOOS=js GOARCH=wasm go build -o web/static/encryption.wasm ./wasm/wasm.go
 
-docker run --rm -it -p 8080:8080 --volume "./api/uploads/":/uploads test
+# Build and run backend
+cd api && go build -o pastly
+./pastly
+
+# Run frontend
+cd ../web
+npm install
+npm run dev
 ```
 
-### Rate limiting
+## 🔌 API Endpoints
 
 ```bash
-for i in {1..30}; do
-    curl -i http://localhost:5173/api/metadata/1234567890123456789012345678901234 &
-done
+POST   /api/upload            # Upload encrypted blob
+GET    /api/download/:id      # Download encrypted blob
+GET    /api/metadata/:id      # Get encrypted metadata
+GET    /api/ws/upload         # WebSocket upload for large files
+GET    /api/metrics/*         # Server stats (no file info)
 ```
+
+## 📝 License
+
+MIT License - see [LICENSE](LICENSE)
