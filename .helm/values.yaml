@@ -16,7 +16,7 @@ deployment:
   env:
   - name: UPLOAD_DIR
     value: "/uploads"
-  - name: DATABASE_PATH
+  - name: DATABASE_DIR
     value: "/data"
   services:
   - name: http
