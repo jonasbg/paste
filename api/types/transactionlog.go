@@ -14,4 +14,5 @@ type TransactionLog struct {
 	StatusCode int    // HTTP status code
 	Error      string // Any error message if failed
 	Duration   int64  // Request duration in milliseconds
+	Method     string
 }

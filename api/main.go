@@ -74,7 +74,7 @@ func main() {
 		api.GET("/metadata/:id", handlers.HandleMetadata(uploadDir))
 		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
 
-		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir))
+		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, database))
 
 		api.GET("/metrics/activity", handlers.HandleActivity(database))
 		api.GET("/metrics/storage", handlers.HandleStorage(database))

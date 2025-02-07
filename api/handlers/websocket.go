@@ -5,9 +5,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/jonasbg/paste/m/v2/db"
+	"github.com/jonasbg/paste/m/v2/types"
+	"github.com/jonasbg/paste/m/v2/utils"
 )
 
 var upgrader = websocket.Upgrader{
@@ -24,8 +28,9 @@ type FileUpload struct {
 	FilePath string
 }
 
-func HandleWSUpload(uploadDir string) gin.HandlerFunc {
+func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		start := time.Now()
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
@@ -100,6 +105,25 @@ func HandleWSUpload(uploadDir string) gin.HandlerFunc {
 			os.Remove(tmpPath)
 			ws.WriteJSON(gin.H{"error": "Failed to save file"})
 			return
+		}
+
+		duration := time.Since(start)
+
+		tx := &types.TransactionLog{
+			Timestamp:  start,
+			Action:     "upload",
+			Method:     "websocket",
+			IP:         utils.GetRealIP(c),
+			UserAgent:  c.Request.UserAgent(),
+			FileID:     id,
+			Duration:   duration.Milliseconds(),
+			Size:       totalBytes,
+			Success:    true,
+			StatusCode: 200,
+		}
+
+		if err = db.LogTransaction(tx); err != nil {
+			log.Printf("Failed to create transaction log: %v", err)
 		}
 
 		ws.WriteJSON(gin.H{
