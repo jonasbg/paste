@@ -45,6 +45,8 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
 FROM scratch
 
 ENV GIN_MODE=release
+ENV TMPDIR=/uploads
+ENV DATABASE_DIR=/uploads
 
 # Copy SSL certificates for HTTPS support
 COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
