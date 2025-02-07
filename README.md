@@ -2,6 +2,8 @@
 
 Zero-knowledge file sharing server with client-side encryption in Golang. The server never sees unencrypted file contents or metadata.
 
+![landing page](.github/docs/index.png)
+
 ## 🔒 Security Design
 
 - All encryption/decryption happens in the browser using WebAssembly
@@ -23,6 +25,11 @@ Zero-knowledge file sharing server with client-side encryption in Golang. The se
 ### Download
 ![download](.github/docs/download.png)
 *Client-side decryption with provided key*
+
+### Decryption
+![encryption](.github/docs/decryption.png)
+*Client-side WASM decryption with optional private key input*
+
 
 ## 🚀 Development
 
