@@ -39,7 +39,7 @@ spec:
             memory: "100Mi"  # Limit to 100 MiB of memory
             cpu: "200m"      # Limit to 200 millicpu (0.2 CPU cores)
           {{- end }}
-        imagePullPolicy: {{ $value.pullPolicy | default IfNotPresent }}
+        imagePullPolicy: {{ $value.pullPolicy | default "IfNotPresent" }}
         ports:
         {{- range $value.services }}
         - name: {{ .name }}
