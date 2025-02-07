@@ -6,11 +6,20 @@ Zero-knowledge file sharing server with client-side encryption in Golang. The se
 
 ## 🔒 Security Design
 
-- All encryption/decryption happens in the browser using WebAssembly
-- Server stores only encrypted blobs
-- No metadata or filenames stored server-side
-- Encryption keys never leave the client
-- Each file gets a unique identifier
+- AES-GCM encryption/decryption using WebAssembly in the browser
+  - Supports 128-bit, 192-bit, and 256-bit keys (defaults to 256-bit)
+  - Uses cryptographically secure random number generation
+  - Implements authenticated encryption (AEAD) with integrity checks
+  - Unique 96-bit IV (nonce) for each file and chunk
+- Streaming encryption for large files
+  - Processes files in 1MB chunks to avoid memory issues
+  - Ensures unique nonces across chunks using counters
+  - Maintains data integrity across chunk boundaries
+- Zero server-side knowledge
+  - Server stores only encrypted blobs
+  - No unencrypted metadata or filenames stored server-side
+  - Encryption keys never leave the client
+  - Each file gets a unique identifier and encryption key
 
 ## 📸 Screenshots
 
@@ -29,7 +38,6 @@ Zero-knowledge file sharing server with client-side encryption in Golang. The se
 ### Decryption
 ![encryption](.github/docs/decryption.png)
 *Client-side WASM decryption with optional private key input*
-
 
 ## 🚀 Development
 
@@ -78,6 +86,29 @@ GET    /api/metadata/:id      # Get encrypted metadata
 GET    /api/ws/upload         # WebSocket upload for large files
 GET    /api/metrics/*         # Server stats (no file info)
 ```
+
+## ❓ FAQ
+
+### Why use WebAssembly for encryption?
+While browsers provide the Web Crypto API, it requires loading the entire file into memory for encryption/decryption, which can freeze the browser for large files. WebAssembly allows us to process files in chunks, providing a smoother experience without memory issues.
+
+### Why use WebSockets for file upload?
+Many HTTP proxies and servers have file size limits when using traditional multipart form uploads. WebSockets allow us to chunk large files into 1MB blocks, bypassing these limitations while providing upload progress feedback.
+
+### Is my data really secure?
+Yes. All encryption happens in your browser using AES-GCM with 256-bit keys before upload. The server only sees encrypted data and never receives encryption keys or unencrypted metadata. Each file gets a unique identifier, encryption key, and IV (nonce), making it impossible to list or access files without having both the ID and key.
+
+### What encryption algorithm is used?
+We use AES-GCM (Galois/Counter Mode) which provides both confidentiality and authentication. For streaming large files, we implement chunked encryption with unique nonces per chunk. Keys are 256-bit by default and generated using cryptographically secure random number generation in the browser.
+
+### How long are files stored?
+Files are stored indefinitely unless deleted by the uploader using their deletion key. We recommend backing up important files as we don't guarantee permanent storage.
+
+### Are there file size limits?
+Files are processed in 1MB chunks, allowing for efficient handling of large files. While there's no hard size limit, browser memory constraints and network conditions may affect performance for extremely large files.
+
+### Can I delete files after upload?
+Yes, each upload generates a deletion key that can be used to remove the file from the server. Keep this key safe as files cannot be deleted without it.
 
 ## 📝 License
 
