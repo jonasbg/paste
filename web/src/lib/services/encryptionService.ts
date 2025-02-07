@@ -41,8 +41,8 @@ export async function uploadEncryptedFile(
 				await new Promise(r => setTimeout(r, 10));
 			}
 
-			await onProgress(100, 'Fullfører...');
 			ws.send(new Uint8Array([0]));
+			await onProgress(100, 'Fullfører...');
 		};
 
 		ws.onmessage = async (event) => {

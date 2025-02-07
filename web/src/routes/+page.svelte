@@ -218,7 +218,7 @@
 		font-size: 1.125rem;
 		line-height: 1.6;
 		max-width: 600px;
-		margin-bottom: 2rem;
+		margin-bottom: 1.25rem;
 	}
 
 	.file-input-container {
