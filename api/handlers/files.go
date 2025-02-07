@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -185,21 +186,6 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
-		// Get the file
-		fileHeader, err := c.FormFile("file")
-		if err != nil {
-			fmt.Printf("Error getting form file: %v\n", err)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
-
-		// Check file size
-		if fileHeader.Size > maxFileSize {
-			fmt.Println("Error: File size exceeds limit")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "File too large"})
-			return
-		}
-
 		// Generate ID for the new file
 		id, err := generateID()
 		if err != nil {
@@ -208,20 +194,40 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
-		// Open the uploaded file
-		src, err := fileHeader.Open()
+		// Parse the multipart form reader
+		reader, err := c.Request.MultipartReader()
 		if err != nil {
-			fmt.Printf("Error opening uploaded file: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+			fmt.Printf("Error getting multipart reader: %v\n", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
-		defer src.Close()
 
-		// Create destination file
-		dst := filepath.Join(uploadDir, id)
-		out, err := os.Create(dst)
+		var part *multipart.Part
+		// Find the file part
+		for {
+			part, err = reader.NextPart()
+			if err == io.EOF {
+				fmt.Println("Error: No file part found")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+				return
+			}
+			if err != nil {
+				fmt.Printf("Error reading part: %v\n", err)
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+				return
+			}
+			if part.FormName() == "file" {
+				break
+			}
+			part.Close()
+		}
+		defer part.Close()
+
+		// Create file with .tmp suffix
+		tmpPath := filepath.Join(uploadDir, id+".tmp")
+		out, err := os.Create(tmpPath)
 		if err != nil {
-			fmt.Printf("Error creating destination file: %v\n", err)
+			fmt.Printf("Error creating file: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
@@ -229,8 +235,8 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 
 		// Read header for validation
 		header := make([]byte, headerSize)
-		if _, err := io.ReadFull(src, header); err != nil {
-			os.Remove(dst)
+		if _, err := io.ReadFull(part, header); err != nil {
+			os.Remove(tmpPath)
 			fmt.Printf("Error reading header: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file structure"})
 			return
@@ -239,7 +245,7 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 		// Get and validate metadata length
 		metadataLen := binary.LittleEndian.Uint32(header[12:16])
 		if metadataLen > maxMetadataSize {
-			os.Remove(dst)
+			os.Remove(tmpPath)
 			fmt.Println("Error: Metadata too large")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid metadata size"})
 			return
@@ -247,8 +253,8 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 
 		// Read metadata for validation
 		metadata := make([]byte, metadataLen)
-		if _, err := io.ReadFull(src, metadata); err != nil {
-			os.Remove(dst)
+		if _, err := io.ReadFull(part, metadata); err != nil {
+			os.Remove(tmpPath)
 			fmt.Printf("Error reading metadata: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid metadata"})
 			return
@@ -256,7 +262,7 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 
 		// Validate the file structure
 		if !validateWasmEncryption(header, metadata) {
-			os.Remove(dst)
+			os.Remove(tmpPath)
 			fmt.Println("Error: Validation failed")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file format"})
 			return
@@ -264,24 +270,36 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 
 		// Write header and metadata
 		if _, err := out.Write(header); err != nil {
-			os.Remove(dst)
+			os.Remove(tmpPath)
 			fmt.Printf("Error writing header: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
 		if _, err := out.Write(metadata); err != nil {
-			os.Remove(dst)
+			os.Remove(tmpPath)
 			fmt.Printf("Error writing metadata: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
 		// Stream the rest of the file directly to disk
-		written, err := io.Copy(out, src)
+		written, err := io.Copy(out, part)
 		if err != nil {
-			os.Remove(dst)
+			os.Remove(tmpPath)
 			fmt.Printf("Error streaming file: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+			return
+		}
+
+		// Close the file before renaming
+		out.Close()
+
+		// Rename from .tmp to final name
+		finalPath := filepath.Join(uploadDir, id)
+		if err := os.Rename(tmpPath, finalPath); err != nil {
+			os.Remove(tmpPath)
+			fmt.Printf("Error renaming file: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
