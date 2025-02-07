@@ -15,56 +15,64 @@ export async function uploadEncryptedFile(
 	onProgress: (progress: number, message: string) => Promise<void>
 ): Promise<string> {
 	const processor = new FileProcessor();
-
-	// Yield to event loop before starting
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
 	const { header, encryptedContent } = await processor.encryptFile(file, key, onProgress);
-
-	// Yield to event loop before upload progress
-	await new Promise((resolve) => setTimeout(resolve, 0));
 	await onProgress(50, 'Laster opp...');
 
 	return new Promise((resolve, reject) => {
-		const xhr = new XMLHttpRequest();
+			const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ws/upload`);
 
-		xhr.open('POST', '/api/upload', true);
+			ws.onopen = async () => {
+					try {
+							// Send the entire encrypted file in one message
+							ws.send(new Blob([header, encryptedContent]));
+							const chunkSize = 32 * 1024; // 32KB chunks
+							let offset = 0;
+							const content = new Uint8Array(encryptedContent);
 
-		// Track upload progress
-		xhr.upload.onprogress = async (event) => {
-			if (event.lengthComputable) {
-				const percentComplete = Math.round((event.loaded / event.total) * 50) + 50;
-				await onProgress(
-					percentComplete,
-					`Laster opp... (${Math.round((event.loaded / event.total) * 100)}%)`
-				);
-			}
-		};
+							while (offset < content.length) {
+									const chunk = content.slice(offset, offset + chunkSize);
+									ws.send(chunk);
 
-		xhr.onload = async () => {
-			if (xhr.status === 200) {
-				try {
-					const result = JSON.parse(xhr.responseText);
-					await onProgress(100, 'Fullført!');
-					resolve(result.id);
-				} catch (error) {
-					reject(new Error('Kunne ikke tolke server-respons'));
-				}
-			} else {
-				reject(new Error('Opplasting feilet'));
-			}
-		};
+									const percentComplete = Math.round((offset / content.length) * 50) + 50;
+									await onProgress(
+											percentComplete,
+											`Laster opp... (${Math.round((offset / content.length) * 100)}%)`
+									);
 
-		xhr.onerror = () => {
-			reject(new Error('Nettverksfeil under opplasting'));
-		};
+									offset += chunkSize;
+									// Prevent overwhelming the connection
+									await new Promise(resolve => setTimeout(resolve, 0));
+							}
+					} catch (error) {
+							ws.close();
+							reject(new Error('Feil under opplasting'));
+					}
+			};
 
-		// Prepare FormData
-		const formData = new FormData();
-		const blob = new Blob([header, encryptedContent]);
-		formData.append('file', blob, 'encrypted_container');
+			ws.onmessage = async (event) => {
+					try {
+							const response = JSON.parse(event.data);
+							if (response.error) {
+									reject(new Error(response.error));
+							} else if (response.complete) {
+									await onProgress(100, 'Fullført!');
+									resolve(response.id);
+							}
+					} catch (error) {
+							reject(new Error('Kunne ikke tolke server-respons'));
+					}
+			};
 
-		// Send the request
-		xhr.send(formData);
+			ws.onerror = () => {
+					reject(new Error('Nettverksfeil under opplasting'));
+			};
+
+			ws.onclose = (event) => {
+					if (!event.wasClean) {
+							reject(new Error('Tilkoblingen ble uventet avbrutt'));
+					}
+			};
 	});
 }
