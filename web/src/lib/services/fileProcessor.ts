@@ -81,7 +81,7 @@ export class FileProcessor {
 
 		// Yield to event loop before final progress
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		await onProgress(50, 'Kryptering fullført');
+		await onProgress(45, 'Kryptering fullført');
 
 		return { header, encryptedContent };
 	}
