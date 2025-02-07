@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/binary"
 	"log"
 	"net/http"
 	"os"
@@ -27,16 +26,13 @@ type FileUpload struct {
 
 func HandleWSUpload(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		log.Println("WebSocket upgrade attempt")
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
 			return
 		}
 		defer ws.Close()
-		log.Println("WebSocket connection established")
 
-		// Generate file ID
 		id, err := generateID()
 		if err != nil {
 			ws.WriteJSON(gin.H{"error": "Failed to generate ID"})
@@ -53,45 +49,49 @@ func HandleWSUpload(uploadDir string) gin.HandlerFunc {
 		}
 		defer file.Close()
 
-		// Read entire message
-		_, data, err := ws.ReadMessage()
-		if err != nil {
-			log.Printf("Error reading message: %v", err)
+		var totalBytes int64
+
+		// Read first message (header)
+		_, header, err := ws.ReadMessage()
+		if err != nil || len(header) < headerSize {
 			os.Remove(tmpPath)
+			ws.WriteJSON(gin.H{"error": "Invalid header"})
 			return
 		}
 
-		if len(data) < headerSize {
-			log.Printf("Invalid data size: %d", len(data))
+		if _, err := file.Write(header); err != nil {
 			os.Remove(tmpPath)
-			ws.WriteJSON(gin.H{"error": "Invalid data size"})
+			ws.WriteJSON(gin.H{"error": "Failed to write header"})
 			return
 		}
+		totalBytes += int64(len(header))
 
-		// Extract and validate header
-		header := data[:headerSize]
-		metadataLen := binary.LittleEndian.Uint32(header[12:16])
-		log.Printf("Expected metadata length: %d", metadataLen)
+		// Read chunks until end signal
+		for {
+			_, chunk, err := ws.ReadMessage()
+			if err != nil {
+				os.Remove(tmpPath)
+				ws.WriteJSON(gin.H{"error": "Failed to read chunk"})
+				return
+			}
 
-		if metadataLen > maxMetadataSize {
-			os.Remove(tmpPath)
-			ws.WriteJSON(gin.H{"error": "Metadata too large"})
-			return
-		}
+			// Check for end signal (single byte 0)
+			if len(chunk) == 1 && chunk[0] == 0 {
+				break
+			}
 
-		totalBytes := int64(len(data))
-		if totalBytes > maxFileSize {
-			os.Remove(tmpPath)
-			ws.WriteJSON(gin.H{"error": "File too large"})
-			return
-		}
+			totalBytes += int64(len(chunk))
+			if totalBytes > maxFileSize {
+				os.Remove(tmpPath)
+				ws.WriteJSON(gin.H{"error": "File too large"})
+				return
+			}
 
-		// Write file
-		if _, err := file.Write(data); err != nil {
-			log.Printf("Error writing file: %v", err)
-			os.Remove(tmpPath)
-			ws.WriteJSON(gin.H{"error": "Failed to write file"})
-			return
+			if _, err := file.Write(chunk); err != nil {
+				os.Remove(tmpPath)
+				ws.WriteJSON(gin.H{"error": "Failed to write chunk"})
+				return
+			}
 		}
 
 		file.Close()
