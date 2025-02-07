@@ -18,8 +18,8 @@ export async function uploadEncryptedFile(
 	const { header, encryptedContent } = await processor.encryptFile(file, key, onProgress);
 
 	return new Promise((resolve, reject) => {
-			const ws = new WebSocket(`ws://${window.location.host}/api/ws/upload`);
-			const chunkSize = 1024 * 1024; // 1MB chunks
+			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+			const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/upload`);			const chunkSize = 1024 * 1024; // 1MB chunks
 			let offset = 0;
 
 			ws.onopen = async () => {
