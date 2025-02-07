@@ -18,38 +18,39 @@ export async function uploadEncryptedFile(
 	const { header, encryptedContent } = await processor.encryptFile(file, key, onProgress);
 
 	return new Promise((resolve, reject) => {
-			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-			const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/upload`);			const chunkSize = 1024 * 1024; // 1MB chunks
-			let offset = 0;
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/upload`);
+		const chunkSize = 1024 * 1024; // 1MB chunks
 
-			ws.onopen = async () => {
-					// Send header first
-					ws.send(header);
+		let uploadProgress = 0;
+		let offset = 0;
 
-					// Send content in chunks
-					const content = new Uint8Array(encryptedContent);
-					while (offset < content.length) {
-							const chunk = content.slice(offset, offset + chunkSize);
-							ws.send(chunk);
+		ws.onopen = async () => {
+			ws.send(header);
 
-							offset += chunk.length;
-							const progress = Math.round((offset / content.length) * 100);
-							await onProgress(progress, `Laster opp... (${progress}%)`);
+			// Send content in chunks
+			const content = new Uint8Array(encryptedContent);
+			while (offset < content.length) {
+				const chunk = content.slice(offset, offset + chunkSize);
+				ws.send(chunk);
 
-							// Prevent overwhelming connection
-							await new Promise(r => setTimeout(r, 50));
-					}
+				offset += chunk.length;
+				uploadProgress = 50 + Math.round((offset / content.length) * 50);
+				await onProgress(uploadProgress, `Laster opp... (${Math.round((offset / content.length) * 100)}%)`);
 
-					// Signal end of transmission
-					ws.send(new Uint8Array([0]));
-			};
+				await new Promise(r => setTimeout(r, 10));
+			}
 
-			ws.onmessage = async (event) => {
-					const response = JSON.parse(event.data);
-					if (response.error) reject(new Error(response.error));
-					if (response.complete) resolve(response.id);
-			};
+			await onProgress(100, 'Fullfører...');
+			ws.send(new Uint8Array([0]));
+		};
 
-			ws.onerror = () => reject(new Error('Nettverksfeil'));
+		ws.onmessage = async (event) => {
+			const response = JSON.parse(event.data);
+			if (response.error) reject(new Error(response.error));
+			if (response.complete) resolve(response.id);
+		};
+
+		ws.onerror = () => reject(new Error('Nettverksfeil'));
 	});
 }
