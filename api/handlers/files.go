@@ -21,6 +21,7 @@ const (
 	headerSize      = 16                     // Size of metadata header
 	maxMetadataSize = 1024 * 1024            // 1MB max metadata size
 	expectedIVSize  = 12                     // Size of GCM IV
+	bufferSize      = 32 * 1024              // 32KB buffer for copying
 )
 
 func generateID() (string, error) {
@@ -173,6 +174,9 @@ func validateWasmEncryption(header []byte, encryptedMetadata []byte) bool {
 
 func HandleUpload(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Set maximum request size
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxFileSize)
+
 		// Check content type
 		contentType := c.GetHeader("Content-Type")
 		if !strings.HasPrefix(contentType, "multipart/form-data") {
@@ -181,105 +185,108 @@ func HandleUpload(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
-		// Check content length
-		if c.Request.ContentLength > maxFileSize {
-			fmt.Println("Error: File size exceeds limit")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
-			return
-		}
-
-		// Get the file from form
-		file, fileHeader, err := c.Request.FormFile("file")
+		// Get the file
+		fileHeader, err := c.FormFile("file")
 		if err != nil {
-			fmt.Println("Error: Missing file in request")
+			fmt.Printf("Error getting form file: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
-		defer file.Close()
 
-		// Verify file size from header
+		// Check file size
 		if fileHeader.Size > maxFileSize {
 			fmt.Println("Error: File size exceeds limit")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "File too large"})
 			return
 		}
 
-		// Read and validate file structure
-		header := make([]byte, headerSize)
-		if _, err := io.ReadFull(file, header); err != nil {
-			fmt.Println("Error: File structure validation failed")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
-			return
-		}
-
-		metadataLen := binary.LittleEndian.Uint32(header[12:16])
-		if metadataLen > maxMetadataSize {
-			fmt.Println("Error: Metadata validation failed")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
-			return
-		}
-
-		metadata := make([]byte, metadataLen)
-		if _, err := io.ReadFull(file, metadata); err != nil {
-			fmt.Println("Error: Metadata read failed")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
-			return
-		}
-
-		if !validateWasmEncryption(header, metadata) {
-			fmt.Println("Error: File validation failed")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
-			return
-		}
-
-		// Generate unique ID
+		// Generate ID for the new file
 		id, err := generateID()
 		if err != nil {
-			fmt.Println("Error: ID generation failed")
+			fmt.Printf("Error generating ID: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
+
+		// Open the uploaded file
+		src, err := fileHeader.Open()
+		if err != nil {
+			fmt.Printf("Error opening uploaded file: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+			return
+		}
+		defer src.Close()
 
 		// Create destination file
 		dst := filepath.Join(uploadDir, id)
 		out, err := os.Create(dst)
 		if err != nil {
-			fmt.Println("Error: File creation failed")
+			fmt.Printf("Error creating destination file: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 		defer out.Close()
 
-		// Write file data
+		// Read header for validation
+		header := make([]byte, headerSize)
+		if _, err := io.ReadFull(src, header); err != nil {
+			os.Remove(dst)
+			fmt.Printf("Error reading header: %v\n", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file structure"})
+			return
+		}
+
+		// Get and validate metadata length
+		metadataLen := binary.LittleEndian.Uint32(header[12:16])
+		if metadataLen > maxMetadataSize {
+			os.Remove(dst)
+			fmt.Println("Error: Metadata too large")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid metadata size"})
+			return
+		}
+
+		// Read metadata for validation
+		metadata := make([]byte, metadataLen)
+		if _, err := io.ReadFull(src, metadata); err != nil {
+			os.Remove(dst)
+			fmt.Printf("Error reading metadata: %v\n", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid metadata"})
+			return
+		}
+
+		// Validate the file structure
+		if !validateWasmEncryption(header, metadata) {
+			os.Remove(dst)
+			fmt.Println("Error: Validation failed")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file format"})
+			return
+		}
+
+		// Write header and metadata
 		if _, err := out.Write(header); err != nil {
 			os.Remove(dst)
-			fmt.Println("Error: File write failed")
+			fmt.Printf("Error writing header: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
 		if _, err := out.Write(metadata); err != nil {
 			os.Remove(dst)
-			fmt.Println("Error: File write failed")
+			fmt.Printf("Error writing metadata: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
-		written, err := io.Copy(out, file)
+		// Stream the rest of the file directly to disk
+		written, err := io.Copy(out, src)
 		if err != nil {
 			os.Remove(dst)
-			fmt.Println("Error: File write failed")
+			fmt.Printf("Error streaming file: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
 		totalSize := written + int64(len(header)) + int64(len(metadata))
-		if totalSize > maxFileSize {
-			os.Remove(dst)
-			fmt.Println("Error: File size exceeds limit")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
-			return
-		}
 
 		response := gin.H{
 			"id":        id,

@@ -27,7 +27,7 @@ func getUploadDir() string {
 }
 
 func getDatabaseDir() string {
-	if dir := os.Getenv("DATABASE_PATH"); dir != "" {
+	if dir := os.Getenv("DATABASE_DIR"); dir != "" {
 		return filepath.Join(dir, "paste.db")
 	}
 	return filepath.Join("./uploads", "paste.db")
@@ -88,6 +88,8 @@ func main() {
 	}
 
 	r.Use(middleware.Middleware("/", spaDirectory))
+
+	r.MaxMultipartMemory = 8 << 20
 
 	log.Printf("Starting server on :8080 with upload directory: %s", uploadDir)
 	log.Fatal(r.Run(":8080"))
