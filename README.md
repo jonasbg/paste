@@ -2,6 +2,8 @@
 
 Zero-knowledge file sharing server with client-side encryption in Golang. The server never sees unencrypted file contents or metadata.
 
+Paste is created to be an easy and secure way of sharing a file with someone for a short period of time.
+
 ![landing page](.github/docs/index.png)
 
 ## 🔒 Security Design
@@ -86,6 +88,18 @@ GET    /api/metadata/:id      # Get encrypted metadata
 GET    /api/ws/upload         # WebSocket upload for large files
 GET    /api/metrics/*         # Server stats (no file info)
 ```
+
+## 🌍 Environment Variables
+
+The application can be configured using the following environment variables:
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `UPLOAD_DIR` | Directory where uploaded files are stored | `./uploads` | `/data/uploads` |
+| `DATABASE_DIR` | Directory where the SQLite database is stored | `./uploads` | `/data/db` |
+| `WEB_DIR` | Directory containing static web files | `../web` | `/app/web` |
+| `FILES_RETENTION_DAYS` | Number of days to keep uploaded files before deletion | `7` | `14` |
+| `LOGS_RETENTION_DAYS` | Number of days to keep logs (negative for infinite) | `180` | `-1` |
 
 ## ❓ FAQ
 

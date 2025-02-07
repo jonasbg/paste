@@ -17,6 +17,10 @@ paste:
     value: "/uploads"
   - name: DATABASE_DIR
     value: "/data"
+  - name: PASTE_RETENTION_DAYS
+    value: "7"
+  - name: LOGS_RETENTION_DAYS
+    value: "180"
   services:
   - name: http
     port: 8080
