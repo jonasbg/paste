@@ -81,12 +81,12 @@ jobs:
       - name: Push Helm chart
         if: github.ref == 'refs/heads/main'
         run: |
-          #helm pull oci://${{ vars.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')/paste
-          #file=$(ls paste-*.tgz)
-          #CURRENT_VERSION=$(echo $file | grep -oP 'paste-\K[0-9]+\.[0-9]+\.[0-9]+')
-          #NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
-          #echo $NEW_VERSION
-          #sed -i "s/version: 0.0.1/version: $NEW_VERSION/" .helm/Chart.yaml
+          helm pull oci://${{ vars.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')/paste
+          file=$(ls paste-*.tgz)
+          CURRENT_VERSION=$(echo $file | grep -oP 'paste-\K[0-9]+\.[0-9]+\.[0-9]+')
+          NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
+          echo $NEW_VERSION
+          sed -i "s/version: 0.0.1/version: $NEW_VERSION/" .helm/Chart.yaml
 
           DIGEST=${{steps.build-docker-image.outputs.digest}}
           DIGEST="latest@$DIGEST"
