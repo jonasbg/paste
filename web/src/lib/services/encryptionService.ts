@@ -16,7 +16,7 @@ export async function uploadEncryptedFile(
 ): Promise<string> {
 	const processor = new FileProcessor();
 
-	const encryptionProgress = (p: number) => onProgress(Math.round(p * 0.5), 'Krypterer...');
+	const encryptionProgress = (p: number) => onProgress(Math.round(p * 0.4), 'Krypterer...');
 	const { header, encryptedContent } = await processor.encryptFile(file, key, encryptionProgress);
 
 	return new Promise((resolve, reject) => {
@@ -25,34 +25,34 @@ export async function uploadEncryptedFile(
 		const chunkSize = 1024 * 1024;
 
 		let offset = 0;
+		const content = new Uint8Array(encryptedContent);
 
 		ws.onopen = async () => {
 			ws.send(header);
+			sendNextChunk();
+		};
 
-			const content = new Uint8Array(encryptedContent);
-			while (offset < content.length) {
+		const sendNextChunk = () => {
+			if (offset < content.length) {
 				const chunk = content.slice(offset, offset + chunkSize);
 				ws.send(chunk);
-
 				offset += chunk.length;
-				const uploadPercent = (offset / content.length) * 100;
-				await onProgress(
-					45 + Math.round(uploadPercent * 0.5),
-					`Laster opp... (${Math.round(uploadPercent)}%)`
-				);
-
-				await new Promise(r => setTimeout(r, 10));
+			} else {
+				ws.send(new Uint8Array([0]));
 			}
-
-			ws.send(new Uint8Array([0]));
-			await onProgress(95, 'Fullfører...');
 		};
 
 		ws.onmessage = async (event) => {
 			const response = JSON.parse(event.data);
-			if (response.error) reject(new Error(response.error));
-			if (response.complete) {
-				await onProgress(100, 'Fullfører...');
+
+			if (response.error) {
+				reject(new Error(response.error));
+			} else if (response.progress) {
+				const serverProgress = response.progress * 0.6;
+				await onProgress(45 + Math.round(serverProgress), 'Laster opp...');
+				sendNextChunk();
+			} else if (response.complete) {
+				await onProgress(100, 'Fullført');
 				resolve(response.id);
 			}
 		};

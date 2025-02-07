@@ -41,7 +41,6 @@ func HandleWSUpload(uploadDir string) gin.HandlerFunc {
 
 		tmpPath := filepath.Join(uploadDir, id+".tmp")
 		finalPath := filepath.Join(uploadDir, id)
-
 		file, err := os.Create(tmpPath)
 		if err != nil {
 			ws.WriteJSON(gin.H{"error": "Failed to create file"})
@@ -58,13 +57,15 @@ func HandleWSUpload(uploadDir string) gin.HandlerFunc {
 			ws.WriteJSON(gin.H{"error": "Invalid header"})
 			return
 		}
-
 		if _, err := file.Write(header); err != nil {
 			os.Remove(tmpPath)
 			ws.WriteJSON(gin.H{"error": "Failed to write header"})
 			return
 		}
 		totalBytes += int64(len(header))
+
+		// Send initial progress
+		ws.WriteJSON(gin.H{"progress": 0.0})
 
 		// Read chunks until end signal
 		for {
@@ -75,7 +76,7 @@ func HandleWSUpload(uploadDir string) gin.HandlerFunc {
 				return
 			}
 
-			// Check for end signal (single byte 0)
+			// Check for end signal
 			if len(chunk) == 1 && chunk[0] == 0 {
 				break
 			}
@@ -92,10 +93,16 @@ func HandleWSUpload(uploadDir string) gin.HandlerFunc {
 				ws.WriteJSON(gin.H{"error": "Failed to write chunk"})
 				return
 			}
+
+			// Send progress after successful chunk write
+			progress := float64(totalBytes) / float64(maxFileSize)
+			if progress > 1.0 {
+				progress = 1.0
+			}
+			ws.WriteJSON(gin.H{"progress": progress})
 		}
 
 		file.Close()
-
 		if err := os.Rename(tmpPath, finalPath); err != nil {
 			os.Remove(tmpPath)
 			ws.WriteJSON(gin.H{"error": "Failed to save file"})
