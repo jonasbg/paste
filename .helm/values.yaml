@@ -1,4 +1,4 @@
-deployment:
+paste:
   repository: ghcr.io/jonasbg/droply
   tag: "latest"
   deployment: deployment
