@@ -4,10 +4,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jonasbg/paste/m/v2/db"
+	"github.com/jonasbg/paste/m/v2/db/cleanup"
 	"github.com/jonasbg/paste/m/v2/handlers"
 	"github.com/jonasbg/paste/m/v2/middleware"
 	"github.com/jonasbg/paste/m/v2/utils"
@@ -33,22 +33,6 @@ func getDatabaseDir() string {
 	return filepath.Join("./uploads", "paste.db")
 }
 
-func startLogRotation(db *db.DB) {
-	ticker := time.NewTicker(24 * time.Hour)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				// Keep logs for 180 days
-				cutoff := time.Now().AddDate(0, 0, -180)
-				if err := db.CleanOldLogs(cutoff); err != nil {
-					log.Printf("Failed to clean old logs: %v", err)
-				}
-			}
-		}
-	}()
-}
-
 func main() {
 	uploadDir := getUploadDir()
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
@@ -60,7 +44,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	startLogRotation(database)
 
 	limiter := middleware.NewIPRateLimiter(rate.Limit(requestsPerSecond), burstSize)
 
@@ -91,7 +74,8 @@ func main() {
 
 	r.Use(middleware.Middleware("/", spaDirectory))
 
-	r.MaxMultipartMemory = 8 << 20
+	cleanup.StartLogRotation(database)
+	cleanup.StartFileCleanup(uploadDir)
 
 	log.Printf("Starting server on :8080 with upload directory: %s", uploadDir)
 	log.Fatal(r.Run(":8080"))
