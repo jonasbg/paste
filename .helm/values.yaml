@@ -1,5 +1,5 @@
 paste:
-  repository: ghcr.io/jonasbg/droply
+  repository: ghcr.io/jonasbg/paste
   tag: "latest"
   deployment: deployment
   mounts:
