@@ -14,7 +14,6 @@
 
 <style>
 	.progress-container {
-		margin-top: 2rem;
 		background-color: var(--light-gray);
 		border-radius: var(--border-radius);
 		padding: 2rem;
