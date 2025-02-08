@@ -40,7 +40,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 
 		id, err := generateID()
 		if err != nil {
-			ws.WriteJSON(gin.H{"error": "Failed to generate ID"})
+			sendError(ws, "Failed to generate ID")
 			return
 		}
 
@@ -49,34 +49,38 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 
 		file, err := os.Create(tmpPath)
 		if err != nil {
-			ws.WriteJSON(gin.H{"error": "Failed to create file"})
+			sendError(ws, "Failed to create file")
 			return
 		}
-		defer file.Close()
+		defer file.Close() // Ensure file is closed even in error cases
 
 		var totalBytes int64
 
 		// Read first message (header)
 		_, header, err := ws.ReadMessage()
 		if err != nil || len(header) < headerSize {
-			os.Remove(tmpPath)
-			ws.WriteJSON(gin.H{"error": "Invalid header"})
+			cleanup(ws, tmpPath, "Invalid header")
 			return
 		}
 
 		if _, err := file.Write(header); err != nil {
-			os.Remove(tmpPath)
-			ws.WriteJSON(gin.H{"error": "Failed to write header"})
+			cleanup(ws, tmpPath, "Failed to write header")
 			return
 		}
 		totalBytes += int64(len(header))
+
+        // Send "ready" signal after successfully processing the header
+        if err := ws.WriteJSON(gin.H{"ready": true}); err != nil {
+            log.Printf("Failed to send ready signal: %v", err)
+			cleanup(ws, tmpPath, "Failed to send ready signal") //cleanup
+            return
+        }
 
 		// Read chunks until end signal
 		for {
 			_, chunk, err := ws.ReadMessage()
 			if err != nil {
-				os.Remove(tmpPath)
-				ws.WriteJSON(gin.H{"error": "Failed to read chunk"})
+				cleanup(ws, tmpPath, "Failed to read chunk")
 				return
 			}
 
@@ -85,25 +89,37 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				break
 			}
 
-			totalBytes += int64(len(chunk))
-			if totalBytes > maxFileSize {
-				os.Remove(tmpPath)
-				ws.WriteJSON(gin.H{"error": "File too large"})
+			if _, err := file.Write(chunk); err != nil {
+				cleanup(ws, tmpPath, "Failed to write chunk")
 				return
 			}
 
-			if _, err := file.Write(chunk); err != nil {
-				os.Remove(tmpPath)
-				ws.WriteJSON(gin.H{"error": "Failed to write chunk"})
+			chunkSize := int64(len(chunk)) // Calculate chunk size *before* adding to totalBytes
+			totalBytes += chunkSize
+
+			if totalBytes > maxFileSize {
+				cleanup(ws, tmpPath, "File too large")
+				return
+			}
+
+			// Send acknowledgement
+			if err := ws.WriteJSON(gin.H{"ack": chunkSize}); err != nil {
+				log.Printf("Failed to send acknowledgement: %v", err)
+				cleanup(ws, tmpPath, "Failed to send acknowledgement") //cleanup
 				return
 			}
 		}
 
-		file.Close()
+
+		// No need for file.Sync() here - close handles flushing
+		if err := file.Close(); err != nil { // Explicitly close before rename
+          cleanup(ws, tmpPath, "Error closing file") //cleanup
+          return
+        }
 
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			os.Remove(tmpPath)
-			ws.WriteJSON(gin.H{"error": "Failed to save file"})
+			os.Remove(tmpPath) // Attempt cleanup, even if rename fails
+			sendError(ws, "Failed to save file")
 			return
 		}
 
@@ -126,10 +142,32 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			log.Printf("Failed to create transaction log: %v", err)
 		}
 
-		ws.WriteJSON(gin.H{
+		if err := ws.WriteJSON(gin.H{ // Use ws.WriteJSON for consistency
 			"id":       id,
 			"size":     totalBytes,
 			"complete": true,
-		})
+		}); err != nil {
+            log.Printf("Failed to send complete message: %v", err) // Log error, but don't return - it's the last message
+        }
+
+	}
+}
+
+// Helper functions for error handling and cleanup
+
+func sendError(ws *websocket.Conn, message string) {
+    err := ws.WriteJSON(gin.H{"error": message}) //Consistent JSON error
+    if err != nil {
+        log.Printf("Failed to send error message: %v", err)
+    }
+    ws.Close() // Always close the connection on error
+}
+
+func cleanup(ws *websocket.Conn, tmpPath string, message string) {
+	sendError(ws, message) // Send the error message first
+	if _, err := os.Stat(tmpPath); err == nil { // Check if file exists before removing
+		if err := os.Remove(tmpPath); err != nil {
+			log.Printf("Failed to remove temporary file: %v", err)
+		}
 	}
 }
