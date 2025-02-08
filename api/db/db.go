@@ -222,30 +222,36 @@ func (d *DB) CleanOldRequestLogs(before time.Time) error {
 	return d.db.Where("timestamp < ?", before).Delete(&types.RequestLog{}).Error
 }
 
-func (d *DB) GetRequestMetrics(start, end time.Time) (map[string]interface{}, error) {
-	var metrics = make(map[string]interface{})
+func (d *DB) GetRequestMetrics(start, end time.Time) (types.RequestMetrics, error) {
+	var metrics types.RequestMetrics
+	metrics.StatusDistribution = make(map[int]int64)
+	metrics.PathDistribution = make(map[string]int64)
 
-	// Total requests
-	var totalRequests int64
+	// Get total requests
 	if err := d.db.Model(&types.RequestLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
-		Count(&totalRequests).Error; err != nil {
-		return nil, err
+		Count(&metrics.TotalRequests).Error; err != nil {
+		return metrics, err
 	}
-	metrics["total_requests"] = totalRequests
 
-	// Average response time
-	var avgDuration float64
+	// Get unique IPs
 	if err := d.db.Model(&types.RequestLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select("AVG(duration)").
-		Row().Scan(&avgDuration); err != nil {
-		return nil, err
+		Distinct("ip").
+		Count(&metrics.UniqueIPs).Error; err != nil {
+		return metrics, err
 	}
-	metrics["avg_response_time_ms"] = avgDuration
 
-	// Status code distribution
-	var statusCodes []struct {
+	// Get average latency
+	if err := d.db.Model(&types.RequestLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Select("COALESCE(AVG(duration), 0)").
+		Scan(&metrics.AverageLatency).Error; err != nil {
+		return metrics, err
+	}
+
+	// Get status code distribution
+	var statusResults []struct {
 		StatusCode int
 		Count      int64
 	}
@@ -253,10 +259,54 @@ func (d *DB) GetRequestMetrics(start, end time.Time) (map[string]interface{}, er
 		Where("timestamp BETWEEN ? AND ?", start, end).
 		Select("status_code, COUNT(*) as count").
 		Group("status_code").
-		Find(&statusCodes).Error; err != nil {
-		return nil, err
+		Scan(&statusResults).Error; err != nil {
+		return metrics, err
 	}
-	metrics["status_codes"] = statusCodes
+	for _, result := range statusResults {
+		metrics.StatusDistribution[result.StatusCode] = result.Count
+	}
+
+	// Get path distribution (top 10 paths)
+	var pathResults []struct {
+		Path  string
+		Count int64
+	}
+	if err := d.db.Model(&types.RequestLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Select("path, COUNT(*) as count").
+		Group("path").
+		Order("count DESC").
+		Limit(10).
+		Scan(&pathResults).Error; err != nil {
+		return metrics, err
+	}
+	for _, result := range pathResults {
+		metrics.PathDistribution[result.Path] = result.Count
+	}
+
+	// Get top 10 IPs with their error counts
+	if err := d.db.Model(&types.RequestLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Select(`ip,
+							COUNT(*) as request_count,
+							COUNT(CASE WHEN status_code >= 400 THEN 1 END) as error_count`).
+		Group("ip").
+		Order("request_count DESC").
+		Limit(10).
+		Find(&metrics.TopIPs).Error; err != nil {
+		return metrics, err
+	}
+
+	// Get time distribution (requests per day)
+	// Modified to use strftime for SQLite date formatting
+	if err := d.db.Model(&types.RequestLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Select(`strftime('%Y-%m-%d', timestamp) as date, COUNT(*) as count`).
+		Group("date").
+		Order("date ASC").
+		Find(&metrics.TimeDistribution).Error; err != nil {
+		return metrics, err
+	}
 
 	return metrics, nil
 }
