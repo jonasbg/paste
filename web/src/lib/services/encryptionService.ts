@@ -25,38 +25,68 @@ export async function uploadEncryptedFile(
 		const chunkSize = 1024 * 1024;
 
 		let offset = 0;
+		let totalSize = encryptedContent.length;
+		let fileId: string | null = null;
 
 		ws.onopen = async () => {
-			ws.send(header);
-
-			const content = new Uint8Array(encryptedContent);
-			while (offset < content.length) {
-				const chunk = content.slice(offset, offset + chunkSize);
-				ws.send(chunk);
-
-				offset += chunk.length;
-				const uploadPercent = (offset / content.length) * 100;
-				await onProgress(
-					45 + Math.round(uploadPercent * 0.5),
-					`Laster opp... (${Math.round(uploadPercent)}%)`
-				);
-
-				await new Promise(r => setTimeout(r, 10));
-			}
-
-			ws.send(new Uint8Array([0]));
-			await onProgress(95, 'Fullfører...');
+			ws.send(header); // Send header first
 		};
+
 
 		ws.onmessage = async (event) => {
-			const response = JSON.parse(event.data);
-			if (response.error) reject(new Error(response.error));
-			if (response.complete) {
-				await onProgress(100, 'Fullfører...');
-				resolve(response.id);
-			}
-		};
+            if (typeof event.data === 'string') {
+                const response = JSON.parse(event.data);
 
-		ws.onerror = () => reject(new Error('Nettverksfeil'));
+                if (response.error) {
+                    reject(new Error(response.error));
+                    ws.close();
+                    return;
+                }
+
+                if (response.ready) {
+                    // Server is ready for the next chunk.  Send it!
+                    sendNextChunk();
+                }
+
+                if (response.complete) {
+					fileId = response.id;
+                    await onProgress(100, 'Fullfører...');
+                    resolve(response.id);
+                    ws.close();
+                }
+
+				if(response.ack) {
+					//Server has confirmed the sent package
+					offset += response.ack; //Important: update with size server got
+
+					const uploadPercent = (offset / totalSize) * 100;
+					await onProgress(
+						45 + Math.round(uploadPercent * 0.5),
+						`Laster opp... (${Math.round(uploadPercent)}%)`
+					);
+
+					// Send the next chunk only after acknowledgment.
+					sendNextChunk();
+				}
+            }
+        };
+
+
+		ws.onerror = () => {
+            reject(new Error('Nettverksfeil'));
+            ws.close();
+        };
+
+		async function sendNextChunk() {
+			if (offset < totalSize) {
+				const chunk = encryptedContent.slice(offset, offset + chunkSize);
+				// No longer increment offset here. It moved to the onMessage ack check
+				ws.send(chunk);
+
+			} else if (offset >= totalSize && fileId === null) { // important:  only send the end signal IF we haven't already received 'complete'.
+				// Send the end-of-transmission marker.
+				ws.send(new Uint8Array([0]));
+			}
+		}
 	});
 }

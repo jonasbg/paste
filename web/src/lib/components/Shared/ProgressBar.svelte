@@ -2,6 +2,8 @@
 	export let progress: number = 0;
 	export let message: string = '';
 	export let isVisible: boolean = false;
+
+	$: console.log("Progress updated:", progress, message); // Debugging
 </script>
 
 <div class="progress-container" style="display: {isVisible ? 'block' : 'none'}">
