@@ -33,7 +33,7 @@ func NewDB(dbPath string) (*DB, error) {
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 
-	err = db.AutoMigrate(&types.TransactionLog{})
+	err = db.AutoMigrate(&types.TransactionLog{}, &types.RequestLog{})
 	if err != nil {
 		return nil, err
 	}
@@ -212,4 +212,51 @@ func (d *DB) LogTransaction(tx *types.TransactionLog) error {
 
 func (d *DB) CleanOldLogs(before time.Time) error {
 	return d.db.Where("timestamp < ?", before).Delete(&types.TransactionLog{}).Error
+}
+
+func (d *DB) LogRequest(log *types.RequestLog) error {
+	return d.db.Create(log).Error
+}
+
+func (d *DB) CleanOldRequestLogs(before time.Time) error {
+	return d.db.Where("timestamp < ?", before).Delete(&types.RequestLog{}).Error
+}
+
+func (d *DB) GetRequestMetrics(start, end time.Time) (map[string]interface{}, error) {
+	var metrics = make(map[string]interface{})
+
+	// Total requests
+	var totalRequests int64
+	if err := d.db.Model(&types.RequestLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Count(&totalRequests).Error; err != nil {
+		return nil, err
+	}
+	metrics["total_requests"] = totalRequests
+
+	// Average response time
+	var avgDuration float64
+	if err := d.db.Model(&types.RequestLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Select("AVG(duration)").
+		Row().Scan(&avgDuration); err != nil {
+		return nil, err
+	}
+	metrics["avg_response_time_ms"] = avgDuration
+
+	// Status code distribution
+	var statusCodes []struct {
+		StatusCode int
+		Count      int64
+	}
+	if err := d.db.Model(&types.RequestLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Select("status_code, COUNT(*) as count").
+		Group("status_code").
+		Find(&statusCodes).Error; err != nil {
+		return nil, err
+	}
+	metrics["status_codes"] = statusCodes
+
+	return metrics, nil
 }

@@ -46,6 +46,10 @@ func StartLogRotation(db *db.DB) {
 			if err := db.CleanOldLogs(cutoff); err != nil {
 				log.Printf("Failed to clean old logs: %v", err)
 			}
+
+			if err := db.CleanOldRequestLogs(cutoff); err != nil {
+				log.Printf("Failed to clean old logs: %v", err)
+			}
 		}
 	}()
 }

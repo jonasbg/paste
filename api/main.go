@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jonasbg/paste/m/v2/cleanup"
 	"github.com/jonasbg/paste/m/v2/db"
-	"github.com/jonasbg/paste/m/v2/db/cleanup"
 	"github.com/jonasbg/paste/m/v2/handlers"
 	"github.com/jonasbg/paste/m/v2/middleware"
 	"github.com/jonasbg/paste/m/v2/utils"
@@ -49,9 +49,10 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(middleware.Logger(database))
 
 	api := r.Group("/api")
-	api.Use(middleware.RateLimit(limiter), middleware.Logger(database))
+	api.Use(middleware.RateLimit(limiter))
 	{
 		api.POST("/upload", handlers.HandleUpload(uploadDir))
 		api.GET("/metadata/:id", handlers.HandleMetadata(uploadDir))
