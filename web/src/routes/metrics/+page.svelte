@@ -4,444 +4,353 @@
 	import { parse, format } from 'date-fns';
 	import ApexCharts from 'apexcharts';
 	import { onMount } from 'svelte';
-	import type { ActivitySummary, SecurityMetrics, StorageSummary } from '$lib/types';
+	import type { ActivitySummary, SecurityMetrics, StorageSummary, RequestMetrics } from '$lib/types';
 
 	export let data: {
-		activity: ActivitySummary[];
-		metrics: SecurityMetrics;
-		storage: StorageSummary;
-		range: string;
-		error?: string;
+			activity: ActivitySummary[];
+			metrics: SecurityMetrics;
+			storage: StorageSummary;
+			requests: RequestMetrics;
+			range: string;
+			error?: string;
 	};
 
 	let dateRange = data.range;
-	let activityChartElement: HTMLElement;
+	let timeSeriesChartElement: HTMLElement;
 	let statusChartElement: HTMLElement;
-	let topIPsChartElement: HTMLElement;
-	let activityChart: ApexCharts;
+	let pathDistributionElement: HTMLElement;
+	let requestsTimelineElement: HTMLElement;
+	let latencyTimelineElement: HTMLElement;
+
+	let timeSeriesChart: ApexCharts;
 	let statusChart: ApexCharts;
-	let topIPsChart: ApexCharts;
+	let pathDistributionChart: ApexCharts;
+	let requestsTimelineChart: ApexCharts;
+	let latencyTimelineChart: ApexCharts;
 
 	const rangeOptions = [
-		{ value: '24h', label: 'Last 24 Hours' },
-		{ value: '7d', label: 'Last 7 Days' },
-		{ value: '30d', label: 'Last 30 Days' },
-		{ value: '90d', label: 'Last 90 Days' }
+			{ value: '24h', label: 'Last 24 Hours' },
+			{ value: '7d', label: 'Last 7 Days' },
+			{ value: '30d', label: 'Last 30 Days' },
+			{ value: '90d', label: 'Last 90 Days' }
 	];
 
 	function formatBytes(bytes: number) {
-		if (bytes === 0) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+			if (bytes === 0) return '0 B';
+			const k = 1024;
+			const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+			const i = Math.floor(Math.log(bytes) / Math.log(k));
+			return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 	}
 
 	async function handleRangeChange() {
-		const searchParams = new URLSearchParams($page.url.searchParams);
-		searchParams.set('range', dateRange);
-		goto(`?${searchParams.toString()}`, { replaceState: true });
+			const searchParams = new URLSearchParams($page.url.searchParams);
+			searchParams.set('range', dateRange);
+			goto(`?${searchParams.toString()}`, { replaceState: true });
 	}
 
 	function getStatusCodeColor(code: string) {
-		const num = parseInt(code);
-		if (num < 300) return '#00E396';
-		if (num < 400) return '#FEB019';
-		if (num < 500) return '#FF4560';
-		return '#775DD0';
-	}
-
-	function getStatusCodeLabel(code: string) {
-		const num = parseInt(code);
-		if (num < 300) return 'Success';
-		if (num < 400) return 'Redirect';
-		if (num < 500) return 'Client Error';
-		return 'Server Error';
+			const num = parseInt(code);
+			if (num < 300) return '#10B981'; // Green
+			if (num < 400) return '#F59E0B'; // Yellow
+			if (num < 500) return '#EF4444'; // Red
+			return '#8B5CF6'; // Purple
 	}
 
 	onMount(() => {
-		if (data.activity && data.metrics) {
-			// Activity Timeline Chart
-			const activityOptions = {
-				chart: {
-					type: 'line',
-					height: 380,
-					fontFamily:
-						'-apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-					toolbar: {
-						show: true
-					}
-				},
-				colors: ['#2E93fA', '#66DA26', '#546E7A'],
-				series: [
-					{
-						name: 'Uploads',
-						data: data.activity.map((d) => ({
-							x: new Date(d.period).getTime(),
-							y: d.uploads
-						}))
-					},
-					{
-						name: 'Downloads',
-						data: data.activity.map((d) => ({
-							x: new Date(d.period).getTime(),
-							y: d.downloads
-						}))
-					},
-					{
-						name: 'Unique Visitors',
-						data: data.activity.map((d) => ({
-							x: new Date(d.period).getTime(),
-							y: d.unique_visitors
-						}))
-					}
-				],
-				xaxis: {
-					type: 'datetime',
-					labels: {
-						formatter: (val: string) => format(new Date(parseInt(val)), 'MMM d')
-					}
-				},
-				stroke: {
-					curve: 'smooth',
-					width: 2
-				}
-			};
-
-			// Status codes donut chart
-			const statusOptions = {
-				chart: {
-					type: 'donut',
-					height: 380
-				},
-				series: Object.values(data.metrics.status_codes),
-				labels: Object.keys(data.metrics.status_codes).map(
-					(code) => `${code} ${getStatusCodeLabel(code)}`
-				),
-				colors: Object.keys(data.metrics.status_codes).map((code) => getStatusCodeColor(code)),
-				legend: {
-					position: 'bottom'
-				}
-			};
-
-			// Top IPs bar chart
-			const topIPsOptions = {
-				chart: {
-					type: 'bar',
-					height: 380,
-					stacked: true,
-					stackType: '100%'
-				},
-				series: [
-					{
-						name: 'Successful Requests',
-						data: data.metrics.top_ips.map((ip) => ip.requests - ip.failures)
-					},
-					{
-						name: 'Failed Requests',
-						data: data.metrics.top_ips.map((ip) => ip.failures)
-					}
-				],
-				plotOptions: {
-					bar: {
-						horizontal: false,
-						borderRadius: 4,
-						dataLabels: {
-							total: {
-								enabled: true,
-								formatter: function (val) {
-									return val.toFixed(0) + '%';
-								}
+			if (data.activity && data.metrics && data.requests) {
+					// Main Time Series Chart (Unified view)
+					const timeSeriesOptions = {
+							chart: {
+									type: 'line',
+									height: 400,
+									fontFamily: 'Inter var, system-ui, -apple-system, sans-serif',
+									animations: {
+											enabled: false
+									},
+									toolbar: {
+											show: true,
+											tools: {
+													download: true,
+													selection: true,
+													zoom: true,
+													zoomin: true,
+													zoomout: true,
+													pan: true,
+													reset: true
+											}
+									}
+							},
+							stroke: {
+									curve: 'smooth',
+									width: 2
+							},
+							colors: ['#10B981', '#3B82F6', '#8B5CF6'],
+							series: [
+									{
+											name: 'Uploads',
+											data: data.activity.map(d => ({
+													x: new Date(d.period).getTime(),
+													y: d.uploads
+											}))
+									},
+									{
+											name: 'Downloads',
+											data: data.activity.map(d => ({
+													x: new Date(d.period).getTime(),
+													y: d.downloads
+											}))
+									},
+									{
+											name: 'Unique Visitors',
+											data: data.activity.map(d => ({
+													x: new Date(d.period).getTime(),
+													y: d.unique_visitors
+											}))
+									}
+							],
+							xaxis: {
+									type: 'datetime',
+									labels: {
+											formatter: (val: string) => format(new Date(parseInt(val)), 'MMM d, yyyy')
+									}
+							},
+							yaxis: {
+									labels: {
+											formatter: (val: number) => Math.round(val)
+									}
+							},
+							legend: {
+									position: 'top'
 							}
-						}
-					}
-				},
-				xaxis: {
-					categories: data.metrics.top_ips.map((ip) => ip.ip),
-					labels: {
-						rotate: -45,
-						style: {
-							fontSize: '12px'
-						}
-					}
-				},
-				yaxis: {
-					labels: {
-						formatter: function (val) {
-							return val.toFixed(0) + '%';
-						}
-					}
-				},
-				colors: ['#2E93fA', '#ff4560'],
-				legend: {
-					position: 'top',
-					horizontalAlign: 'left'
-				},
-				tooltip: {
-					y: {
-						formatter: function (val) {
-							return val.toFixed(0) + '%';
-						}
-					}
-				}
+					};
+
+					// Requests Timeline Chart
+					const requestsTimelineOptions = {
+							chart: {
+									type: 'area',
+									height: 300,
+									stacked: true,
+									animations: {
+											enabled: false
+									}
+							},
+							colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
+							series: Object.entries(data.requests.status_distribution).map(([code, count]) => ({
+									name: `${code} Status`,
+									data: data.requests.time_distribution.map(d => ({
+											x: d.date,
+											y: count
+									}))
+							})),
+							xaxis: {
+									type: 'datetime'
+							},
+							yaxis: {
+									labels: {
+											formatter: (val: number) => Math.round(val)
+									}
+							},
+							fill: {
+									type: 'gradient',
+									gradient: {
+											opacityFrom: 0.6,
+											opacityTo: 0.1
+									}
+							}
+					};
+
+					// Path Distribution Chart (Top 10 paths)
+					const pathDistributionOptions = {
+							chart: {
+									type: 'bar',
+									height: 300
+							},
+							plotOptions: {
+									bar: {
+											horizontal: true,
+											borderRadius: 4
+									}
+							},
+							colors: ['#3B82F6'],
+							series: [{
+									name: 'Requests',
+									data: Object.entries(data.requests.path_distribution)
+											.sort((a, b) => b[1] - a[1])
+											.slice(0, 10)
+											.map(([path, count]) => count)
+							}],
+							xaxis: {
+									categories: Object.entries(data.requests.path_distribution)
+											.sort((a, b) => b[1] - a[1])
+											.slice(0, 10)
+											.map(([path]) => path)
+							}
+					};
+
+					// Latency Timeline Chart
+					const latencyTimelineOptions = {
+							chart: {
+									type: 'line',
+									height: 300,
+									animations: {
+											enabled: false
+									}
+							},
+							series: [{
+									name: 'Average Latency (ms)',
+									data: data.requests.time_distribution.map(d => ({
+											x: d.date,
+											y: data.requests.average_latency_ms
+									}))
+							}],
+							stroke: {
+									curve: 'smooth',
+									width: 2
+							},
+							colors: ['#F59E0B'],
+							xaxis: {
+									type: 'datetime'
+							},
+							yaxis: {
+									labels: {
+											formatter: (val: number) => `${Math.round(val)}ms`
+									}
+							}
+					};
+
+					timeSeriesChart = new ApexCharts(timeSeriesChartElement, timeSeriesOptions);
+					requestsTimelineChart = new ApexCharts(requestsTimelineElement, requestsTimelineOptions);
+					pathDistributionChart = new ApexCharts(pathDistributionElement, pathDistributionOptions);
+					latencyTimelineChart = new ApexCharts(latencyTimelineElement, latencyTimelineOptions);
+
+					timeSeriesChart.render();
+					requestsTimelineChart.render();
+					pathDistributionChart.render();
+					latencyTimelineChart.render();
+			}
+
+			return () => {
+					timeSeriesChart?.destroy();
+					requestsTimelineChart?.destroy();
+					pathDistributionChart?.destroy();
+					latencyTimelineChart?.destroy();
 			};
-
-			activityChart = new ApexCharts(activityChartElement, activityOptions);
-			statusChart = new ApexCharts(statusChartElement, statusOptions);
-			topIPsChart = new ApexCharts(topIPsChartElement, topIPsOptions);
-
-			activityChart.render();
-			statusChart.render();
-			topIPsChart.render();
-		}
-
-		return () => {
-			activityChart?.destroy();
-			statusChart?.destroy();
-			topIPsChart?.destroy();
-		};
 	});
+	</script>
 
-	// Reactive statements for updating charts when data changes
-	$: if (activityChart && data.activity) {
-		activityChart.updateSeries([
-			{
-				name: 'Uploads',
-				data: data.activity.map((d) => ({
-					x: new Date(d.period).getTime(),
-					y: d.uploads
-				}))
-			},
-			{
-				name: 'Downloads',
-				data: data.activity.map((d) => ({
-					x: new Date(d.period).getTime(),
-					y: d.downloads
-				}))
-			},
-			{
-				name: 'Unique Visitors',
-				data: data.activity.map((d) => ({
-					x: new Date(d.period).getTime(),
-					y: d.unique_visitors
-				}))
-			}
-		]);
-	}
+	<div class="dashboard">
+			<div class="header">
+					<div class="header-content">
+							<h1 class="title">System Metrics Dashboard</h1>
+							<select bind:value={dateRange} on:change={handleRangeChange}>
+									{#each rangeOptions as option}
+											<option value={option.value}>{option.label}</option>
+									{/each}
+							</select>
+					</div>
+			</div>
 
-	$: if (statusChart && data.metrics?.status_codes) {
-		statusChart.updateSeries([Object.values(data.metrics.status_codes)].flat());
-		statusChart.updateOptions({
-			labels: Object.keys(data.metrics.status_codes).map(
-				(code) => `${code} ${getStatusCodeLabel(code)}`
-			),
-			colors: Object.keys(data.metrics.status_codes).map((code) => getStatusCodeColor(code))
-		});
-	}
+			{#if data.error}
+					<div class="error">{data.error}</div>
+			{:else}
+					<div class="metrics-summary">
+							<div class="metric-card">
+									<h3>Total Requests</h3>
+									<div class="value">{data.requests?.total_requests?.toLocaleString() || 0}</div>
+							</div>
+							<div class="metric-card">
+									<h3>Unique IPs</h3>
+									<div class="value">{data.requests?.unique_ips?.toLocaleString() || 0}</div>
+							</div>
+							<div class="metric-card">
+									<h3>Avg Latency</h3>
+									<div class="value">{Math.round(data.requests?.average_latency_ms || 0)}ms</div>
+							</div>
+							<div class="metric-card">
+									<h3>Current Storage</h3>
+									<div class="value">{formatBytes(data.storage?.current_size || 0)}</div>
+							</div>
+					</div>
 
-	$: if (topIPsChart && data.metrics?.top_ips) {
-		topIPsChart.updateSeries([
-			{
-				name: 'Successful Requests',
-				data: data.metrics.top_ips.map((ip) => ip.requests - ip.failures)
-			},
-			{
-				name: 'Failed Requests',
-				data: data.metrics.top_ips.map((ip) => ip.failures)
-			}
-		]);
-		topIPsChart.updateOptions({
-			xaxis: {
-				categories: data.metrics.top_ips.map((ip) => ip.ip)
-			}
-		});
-	}
-</script>
+					<div class="charts-grid">
+							<div class="chart-container full-width">
+									<h2>Activity Overview</h2>
+									<div bind:this={timeSeriesChartElement}></div>
+							</div>
 
-<div class="dashboard">
-	<div class="header">
-		<h1 class="title">Unified Metrics Dashboard</h1>
-		<select bind:value={dateRange} on:change={handleRangeChange}>
-			{#each rangeOptions as option}
-				<option value={option.value}>{option.label}</option>
-			{/each}
-		</select>
+							<div class="chart-container">
+									<h2>Request Status Distribution</h2>
+									<div bind:this={requestsTimelineElement}></div>
+							</div>
+
+							<div class="chart-container">
+									<h2>Top Requested Paths</h2>
+									<div bind:this={pathDistributionElement}></div>
+							</div>
+
+							<div class="chart-container">
+									<h2>Response Latency Trend</h2>
+									<div bind:this={latencyTimelineElement}></div>
+							</div>
+					</div>
+			{/if}
 	</div>
 
-	{#if data.error}
-		<div class="error">{data.error}</div>
-	{:else}
-		<div class="metrics-grid">
-			<!-- Security Metrics -->
-			<div class="metric-card">
-				<div class="metric-card-header">
-					<div class="metric-card-icon">🔒</div>
-					<h3 class="metric-card-title">Total Requests</h3>
-				</div>
-				<span class="metric-card-value">{data.metrics?.total_requests || 0}</span>
-			</div>
+	<style>
+			.dashboard {
+					@apply p-6 max-w-[1600px] mx-auto bg-gray-50 min-h-screen;
+			}
 
-			<div class="metric-card">
-				<div class="metric-card-header">
-					<div class="metric-card-icon">⚠️</div>
-					<h3 class="metric-card-title">Failed Requests</h3>
-				</div>
-				<span class="metric-card-value">{data.metrics?.failed_requests || 0}</span>
-			</div>
+			.header {
+					@apply mb-6 bg-white rounded-lg shadow-sm p-4;
+			}
 
-			<!-- Storage Metrics -->
-			<div class="metric-card">
-				<div class="metric-card-header">
-					<div class="metric-card-icon">📁</div>
-					<h3 class="metric-card-title">Current Files</h3>
-				</div>
-				<div>
-					<span class="metric-card-value">{data.storage?.current_files || 0}</span>
-					<span class="metric-card-subvalue">({formatBytes(data.storage?.current_size || 0)})</span>
-					<span>/</span>
-					<span class="metric-card-value">{data.storage?.total_files || 0}</span>
-					<span class="metric-card-subvalue">({formatBytes(data.storage?.total_size_bytes || 0)})</span>
-				</div>
-			</div>
+			.header-content {
+					@apply flex justify-between items-center;
+			}
 
-			<div class="metric-card">
-				<div class="metric-card-header">
-					<div class="metric-card-icon">👥</div>
-					<h3 class="metric-card-title">Unique Visitors</h3>
-				</div>
-				<span class="metric-card-value">{data.storage?.total_unique_visitors || 0}</span>
-			</div>
-		</div>
+			.title {
+					@apply text-2xl font-semibold text-gray-900;
+			}
 
-		<div class="charts-grid">
-			<div class="chart-container">
-				<h2 class="chart-title">Activity Timeline</h2>
-				<div bind:this={activityChartElement}></div>
-			</div>
+			select {
+					@apply px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500;
+			}
 
-			<div class="chart-container">
-				<h2 class="chart-title">Status Code Distribution</h2>
-				<div bind:this={statusChartElement}></div>
-			</div>
+			.metrics-summary {
+					@apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6;
+			}
 
-			<div class="chart-container">
-				<h2 class="chart-title">Top IP Addresses</h2>
-				<div bind:this={topIPsChartElement}></div>
-			</div>
-		</div>
-	{/if}
-</div>
+			.metric-card {
+					@apply bg-white p-6 rounded-lg shadow-sm;
+			}
 
-<style>
-	.dashboard {
-		padding: 2rem;
-		max-width: 1400px;
-		margin: 0 auto;
-		background-color: #f5f5f5;
-		min-height: 100vh;
-	}
+			.metric-card h3 {
+					@apply text-sm font-medium text-gray-500 mb-2;
+			}
 
-	.header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 2rem;
-	}
+			.metric-card .value {
+					@apply text-2xl font-semibold text-gray-900;
+			}
 
-	.title {
-		font-size: 1.5rem;
-		font-weight: 600;
-		color: #333;
-	}
+			.charts-grid {
+					@apply grid grid-cols-1 lg:grid-cols-2 gap-6;
+			}
 
-	select {
-		padding: 0.5rem 1rem;
-		border: 1px solid #ddd;
-		border-radius: 4px;
-		background-color: white;
-		font-size: 0.9rem;
-	}
+			.chart-container {
+					@apply bg-white p-6 rounded-lg shadow-sm;
+			}
 
-	.metrics-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-		gap: 1rem;
-		margin-bottom: 2rem;
-	}
+			.chart-container h2 {
+					@apply text-lg font-medium text-gray-900 mb-4;
+			}
 
-	.metric-card {
-		background: white;
-		border-radius: 8px;
-		padding: 1.5rem;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-	}
+			.full-width {
+					@apply lg:col-span-2;
+			}
 
-	.metric-card-header {
-		display: flex;
-		align-items: center;
-		margin-bottom: 1rem;
-	}
-
-	.metric-card-icon {
-		width: 40px;
-		height: 40px;
-		background: #f0f0f0;
-		border-radius: 8px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		margin-right: 1rem;
-	}
-
-	.metric-card-title {
-		font-size: 0.875rem;
-		color: #666;
-		margin: 0;
-	}
-
-	.metric-card-value {
-		font-size: 1.5rem;
-		font-weight: 600;
-		color: #333;
-	}
-
-	.metric-card-subvalue {
-		font-size: 0.875rem;
-		color: #666;
-		margin-left: 0.5rem;
-	}
-
-	.charts-grid {
-		display: grid;
-		grid-template-columns: 1fr;
-		gap: 1rem;
-		margin-bottom: 2rem;
-	}
-
-	.chart-container {
-		background: white;
-		border-radius: 8px;
-		padding: 1.5rem;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-	}
-
-	.chart-title {
-		font-size: 1.125rem;
-		color: #333;
-		margin: 0 0 1rem 0;
-	}
-
-	.error {
-		background-color: #fee2e2;
-		border: 1px solid #fecaca;
-		padding: 1rem;
-		border-radius: 4px;
-		color: #dc2626;
-	}
-
-	@media (min-width: 1024px) {
-		.charts-grid {
-			grid-template-columns: repeat(2, 1fr);
-		}
-	}
-</style>
+			.error {
+					@apply bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg mb-6;
+			}
+	</style>

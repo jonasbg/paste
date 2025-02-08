@@ -4,10 +4,11 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const range = url.searchParams.get('range') || '7d';
 
 	try {
-		const [securityRes, activityRes, storageRes] = await Promise.all([
+		const [securityRes, activityRes, storageRes, requestsRes] = await Promise.all([
 			fetch(`/api/metrics/security?range=${range}`),
 			fetch(`/api/metrics/activity?range=${range}`),
-			fetch(`/api/metrics/storage?range=${range}`)
+			fetch(`/api/metrics/storage?range=${range}`),
+			fetch(`/api/metrics/requests?range=${range}`)
 		]);
 
 		if (!securityRes.ok || !activityRes.ok || !storageRes.ok) {
@@ -18,6 +19,7 @@ export const load: PageLoad = async ({ fetch, url }) => {
 			metrics: await securityRes.json(),
 			activity: await activityRes.json(),
 			storage: await storageRes.json(),
+			requests: await requestsRes.json(),
 			range
 		};
 	} catch (e) {
