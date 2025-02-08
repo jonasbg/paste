@@ -10,6 +10,7 @@
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import { replaceState } from '$app/navigation';
 	import { getFileMetadata } from '$lib/api';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let encryptionKey: string = '';
 	let manualKeyInput: string = '';
@@ -21,6 +22,7 @@
 	let downloadError: string | null = null;
 	let isDownloadComplete = false;
 	let keyError: string | null = null;
+	let isLoading = true;
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
@@ -64,7 +66,9 @@
 		} catch (error) {
 			console.error('Metadata error:', error);
 			metadata = { error: (error as Error).message };
-		}
+		} finally {
+			isLoading = false;
+    }
 	}
 
 	// Function to safely handle encryption key without exposing it in URL
@@ -176,6 +180,8 @@
 		} catch (error) {
 			console.error('Failed to initialize:', error);
 			downloadError = 'Failed to initialize the application';
+		} finally{
+			isLoading = false;
 		}
 	});
 
@@ -190,7 +196,14 @@
 
 <div class="container">
 	<div class="download-container">
-		<h1>Last ned fil</h1>
+		<h1><span>Sikker</span> fildeling</h1>
+    <p class="intro-text">
+        Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt delt med deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig dekrypteringsnøkkel kan få tilgang til innholdet. Etter vellykket nedlasting blir filen automatisk slettet fra våre servere.
+    </p>
+
+		{#if isLoading}
+			<LoadingSpinner message=""/>
+		{/if}
 
 		{#if downloadError}
 			<ErrorMessage message={downloadError} />
@@ -223,7 +236,7 @@
 			{/if}
 		{/if}
 
-		{#if !encryptionKey && !isDownloadComplete}
+		{#if !encryptionKey && !isDownloadComplete && !isLoading}
 			<form class="key-prompt" on:submit|preventDefault={handleManualKeySubmit}>
 				<h2>Dekrypteringsnøkkel kreves</h2>
 				<p>
@@ -259,7 +272,7 @@
 
 <style>
 	.download-container {
-		background-color: var(--light-gray);
+		/* background-color: var(--light-gray); */
 		border-radius: var(--border-radius);
 		padding: 2rem;
 	}
@@ -267,6 +280,10 @@
 	h1 {
 		font-size: 2.5rem;
 		font-weight: 500;
+	}
+
+	h1 span {
+		color: var(--primary-green);
 	}
 
 	.key-prompt {
@@ -327,4 +344,10 @@
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
 	}
+	.intro-text {
+    color: #666;
+    margin: 1rem 0 2rem 0;
+    line-height: 1.5;
+    max-width: 800px;
+}
 </style>
