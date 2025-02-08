@@ -16,8 +16,7 @@ export async function uploadEncryptedFile(
 ): Promise<string> {
 	const processor = new FileProcessor();
 
-	const encryptionProgress = (p: number) => onProgress(Math.round(p * 0.5), 'Krypterer...');
-	const { header, encryptedContent } = await processor.encryptFile(file, key, encryptionProgress);
+	const { header, encryptedContent } = await processor.encryptFile(file, key, onProgress);
 
 	return new Promise((resolve, reject) => {
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
