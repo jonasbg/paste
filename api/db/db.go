@@ -142,6 +142,24 @@ func (d *DB) GetActivitySummary(start, end time.Time) ([]types.ActivitySummary, 
 	return summary, nil
 }
 
+func (d *DB) GetStorageSummary() (types.StorageSummary, error) {
+	var summary types.StorageSummary
+
+	// Get total files (successful uploads)
+	d.db.Model(&types.TransactionLog{}).
+		Where("action = ? AND success = ?", "upload", true).
+		Count(&summary.TotalFiles)
+
+	// Get total size of all files ever uploaded
+	d.db.Model(&types.TransactionLog{}).
+		Where("action = ? AND success = ?", "upload", true).
+		Select("COALESCE(SUM(size), 0)").
+		Row().
+		Scan(&summary.TotalSizeBytes)
+
+	return summary, nil
+}
+
 func (d *DB) LogTransaction(tx *types.TransactionLog) error {
 	return d.db.Create(tx).Error
 }
