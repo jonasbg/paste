@@ -131,41 +131,37 @@
 			};
 
 			// Requests Timeline Chart
-			const requestsTimelineOptions = {
-				chart: {
-					type: 'area',
-					height: 300,
-					stacked: true,
-					animations: {
-						enabled: false
-					}
-				},
-				colors: Object.keys(data.requests.status_distribution).map((code) =>
-					getStatusCodeColor(code)
-				),
-				series: Object.entries(data.requests.status_distribution).map(([code, count]) => ({
-					name: `${code} Status`,
-					data: data.requests.time_distribution.map((d) => ({
-						x: d.date,
-						y: count
-					}))
-				})),
-				xaxis: {
-					type: 'datetime'
-				},
-				yaxis: {
-					labels: {
-						formatter: (val: number) => Math.round(val)
-					}
-				},
-				fill: {
-					type: 'gradient',
-					gradient: {
-						opacityFrom: 0.6,
-						opacityTo: 0.1
-					}
-				}
-			};
+			const statusDistributionOptions = {
+    chart: {
+        type: 'donut',
+        height: 300
+    },
+    colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
+    series: Object.values(data.requests.status_distribution),
+    labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`),
+    legend: {
+        position: 'bottom',
+        formatter: function(label: string, opts) {
+            return `${label} (${opts.w.globals.series[opts.seriesIndex]})`;
+        }
+    },
+    plotOptions: {
+        pie: {
+            donut: {
+                labels: {
+                    show: true,
+                    total: {
+                        show: true,
+                        label: 'Total Requests',
+                        formatter: function(w) {
+                            return w.globals.seriesTotals.reduce((a, b) => a + b, 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+};
 
 			// Path Distribution Chart (Top 10 paths)
 			const pathDistributionOptions = {
@@ -231,19 +227,20 @@
 			};
 
 			timeSeriesChart = new ApexCharts(timeSeriesChartElement, timeSeriesOptions);
-			requestsTimelineChart = new ApexCharts(requestsTimelineElement, requestsTimelineOptions);
+			statusChart = new ApexCharts(requestsTimelineElement, statusDistributionOptions);
+
 			pathDistributionChart = new ApexCharts(pathDistributionElement, pathDistributionOptions);
 			latencyTimelineChart = new ApexCharts(latencyTimelineElement, latencyTimelineOptions);
 
 			timeSeriesChart.render();
-			requestsTimelineChart.render();
+			statusChart.render();
 			pathDistributionChart.render();
 			latencyTimelineChart.render();
 		}
 
 		return () => {
 			timeSeriesChart?.destroy();
-			requestsTimelineChart?.destroy();
+			statusChart?.destroy();
 			pathDistributionChart?.destroy();
 			latencyTimelineChart?.destroy();
 		};
@@ -275,31 +272,13 @@
 		]);
 	}
 
-	$: if (requestsTimelineChart && data.requests?.time_distribution) {
-		requestsTimelineChart.updateSeries([
-			{
-				name: '2xx Status',
-				data: data.requests.time_distribution.map((d) => ({
-					x: d.date,
-					y: d.status_2xx || 0
-				}))
-			},
-			{
-				name: '4xx Status',
-				data: data.requests.time_distribution.map((d) => ({
-					x: d.date,
-					y: d.status_4xx || 0
-				}))
-			},
-			{
-				name: '5xx Status',
-				data: data.requests.time_distribution.map((d) => ({
-					x: d.date,
-					y: d.status_5xx || 0
-				}))
-			}
-		]);
-	}
+	$: if (statusChart && data.requests?.status_distribution) {
+    statusChart.updateOptions({
+        colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
+        labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`)
+    });
+    statusChart.updateSeries(Object.values(data.requests.status_distribution));
+}
 
 	$: if (pathDistributionChart && data.requests?.path_distribution) {
 		const sortedPaths = Object.entries(data.requests.path_distribution)
