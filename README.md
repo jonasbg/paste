@@ -109,6 +109,9 @@ While browsers provide the Web Crypto API, it requires loading the entire file i
 ### Why use WebSockets for file upload?
 Many HTTP proxies and servers have file size limits when using traditional multipart form uploads. WebSockets allow us to chunk large files into 1MB blocks, bypassing these limitations while providing upload progress feedback.
 
+### Does that means it violates ToS?
+Probably. Most certain. While WebSocket chunking can technically bypass file size limits, this should only be implemented on your own infrastructure. Most cloud providers and CDNs like Cloudflare have file size limits (e.g. 100MB). You should read their Terms of Service.
+
 ### Is my data really secure?
 Yes. All encryption happens in your browser using AES-GCM with 256-bit keys before upload. The server only sees encrypted data and never receives encryption keys or unencrypted metadata. Each file gets a unique identifier, encryption key, and IV (nonce), making it impossible to list or access files without having both the ID and key.
 
