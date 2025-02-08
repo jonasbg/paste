@@ -16,14 +16,24 @@ func Logger(database *db.DB) gin.HandlerFunc {
 		path := c.Request.URL.Path
 		requestMethod := getMethodType(c)
 
+		// Initialize request log
+		requestLog := &types.RequestLog{
+			Timestamp:   start,
+			IP:          utils.GetRealIP(c),
+			Method:      requestMethod,
+			Path:        path,
+			UserAgent:   c.Request.UserAgent(),
+			QueryParams: c.Request.URL.RawQuery,
+		}
+
 		// Create transaction log for file operations
 		var tx *types.TransactionLog
 		if isFileOperation(path) {
 			tx = &types.TransactionLog{
 				Timestamp: start,
 				Action:    getActionType(path, requestMethod),
-				IP:        utils.GetRealIP(c),
-				UserAgent: c.Request.UserAgent(),
+				IP:        requestLog.IP,
+				UserAgent: requestLog.UserAgent,
 				Method:    requestMethod,
 			}
 
@@ -44,6 +54,19 @@ func Logger(database *db.DB) gin.HandlerFunc {
 		statusCode := c.Writer.Status()
 		bodySize := c.Writer.Size()
 
+		// Update request log
+		requestLog.Duration = duration.Milliseconds()
+		requestLog.StatusCode = statusCode
+		requestLog.BodySize = int64(bodySize)
+		if len(c.Errors) > 0 {
+			requestLog.Error = c.Errors.String()
+		}
+
+		// Log the request
+		if err := database.LogRequest(requestLog); err != nil {
+			c.Error(err)
+		}
+
 		// Complete transaction log if it exists
 		if tx != nil {
 			tx.Duration = duration.Milliseconds()
@@ -51,7 +74,6 @@ func Logger(database *db.DB) gin.HandlerFunc {
 			tx.Size = int64(bodySize)
 			tx.Success = (statusCode >= 200 && statusCode < 300) || requestMethod == "websocket"
 
-			// Get error if any
 			if len(c.Errors) > 0 {
 				tx.Error = c.Errors.String()
 			}
@@ -77,7 +99,7 @@ func Logger(database *db.DB) gin.HandlerFunc {
 
 		// Add common log info to context
 		c.Set("requestDuration", duration)
-		c.Set("clientIP", utils.GetRealIP(c))
+		c.Set("clientIP", requestLog.IP)
 		c.Set("requestBodySize", bodySize)
 		c.Set("method", requestMethod)
 	}
