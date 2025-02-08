@@ -1,38 +1,61 @@
 import { getWasmInstance } from '$lib/utils/wasm-loader';
-import { FileProcessor } from './fileProcessor';
+import { FileProcessor, ProgressCallback, MAX_FILE_SIZE } from './fileProcessor';
 
 export function generateKey(): string | null {
-	const wasmInstance = getWasmInstance();
-	if (!wasmInstance) return null;
-
-	const key = wasmInstance.generateKey();
-	return key;
+    const wasmInstance = getWasmInstance();
+    if (!wasmInstance) return null;
+    return wasmInstance.generateKey();
 }
 
 export async function uploadEncryptedFile(
-	file: File,
-	key: string,
-	onProgress: (progress: number, message: string) => Promise<void>
+    file: File,
+    key: string,
+    onProgress: ProgressCallback
 ): Promise<string> {
-	const processor = new FileProcessor();
+    if (file.size > MAX_FILE_SIZE) {
+        throw new Error(`File size exceeds maximum allowed size of ${FileProcessor.formatFileSize(MAX_FILE_SIZE)}`);
+    }
 
-	const { header, encryptedContent } = await processor.encryptFile(file, key, onProgress);
+    const wasmInstance = getWasmInstance();
+    if (!wasmInstance) throw new Error('WASM not initialized');
 
-	return new Promise((resolve, reject) => {
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/upload`);
-		const chunkSize = 1024 * 1024;
+    return new Promise((resolve, reject) => {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/upload`);
+        const chunkSize = 1024 * 1024; // 1MB chunks
 
-		let offset = 0;
-		let totalSize = encryptedContent.length;
-		let fileId: string | null = null;
+        let fileOffset = 0;
+        let uploadedBytes = 0;
+        let fileId: string | null = null;
 
-		ws.onopen = async () => {
-			ws.send(header); // Send header first
-		};
+        ws.binaryType = 'arraybuffer';
 
+        ws.onopen = async () => {
+            try {
+                // Create metadata header first
+                const metadata = {
+                    filename: file.name,
+                    contentType: file.type,
+                    size: file.size
+                };
+                const metadataBytes = new TextEncoder().encode(JSON.stringify(metadata));
+                const encryptedMetadata = wasmInstance.encrypt(key, metadataBytes);
 
-		ws.onmessage = async (event) => {
+                // Format header according to expected format
+                // [16 bytes header][encrypted metadata][IV][encrypted content]
+                const header = new Uint8Array(16 + encryptedMetadata.length - 12);
+                header.set(encryptedMetadata.slice(0, 12), 0); // IV from metadata encryption
+                new DataView(header.buffer).setUint32(12, encryptedMetadata.length - 12, true);
+                header.set(encryptedMetadata.slice(12), 16); // Encrypted metadata without IV
+
+                ws.send(header);
+            } catch (error) {
+                reject(new Error('Failed to prepare header: ' + error.message));
+                ws.close();
+            }
+        };
+
+        ws.onmessage = async (event) => {
             if (typeof event.data === 'string') {
                 const response = JSON.parse(event.data);
 
@@ -43,49 +66,65 @@ export async function uploadEncryptedFile(
                 }
 
                 if (response.ready) {
-                    // Server is ready for the next chunk.  Send it!
-                    sendNextChunk();
+                    // Initialize encryption stream and send IV first
+                    const iv = wasmInstance.createEncryptionStream(key);
+                    ws.send(iv);
+                    await sendNextChunk();
                 }
 
                 if (response.complete) {
-					fileId = response.id;
-                    await onProgress(100, 'Fullfører...');
+                    fileId = response.id;
+                    await onProgress(100, 'Fullført');
                     resolve(response.id);
                     ws.close();
                 }
 
-				if(response.ack) {
-					//Server has confirmed the sent package
-					offset += response.ack; //Important: update with size server got
+                if (response.ack) {
+                    uploadedBytes += response.ack;
+                    await onProgress(
+											Math.round((fileOffset / file.size) * 100),
+                        `Laster opp...`
+                    );
 
-					const uploadPercent = (offset / totalSize) * 100;
-					await onProgress(
-						45 + Math.round(uploadPercent * 0.5),
-						`Laster opp... (${Math.round(uploadPercent)}%)`
-					);
-
-					// Send the next chunk only after acknowledgment.
-					sendNextChunk();
-				}
+                    await sendNextChunk();
+                }
             }
         };
 
-
-		ws.onerror = () => {
-            reject(new Error('Nettverksfeil'));
+        ws.onerror = () => {
+            reject(new Error('Nettverksfeil under opplasting'));
             ws.close();
         };
 
-		async function sendNextChunk() {
-			if (offset < totalSize) {
-				const chunk = encryptedContent.slice(offset, offset + chunkSize);
-				// No longer increment offset here. It moved to the onMessage ack check
-				ws.send(chunk);
+        ws.onclose = (event) => {
+            if (!event.wasClean && !fileId) {
+                reject(new Error('Tilkoblingen ble uventet avbrutt'));
+            }
+        };
 
-			} else if (offset >= totalSize && fileId === null) { // important:  only send the end signal IF we haven't already received 'complete'.
-				// Send the end-of-transmission marker.
-				ws.send(new Uint8Array([0]));
-			}
-		}
-	});
+        async function sendNextChunk() {
+            try {
+                if (fileOffset < file.size) {
+                    const chunk = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
+                    const isLastChunk = fileOffset + chunkSize >= file.size;
+
+                    // Encrypt the chunk
+                    const encryptedChunk = wasmInstance.encryptChunk(
+                        new Uint8Array(chunk),
+                        isLastChunk
+                    );
+
+                    // Send the encrypted chunk
+                    ws.send(encryptedChunk);
+                    fileOffset += chunk.byteLength;
+                } else if (fileOffset >= file.size && fileId === null) {
+                    // Send end-of-transmission marker
+                    ws.send(new Uint8Array([0]));
+                }
+            } catch (error) {
+                reject(new Error('Feil under kryptering eller sending av data: ' + error.message));
+                ws.close();
+            }
+        }
+    });
 }
