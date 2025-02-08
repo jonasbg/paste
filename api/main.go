@@ -62,7 +62,7 @@ func main() {
 
 		api.GET("/metrics/activity", handlers.HandleActivity(database))
 		api.GET("/metrics/storage", handlers.HandleStorage(database))
-
+		api.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
 		api.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
 	}
 
