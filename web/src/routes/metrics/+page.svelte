@@ -26,12 +26,14 @@
 	let pathDistributionElement: HTMLElement;
 	let requestsTimelineElement: HTMLElement;
 	let latencyTimelineElement: HTMLElement;
+	let storageDistributionElement: HTMLElement;
 
 	let timeSeriesChart: ApexCharts;
 	let statusChart: ApexCharts;
 	let pathDistributionChart: ApexCharts;
 	let requestsTimelineChart: ApexCharts;
 	let latencyTimelineChart: ApexCharts;
+	let storageDistributionChart: ApexCharts;
 
 	const rangeOptions = [
 		{ value: '24h', label: 'Last 24 Hours' },
@@ -130,38 +132,38 @@
 				}
 			};
 
-			// Requests Timeline Chart
+			// Status Distribution Chart
 			const statusDistributionOptions = {
-    chart: {
-        type: 'donut',
-        height: 300
-    },
-    colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
-    series: Object.values(data.requests.status_distribution),
-    labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`),
-    legend: {
-        position: 'bottom',
-        formatter: function(label: string, opts) {
-            return `${label} (${opts.w.globals.series[opts.seriesIndex]})`;
-        }
-    },
-    plotOptions: {
-        pie: {
-            donut: {
-                labels: {
-                    show: true,
-                    total: {
-                        show: true,
-                        label: 'Total Requests',
-                        formatter: function(w) {
-                            return w.globals.seriesTotals.reduce((a, b) => a + b, 0);
-                        }
-                    }
-                }
-            }
-        }
-    }
-};
+				chart: {
+					type: 'donut',
+					height: 300
+				},
+				colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
+				series: Object.values(data.requests.status_distribution),
+				labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`),
+				legend: {
+					position: 'bottom',
+					formatter: function(label: string, opts) {
+						return `${label} (${opts.w.globals.series[opts.seriesIndex]})`;
+					}
+				},
+				plotOptions: {
+					pie: {
+						donut: {
+							labels: {
+								show: true,
+								total: {
+									show: true,
+									label: 'Total Requests',
+									formatter: function(w) {
+										return w.globals.seriesTotals.reduce((a, b) => a + b, 0);
+									}
+								}
+							}
+						}
+					}
+				}
+			};
 
 			// Path Distribution Chart (Top 10 paths)
 			const pathDistributionOptions = {
@@ -226,16 +228,35 @@
 				}
 			};
 
-			timeSeriesChart = new ApexCharts(timeSeriesChartElement, timeSeriesOptions);
-			statusChart = new ApexCharts(requestsTimelineElement, statusDistributionOptions);
+			// Storage Distribution Chart
+			const storageDistributionOptions = {
+				chart: {
+					type: 'pie',
+					height: 300
+				},
+				series: Object.values(data.storage.file_size_distribution),
+				labels: Object.keys(data.storage.file_size_distribution),
+				colors: ['#93C5FD', '#60A5FA', '#3B82F6', '#2563EB'],
+				legend: {
+					position: 'bottom',
+					formatter: function(label: string, opts) {
+						const value = opts.w.globals.series[opts.seriesIndex];
+						return `${label}: ${value} files`;
+					}
+				}
+			};
 
+			timeSeriesChart = new ApexCharts(timeSeriesChartElement, timeSeriesOptions);
+			statusChart = new ApexCharts(statusChartElement, statusDistributionOptions);
 			pathDistributionChart = new ApexCharts(pathDistributionElement, pathDistributionOptions);
 			latencyTimelineChart = new ApexCharts(latencyTimelineElement, latencyTimelineOptions);
+			storageDistributionChart = new ApexCharts(storageDistributionElement, storageDistributionOptions);
 
 			timeSeriesChart.render();
 			statusChart.render();
 			pathDistributionChart.render();
 			latencyTimelineChart.render();
+			storageDistributionChart.render();
 		}
 
 		return () => {
@@ -243,6 +264,7 @@
 			statusChart?.destroy();
 			pathDistributionChart?.destroy();
 			latencyTimelineChart?.destroy();
+			storageDistributionChart?.destroy();
 		};
 	});
 
@@ -273,12 +295,12 @@
 	}
 
 	$: if (statusChart && data.requests?.status_distribution) {
-    statusChart.updateOptions({
-        colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
-        labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`)
-    });
-    statusChart.updateSeries(Object.values(data.requests.status_distribution));
-}
+		statusChart.updateOptions({
+			colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
+			labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`)
+		});
+		statusChart.updateSeries(Object.values(data.requests.status_distribution));
+	}
 
 	$: if (pathDistributionChart && data.requests?.path_distribution) {
 		const sortedPaths = Object.entries(data.requests.path_distribution)
@@ -311,14 +333,8 @@
 		]);
 	}
 
-	// Add a reactive statement to update the summary metrics
-	$: if (data.requests) {
-		const summaryMetrics = {
-			totalRequests: data.requests.total_requests?.toLocaleString() || '0',
-			uniqueIPs: data.requests.unique_ips?.toLocaleString() || '0',
-			avgLatency: `${Math.round(data.requests.average_latency_ms || 0)}ms`,
-			storage: formatBytes(data.storage?.current_size || 0)
-		};
+	$: if (storageDistributionChart && data.storage?.file_size_distribution) {
+		storageDistributionChart.updateSeries(Object.values(data.storage.file_size_distribution));
 	}
 </script>
 
@@ -339,6 +355,34 @@
 	{:else}
 		<div class="metrics-summary">
 			<div class="metric-card">
+				<h3>Total Files</h3>
+				<div class="value">{data.storage?.total_files?.toLocaleString() || 0}</div>
+			</div>
+			<div class="metric-card">
+				<h3>Total Storage</h3>
+				<div class="value">{formatBytes(data.storage?.total_size_bytes || 0)}</div>
+			</div>
+			<div class="metric-card">
+				<h3>Average File Size</h3>
+				<div class="value">
+					{data.storage?.total_files ?
+						formatBytes(data.storage.total_size_bytes / data.storage.total_files) :
+						'0 B'}
+				</div>
+			</div>
+			<div class="metric-card">
+				<h3>Largest Size Bucket</h3>
+				<div class="value">
+					{#if data.storage?.file_size_distribution}
+						{Object.entries(data.storage.file_size_distribution)
+							.reduce((a, b) => a[1] > b[1] ? a : b)[0]}
+					{:else}
+						'N/A'
+					{/if}
+				</div>
+			</div>
+
+			<div class="metric-card">
 				<h3>Total Requests</h3>
 				<div class="value">{data.requests?.total_requests?.toLocaleString() || 0}</div>
 			</div>
@@ -350,10 +394,10 @@
 				<h3>Avg Latency</h3>
 				<div class="value">{Math.round(data.requests?.average_latency_ms || 0)}ms</div>
 			</div>
-			<div class="metric-card">
+			<!-- <div class="metric-card">
 				<h3>Current Storage</h3>
 				<div class="value">{formatBytes(data.storage?.current_size || 0)}</div>
-			</div>
+			</div> -->
 		</div>
 
 		<div class="charts-grid">
@@ -364,7 +408,7 @@
 
 			<div class="chart-container">
 				<h2>Request Status Distribution</h2>
-				<div bind:this={requestsTimelineElement}></div>
+				<div bind:this={statusChartElement}></div>
 			</div>
 
 			<div class="chart-container">
@@ -375,6 +419,11 @@
 			<div class="chart-container">
 				<h2>Response Latency Trend</h2>
 				<div bind:this={latencyTimelineElement}></div>
+			</div>
+
+			<div class="chart-container">
+				<h2>File Size Distribution</h2>
+				<div bind:this={storageDistributionElement}></div>
 			</div>
 		</div>
 	{/if}
