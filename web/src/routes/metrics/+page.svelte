@@ -355,18 +355,18 @@
 	{:else}
 		<div class="metrics-summary">
 			<div class="metric-card">
-				<h3>Total Files</h3>
-				<div class="value">{data.storage?.total_files?.toLocaleString() || 0}</div>
+				<h3>Current Files</h3>
+				<div class="value">{data.storage?.current_files?.toLocaleString() || 0}</div>
 			</div>
 			<div class="metric-card">
-				<h3>Total Storage</h3>
-				<div class="value">{formatBytes(data.storage?.total_size_bytes || 0)}</div>
+				<h3>Current Storage</h3>
+				<div class="value">{formatBytes(data.storage?.current_size_bytes || 0)}</div>
 			</div>
 			<div class="metric-card">
 				<h3>Average File Size</h3>
 				<div class="value">
-					{data.storage?.total_files ?
-						formatBytes(data.storage.total_size_bytes / data.storage.total_files) :
+					{data.storage?.current_files ?
+						formatBytes(data.storage.current_size_bytes / data.storage.current_files) :
 						'0 B'}
 				</div>
 			</div>
@@ -394,10 +394,10 @@
 				<h3>Avg Latency</h3>
 				<div class="value">{Math.round(data.requests?.average_latency_ms || 0)}ms</div>
 			</div>
-			<!-- <div class="metric-card">
-				<h3>Current Storage</h3>
-				<div class="value">{formatBytes(data.storage?.current_size || 0)}</div>
-			</div> -->
+			<div class="metric-card">
+				<h3>Total Storage</h3>
+				<div class="value">{formatBytes(data.storage?.total_size_bytes || 0)}</div>
+			</div>
 		</div>
 
 		<div class="charts-grid">

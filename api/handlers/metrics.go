@@ -7,7 +7,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jonasbg/paste/m/v2/db"
-	"github.com/jonasbg/paste/m/v2/types"
 	"github.com/jonasbg/paste/m/v2/utils"
 )
 
@@ -53,11 +52,16 @@ func HandleActivity(db *db.DB) gin.HandlerFunc {
 	}
 }
 
-func HandleStorage(uploadDir string) gin.HandlerFunc {
+func HandleStorage(db *db.DB, uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		summary := types.StorageSummary{
-			FileSizeDistribution: make(map[string]int),
+
+		summary, err := db.GetStorageSummary()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
+
+		summary.FileSizeDistribution = make(map[string]int)
 
 		entries, err := os.ReadDir(uploadDir)
 		if err != nil {
@@ -72,8 +76,8 @@ func HandleStorage(uploadDir string) gin.HandlerFunc {
 			}
 
 			// Update file count and total size
-			summary.TotalFiles++
-			summary.TotalSizeBytes += float64(info.Size())
+			summary.CurrentFiles++
+			summary.CurrentSizeBytes += float64(info.Size())
 
 			// Categorize file size
 			size := info.Size()

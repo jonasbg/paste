@@ -61,7 +61,7 @@ func main() {
 		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, database))
 
 		api.GET("/metrics/activity", handlers.HandleActivity(database))
-		api.GET("/metrics/storage", handlers.HandleStorage(uploadDir))
+		api.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))
 		api.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
 		api.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
 	}

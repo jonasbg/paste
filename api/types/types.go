@@ -8,6 +8,8 @@ type ActivitySummary struct {
 }
 
 type StorageSummary struct {
+	CurrentFiles         int64          `json:"current_files"`
+	CurrentSizeBytes     float64        `json:"current_size_bytes"`
 	TotalFiles           int64          `json:"total_files"`
 	TotalSizeBytes       float64        `json:"total_size_bytes"`
 	FileSizeDistribution map[string]int `json:"file_size_distribution"` // buckets like "0-1MB", "1-10MB", etc.
