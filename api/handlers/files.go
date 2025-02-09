@@ -4,16 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -187,148 +184,4 @@ func validateWasmEncryption(header []byte, encryptedMetadata []byte) bool {
 	}
 
 	return true
-}
-
-func HandleUpload(uploadDir string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Set maximum request size
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxFileSize)
-
-		// Check content type
-		contentType := c.GetHeader("Content-Type")
-		if !strings.HasPrefix(contentType, "multipart/form-data") {
-			fmt.Println("Error: Invalid request format")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
-			return
-		}
-
-		// Generate ID for the new file
-		id, err := generateID()
-		if err != nil {
-			fmt.Printf("Error generating ID: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
-
-		// Parse the multipart form reader
-		reader, err := c.Request.MultipartReader()
-		if err != nil {
-			fmt.Printf("Error getting multipart reader: %v\n", err)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
-
-		var part *multipart.Part
-		// Find the file part
-		for {
-			part, err = reader.NextPart()
-			if err == io.EOF {
-				fmt.Println("Error: No file part found")
-				c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
-				return
-			}
-			if err != nil {
-				fmt.Printf("Error reading part: %v\n", err)
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-				return
-			}
-			if part.FormName() == "file" {
-				break
-			}
-			part.Close()
-		}
-		defer part.Close()
-
-		// Create file with .tmp suffix
-		tmpPath := filepath.Join(uploadDir, id+".tmp")
-		out, err := os.Create(tmpPath)
-		if err != nil {
-			fmt.Printf("Error creating file: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
-		defer out.Close()
-
-		// Read header for validation
-		header := make([]byte, headerSize)
-		if _, err := io.ReadFull(part, header); err != nil {
-			os.Remove(tmpPath)
-			fmt.Printf("Error reading header: %v\n", err)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file structure"})
-			return
-		}
-
-		// Get and validate metadata length
-		metadataLen := binary.LittleEndian.Uint32(header[12:16])
-		if metadataLen > maxMetadataSize {
-			os.Remove(tmpPath)
-			fmt.Println("Error: Metadata too large")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid metadata size"})
-			return
-		}
-
-		// Read metadata for validation
-		metadata := make([]byte, metadataLen)
-		if _, err := io.ReadFull(part, metadata); err != nil {
-			os.Remove(tmpPath)
-			fmt.Printf("Error reading metadata: %v\n", err)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid metadata"})
-			return
-		}
-
-		// Validate the file structure
-		if !validateWasmEncryption(header, metadata) {
-			os.Remove(tmpPath)
-			fmt.Println("Error: Validation failed")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file format"})
-			return
-		}
-
-		// Write header and metadata
-		if _, err := out.Write(header); err != nil {
-			os.Remove(tmpPath)
-			fmt.Printf("Error writing header: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
-
-		if _, err := out.Write(metadata); err != nil {
-			os.Remove(tmpPath)
-			fmt.Printf("Error writing metadata: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
-
-		// Stream the rest of the file directly to disk
-		written, err := io.Copy(out, part)
-		if err != nil {
-			os.Remove(tmpPath)
-			fmt.Printf("Error streaming file: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
-
-		// Close the file before renaming
-		out.Close()
-
-		// Rename from .tmp to final name
-		finalPath := filepath.Join(uploadDir, id)
-		if err := os.Rename(tmpPath, finalPath); err != nil {
-			os.Remove(tmpPath)
-			fmt.Printf("Error renaming file: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
-
-		totalSize := written + int64(len(header)) + int64(len(metadata))
-
-		response := gin.H{
-			"id":        id,
-			"size":      totalSize,
-			"timestamp": time.Now().Unix(),
-		}
-		c.Set("responseData", response)
-
-		c.JSON(http.StatusOK, response)
-	}
 }
