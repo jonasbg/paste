@@ -16,7 +16,7 @@
 	let baseUrl: string;
 	let key: string;
 	let copyMessage: string = '';
-	let messageTimeout: NodeJS.Timeout;
+	let messageTimeout: number;
 
 	function showMessage(message: string) {
 		copyMessage = message;
