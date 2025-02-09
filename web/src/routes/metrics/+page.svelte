@@ -138,12 +138,14 @@
 					type: 'donut',
 					height: 300
 				},
-				colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
+				colors: Object.keys(data.requests.status_distribution).map((code) =>
+					getStatusCodeColor(code)
+				),
 				series: Object.values(data.requests.status_distribution),
-				labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`),
+				labels: Object.keys(data.requests.status_distribution).map((code) => `${code} Status`),
 				legend: {
 					position: 'bottom',
-					formatter: function(label: string, opts) {
+					formatter: function (label: string, opts) {
 						return `${label} (${opts.w.globals.series[opts.seriesIndex]})`;
 					}
 				},
@@ -155,7 +157,7 @@
 								total: {
 									show: true,
 									label: 'Total Requests',
-									formatter: function(w) {
+									formatter: function (w) {
 										return w.globals.seriesTotals.reduce((a, b) => a + b, 0);
 									}
 								}
@@ -239,7 +241,7 @@
 				colors: ['#93C5FD', '#60A5FA', '#3B82F6', '#2563EB'],
 				legend: {
 					position: 'bottom',
-					formatter: function(label: string, opts) {
+					formatter: function (label: string, opts) {
 						const value = opts.w.globals.series[opts.seriesIndex];
 						return `${label}: ${value} files`;
 					}
@@ -250,7 +252,10 @@
 			statusChart = new ApexCharts(statusChartElement, statusDistributionOptions);
 			pathDistributionChart = new ApexCharts(pathDistributionElement, pathDistributionOptions);
 			latencyTimelineChart = new ApexCharts(latencyTimelineElement, latencyTimelineOptions);
-			storageDistributionChart = new ApexCharts(storageDistributionElement, storageDistributionOptions);
+			storageDistributionChart = new ApexCharts(
+				storageDistributionElement,
+				storageDistributionOptions
+			);
 
 			timeSeriesChart.render();
 			statusChart.render();
@@ -296,8 +301,10 @@
 
 	$: if (statusChart && data.requests?.status_distribution) {
 		statusChart.updateOptions({
-			colors: Object.keys(data.requests.status_distribution).map(code => getStatusCodeColor(code)),
-			labels: Object.keys(data.requests.status_distribution).map(code => `${code} Status`)
+			colors: Object.keys(data.requests.status_distribution).map((code) =>
+				getStatusCodeColor(code)
+			),
+			labels: Object.keys(data.requests.status_distribution).map((code) => `${code} Status`)
 		});
 		statusChart.updateSeries(Object.values(data.requests.status_distribution));
 	}
@@ -365,17 +372,18 @@
 			<div class="metric-card">
 				<h3>Average File Size</h3>
 				<div class="value">
-					{data.storage?.current_files ?
-						formatBytes(data.storage.current_size_bytes / data.storage.current_files) :
-						'0 B'}
+					{data.storage?.current_files
+						? formatBytes(data.storage.current_size_bytes / data.storage.current_files)
+						: '0 B'}
 				</div>
 			</div>
 			<div class="metric-card">
 				<h3>Largest Size Bucket</h3>
 				<div class="value">
 					{#if data.storage?.file_size_distribution}
-						{Object.entries(data.storage.file_size_distribution)
-							.reduce((a, b) => a[1] > b[1] ? a : b)[0]}
+						{Object.entries(data.storage.file_size_distribution).reduce((a, b) =>
+							a[1] > b[1] ? a : b
+						)[0]}
 					{:else}
 						'N/A'
 					{/if}

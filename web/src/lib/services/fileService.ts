@@ -111,11 +111,8 @@ export async function downloadAndDecryptFile(
 
 				decryptedChunks.push(decrypted);
 
-				const progress = Math.round((decryptedChunks.length * chunkSize / contentLength) * 100);
-				await onProgress(
-					progress,
-					`Laster ned... `
-				);
+				const progress = Math.round(((decryptedChunks.length * chunkSize) / contentLength) * 100);
+				await onProgress(progress, `Laster ned... `);
 
 				bufferedData = bufferedData.slice(chunkSize);
 			}
@@ -165,7 +162,7 @@ export async function fetchMetadata(fileId: string, key: string, token: string):
 		const metadata = wasmInstance.decryptMetadata(key, new Uint8Array(encryptedData));
 
 		if (!metadata.filename) {
-			throw new Error("Invalid metadata received");
+			throw new Error('Invalid metadata received');
 		}
 
 		return {
@@ -174,8 +171,8 @@ export async function fetchMetadata(fileId: string, key: string, token: string):
 		};
 	} catch (error) {
 		// Improved error handling: Log the error and re-throw (or handle appropriately)
-		console.error("Error fetching metadata:", error);
-		throw error;  // Re-throw to allow the calling function to handle the error
+		console.error('Error fetching metadata:', error);
+		throw error; // Re-throw to allow the calling function to handle the error
 		// OR, return a default/error value, depending on your needs:
 		// return { metadata: null, size: null, error: "Failed to fetch metadata" };
 	}

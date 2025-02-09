@@ -26,44 +26,47 @@
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
-        input = input.trim();
+		input = input.trim();
 
-        if (input.includes('://')) {
-            try {
-                const url = new URL(input);
-                const hashParams = new URLSearchParams(url.hash.slice(1));
-                return hashParams.get('key');
-            } catch (error) {
-                return null;
-            }
-        }
+		if (input.includes('://')) {
+			try {
+				const url = new URL(input);
+				const hashParams = new URLSearchParams(url.hash.slice(1));
+				return hashParams.get('key');
+			} catch (error) {
+				return null;
+			}
+		}
 
-        const base64Regex = /^[A-Za-z0-9+/=_-]+$/;
-        if (base64Regex.test(input)) {
-            return input;
-        }
+		const base64Regex = /^[A-Za-z0-9+/=_-]+$/;
+		if (base64Regex.test(input)) {
+			return input;
+		}
 
-        return null;
-    }
+		return null;
+	}
 
 	async function getMetadata() {
-        try {
-            const fileId = $page.params.fileId;
-            // Generate token from encryption key
-            const hmacToken = await generateHmacToken(fileId, encryptionKey);
+		try {
+			const fileId = $page.params.fileId;
+			// Generate token from encryption key
+			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-            const metadataResponse = await fetchMetadata(fileId, encryptionKey, hmacToken);
-            metadata = metadataResponse.metadata;
-            fileSize = metadataResponse.size?.toString();
-        } catch (error) {
-            console.error('Metadata error:', error);
-            encryptionKey = '';
-            manualKeyInput = '';
-            metadata = { error: 'Kunne ikke hente filinformasjon. Sjekk at nøkkelen er riktig, eller at filen ikke er slettet.' };
-        } finally {
-            isLoading = false;
-        }
-    }
+			const metadataResponse = await fetchMetadata(fileId, encryptionKey, hmacToken);
+			metadata = metadataResponse.metadata;
+			fileSize = metadataResponse.size?.toString();
+		} catch (error) {
+			console.error('Metadata error:', error);
+			encryptionKey = '';
+			manualKeyInput = '';
+			metadata = {
+				error:
+					'Kunne ikke hente filinformasjon. Sjekk at nøkkelen er riktig, eller at filen ikke er slettet.'
+			};
+		} finally {
+			isLoading = false;
+		}
+	}
 
 	// Function to safely handle encryption key without exposing it in URL
 	function setEncryptionKey(key: string) {
@@ -75,16 +78,16 @@
 	}
 
 	async function handleManualKeySubmit() {
-        if (!manualKeyInput.trim()) return;
+		if (!manualKeyInput.trim()) return;
 
-        const key = validateAndExtractKey(manualKeyInput.trim());
-        if (key) {
-            setEncryptionKey(key);
-            await getMetadata();
-        } else {
-            keyError = 'Invalid key or URL';
-        }
-    }
+		const key = validateAndExtractKey(manualKeyInput.trim());
+		if (key) {
+			setEncryptionKey(key);
+			await getMetadata();
+		} else {
+			keyError = 'Invalid key or URL';
+		}
+	}
 
 	async function initiateDownload() {
 		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
@@ -96,14 +99,14 @@
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
 			const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
-                fileId,
-                encryptionKey,
-                hmacToken,
-                async (progress, message) => {
-                    downloadProgress = progress;
-                    downloadMessage = message;
-                }
-            );
+				fileId,
+				encryptionKey,
+				hmacToken,
+				async (progress, message) => {
+					downloadProgress = progress;
+					downloadMessage = message;
+				}
+			);
 
 			if (!decrypted || decrypted.length === 0) {
 				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
@@ -151,7 +154,8 @@
 
 		try {
 			await initWasm();
-            if (window.location.hash) { // Check if a hash exists
+			if (window.location.hash) {
+				// Check if a hash exists
 				const urlParams = new URLSearchParams(window.location.hash.slice(1));
 				const key = urlParams.get('key');
 				if (key) {
@@ -163,7 +167,7 @@
 						keyError = 'Ugyldig nøkkel eller URL'; // More generic
 					}
 				}
-            }
+			}
 		} catch (error) {
 			console.error('Failed to initialize:', error);
 			downloadError = 'Failed to initialize the application';
@@ -174,15 +178,14 @@
 
 	$: canDownload = !!(
 		metadata &&
-		!metadata.error &&  // Ensure metadata is available and has no errors
+		!metadata.error && // Ensure metadata is available and has no errors
 		!isDownloading &&
 		!isDownloadComplete &&
 		encryptionKey
 	);
 
-    // Reset keyError whenever manualKeyInput changes
-    $: manualKeyInput, keyError = null;
-
+	// Reset keyError whenever manualKeyInput changes
+	$: manualKeyInput, (keyError = null);
 </script>
 
 <div class="container">
