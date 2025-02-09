@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -22,10 +23,10 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-type FileUpload struct {
-	ID       string
-	Size     int64
-	FilePath string
+type FileUploadInit struct {
+	FileID string `json:"fileId"`
+	Token  string `json:"token"`
+	Type   string `json:"type"`
 }
 
 func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
@@ -38,25 +39,85 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 		defer ws.Close()
 
+		// Read initial message
+		_, msg, err := ws.ReadMessage()
+		if err != nil {
+			sendError(ws, "Failed to read initial message")
+			return
+		}
+
+		var init struct {
+			Type string `json:"type"`
+			Size int64  `json:"size"`
+		}
+		if err := json.Unmarshal(msg, &init); err != nil {
+			sendError(ws, "Invalid initial message format")
+			return
+		}
+
+		if init.Type != "init" {
+			sendError(ws, "Invalid message type")
+			return
+		}
+
+		if init.Size > maxFileSize {
+			sendError(ws, "File too large")
+			return
+		}
+
+		// Generate and send file ID
 		id, err := generateID()
 		if err != nil {
 			sendError(ws, "Failed to generate ID")
 			return
 		}
 
-		tmpPath := filepath.Join(uploadDir, id+".tmp")
-		finalPath := filepath.Join(uploadDir, id)
+		if err := ws.WriteJSON(gin.H{"id": id}); err != nil {
+			sendError(ws, "Failed to send ID")
+			return
+		}
+
+		// Read token message
+		_, tokenMsg, err := ws.ReadMessage()
+		if err != nil {
+			sendError(ws, "Failed to read token")
+			return
+		}
+
+		var tokenData struct {
+			Type  string `json:"type"`
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(tokenMsg, &tokenData); err != nil {
+			sendError(ws, "Invalid token message")
+			return
+		}
+
+		if tokenData.Type != "token" || !validateToken(tokenData.Token) {
+			sendError(ws, "Invalid token")
+			return
+		}
+
+		// Send token accepted
+		if err := ws.WriteJSON(gin.H{"token_accepted": true}); err != nil {
+			sendError(ws, "Failed to acknowledge token")
+			return
+		}
+
+		// Create file with token in name
+		finalPath := filepath.Join(uploadDir, id+"."+tokenData.Token)
+		tmpPath := finalPath + ".tmp"
 
 		file, err := os.Create(tmpPath)
 		if err != nil {
 			sendError(ws, "Failed to create file")
 			return
 		}
-		defer file.Close() // Ensure file is closed even in error cases
+		defer file.Close()
 
 		var totalBytes int64
 
-		// Read first message (header)
+		// Read encrypted metadata header
 		_, header, err := ws.ReadMessage()
 		if err != nil || len(header) < headerSize {
 			cleanup(ws, tmpPath, "Invalid header")
@@ -69,12 +130,25 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 		totalBytes += int64(len(header))
 
-        // Send "ready" signal after successfully processing the header
-        if err := ws.WriteJSON(gin.H{"ready": true}); err != nil {
-            log.Printf("Failed to send ready signal: %v", err)
-			cleanup(ws, tmpPath, "Failed to send ready signal") //cleanup
-            return
-        }
+		// Send ready signal after successfully processing the header
+		if err := ws.WriteJSON(gin.H{"ready": true}); err != nil {
+			log.Printf("Failed to send ready signal: %v", err)
+			cleanup(ws, tmpPath, "Failed to send ready signal")
+			return
+		}
+
+		// Read first message after ready (should be IV)
+		_, iv, err := ws.ReadMessage()
+		if err != nil || len(iv) != 12 { // GCM IV size
+			cleanup(ws, tmpPath, "Invalid IV")
+			return
+		}
+
+		if _, err := file.Write(iv); err != nil {
+			cleanup(ws, tmpPath, "Failed to write IV")
+			return
+		}
+		totalBytes += int64(len(iv))
 
 		// Read chunks until end signal
 		for {
@@ -94,7 +168,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				return
 			}
 
-			chunkSize := int64(len(chunk)) // Calculate chunk size *before* adding to totalBytes
+			chunkSize := int64(len(chunk))
 			totalBytes += chunkSize
 
 			if totalBytes > maxFileSize {
@@ -105,20 +179,19 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			// Send acknowledgement
 			if err := ws.WriteJSON(gin.H{"ack": chunkSize}); err != nil {
 				log.Printf("Failed to send acknowledgement: %v", err)
-				cleanup(ws, tmpPath, "Failed to send acknowledgement") //cleanup
+				cleanup(ws, tmpPath, "Failed to send acknowledgement")
 				return
 			}
 		}
 
-
-		// No need for file.Sync() here - close handles flushing
-		if err := file.Close(); err != nil { // Explicitly close before rename
-          cleanup(ws, tmpPath, "Error closing file") //cleanup
-          return
-        }
+		// Close file before rename
+		if err := file.Close(); err != nil {
+			cleanup(ws, tmpPath, "Error closing file")
+			return
+		}
 
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			os.Remove(tmpPath) // Attempt cleanup, even if rename fails
+			os.Remove(tmpPath)
 			sendError(ws, "Failed to save file")
 			return
 		}
@@ -142,29 +215,28 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			log.Printf("Failed to create transaction log: %v", err)
 		}
 
-		if err := ws.WriteJSON(gin.H{ // Use ws.WriteJSON for consistency
+		if err := ws.WriteJSON(gin.H{
 			"id":       id,
 			"size":     totalBytes,
 			"complete": true,
 		}); err != nil {
-            log.Printf("Failed to send complete message: %v", err) // Log error, but don't return - it's the last message
-        }
-
+			log.Printf("Failed to send complete message: %v", err)
+		}
 	}
 }
 
 // Helper functions for error handling and cleanup
 
 func sendError(ws *websocket.Conn, message string) {
-    err := ws.WriteJSON(gin.H{"error": message}) //Consistent JSON error
-    if err != nil {
-        log.Printf("Failed to send error message: %v", err)
-    }
-    ws.Close() // Always close the connection on error
+	err := ws.WriteJSON(gin.H{"error": message}) //Consistent JSON error
+	if err != nil {
+		log.Printf("Failed to send error message: %v", err)
+	}
+	ws.Close() // Always close the connection on error
 }
 
 func cleanup(ws *websocket.Conn, tmpPath string, message string) {
-	sendError(ws, message) // Send the error message first
+	sendError(ws, message)                      // Send the error message first
 	if _, err := os.Stat(tmpPath); err == nil { // Check if file exists before removing
 		if err := os.Remove(tmpPath); err != nil {
 			log.Printf("Failed to remove temporary file: %v", err)
