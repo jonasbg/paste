@@ -55,13 +55,13 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		if init.Size > maxFileSize {
+		if init.Size > int64(GlobalConfig.MaxFileSizeBytes) {
 			sendError(ws, "File too large")
 			return
 		}
 
 		// 2. Generate ID and Send
-		id, err := generateID() // Your existing ID generation
+		id, err := generateID(GlobalConfig.IDSize) // Your existing ID generation
 		if err != nil {
 			sendError(ws, "Failed to generate ID")
 			return
@@ -200,7 +200,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			chunkSize := int64(len(chunk))
 			totalBytes += chunkSize
 
-			if totalBytes > maxFileSize {
+			if totalBytes > int64(GlobalConfig.MaxFileSizeBytes) {
 				cleanup(ws, tmpPath, "File too large")
 				return
 			}
