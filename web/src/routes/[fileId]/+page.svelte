@@ -10,6 +10,7 @@
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
+	import { generateHmacToken } from '$lib/utils/hmacUtils';
 
 	let encryptionKey: string = '';
 	let manualKeyInput: string = '';
@@ -25,48 +26,44 @@
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
-		input = input.trim();
+        input = input.trim();
 
-		if (input.includes('://')) {
-			try {
-				const url = new URL(input);
-				const hashParams = new URLSearchParams(url.hash.slice(1));
-				const key = hashParams.get('key');
-				if (key) {
-					return key;
-				}
-				return null; // Indicate no key found
-			} catch (error) {
-				return null; // Indicate invalid URL
-			}
-		}
+        if (input.includes('://')) {
+            try {
+                const url = new URL(input);
+                const hashParams = new URLSearchParams(url.hash.slice(1));
+                return hashParams.get('key');
+            } catch (error) {
+                return null;
+            }
+        }
 
-		const base64Regex = /^[A-Za-z0-9+/=_-]+$/;
-		if (!base64Regex.test(input)) {
-			return null; // Indicate invalid key format
-		}
+        const base64Regex = /^[A-Za-z0-9+/=_-]+$/;
+        if (base64Regex.test(input)) {
+            return input;
+        }
 
-		return input;
-	}
+        return null;
+    }
 
 	async function getMetadata() {
-		try {
-			const fileId = $page.params.fileId;
-			const metadataResponse = await fetchMetadata(fileId, encryptionKey);
+        try {
+            const fileId = $page.params.fileId;
+            // Generate token from encryption key
+            const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-			metadata = metadataResponse.metadata;
-			// Convert number to string for FileInfo component
-			fileSize = metadataResponse.size?.toString();
-		} catch (error) { //is not hit
-			console.error('Metadata error:', error);
-      // Use a specific Norwegian error message here
-			encryptionKey = '';
-			manualKeyInput = '';
-			metadata = { error: 'Kunne ikke hente filinformasjon. Sjekk at nøkkelen er riktig, eller at filen ikke er slettet.' };
-		} finally {
-			isLoading = false;
-		}
-	}
+            const metadataResponse = await fetchMetadata(fileId, encryptionKey, hmacToken);
+            metadata = metadataResponse.metadata;
+            fileSize = metadataResponse.size?.toString();
+        } catch (error) {
+            console.error('Metadata error:', error);
+            encryptionKey = '';
+            manualKeyInput = '';
+            metadata = { error: 'Kunne ikke hente filinformasjon. Sjekk at nøkkelen er riktig, eller at filen ikke er slettet.' };
+        } finally {
+            isLoading = false;
+        }
+    }
 
 	// Function to safely handle encryption key without exposing it in URL
 	function setEncryptionKey(key: string) {
@@ -78,18 +75,16 @@
 	}
 
 	async function handleManualKeySubmit() {
-		if (!manualKeyInput.trim()) return;
+        if (!manualKeyInput.trim()) return;
 
-		const extractedKey = validateAndExtractKey(manualKeyInput.trim());
-		if (extractedKey) {
-			setEncryptionKey(extractedKey);
-			await getMetadata(); // Get metadata first
-
-			// The download button will only appear if metadata is valid (see canDownload)
-		} else {
-			keyError = 'Ugyldig nøkkel eller URL'; // More generic error message
-		}
-	}
+        const key = validateAndExtractKey(manualKeyInput.trim());
+        if (key) {
+            setEncryptionKey(key);
+            await getMetadata();
+        } else {
+            keyError = 'Invalid key or URL';
+        }
+    }
 
 	async function initiateDownload() {
 		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
@@ -98,15 +93,17 @@
 
 		try {
 			const fileId = $page.params.fileId;
+			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
 			const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
-				fileId,
-				encryptionKey,
-				async (progress, message) => {
-					downloadProgress = progress;
-					downloadMessage = message;
-				}
-			);
+                fileId,
+                encryptionKey,
+                hmacToken,
+                async (progress, message) => {
+                    downloadProgress = progress;
+                    downloadMessage = message;
+                }
+            );
 
 			if (!decrypted || decrypted.length === 0) {
 				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
@@ -192,9 +189,10 @@
 	<div class="download-container">
 		<h1><span>Sikker</span> fildeling</h1>
 		<p class="intro-text">
-			Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt delt med
-			deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig dekrypteringsnøkkel kan få
-			tilgang til innholdet. Etter vellykket nedlasting blir filen automatisk slettet fra våre servere.
+			Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt
+			delt med deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig
+			dekrypteringsnøkkel kan få tilgang til innholdet. Etter vellykket nedlasting blir filen
+			automatisk slettet fra våre servere.
 		</p>
 
 		{#if isLoading}
@@ -204,7 +202,7 @@
 		{#if downloadError}
 			<ErrorMessage message={downloadError} />
 		{:else if metadata?.error}
-				<ErrorMessage message={metadata.error} />
+			<ErrorMessage message={metadata.error} />
 		{:else}
 			{#if metadata?.filename}
 				<FileInfo fileName={metadata.filename} {fileSize} />
@@ -218,7 +216,11 @@
 			{/if}
 
 			{#if isDownloading || isDownloadComplete}
-				<ProgressBar progress={downloadProgress} message={downloadMessage} isVisible={isDownloading} />
+				<ProgressBar
+					progress={downloadProgress}
+					message={downloadMessage}
+					isVisible={isDownloading}
+				/>
 			{/if}
 
 			{#if isDownloadComplete}
@@ -233,8 +235,8 @@
 				<h2>Dekrypteringsnøkkel kreves</h2>
 				<p>
 					Du trenger en dekrypteringsnøkkel for å få tilgang til denne filen. Vennligst lim inn hele
-					lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut. Alternativt kan du lime inn
-					dekrypteringsnøkkelen direkte under.
+					lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut. Alternativt kan du lime
+					inn dekrypteringsnøkkelen direkte under.
 				</p>
 				<div class="input-group">
 					<input
@@ -244,7 +246,11 @@
 						bind:value={manualKeyInput}
 						disabled={isDownloading}
 					/>
-					<button type="submit" class="decrypt-button" disabled={!manualKeyInput.trim() || isDownloading}>
+					<button
+						type="submit"
+						class="decrypt-button"
+						disabled={!manualKeyInput.trim() || isDownloading}
+					>
 						Dekrypter
 					</button>
 				</div>
@@ -334,7 +340,7 @@
 	.intro-text {
 		color: #666;
 		margin: 1rem 0 2rem 0;
-    line-height: 1.5;
-    max-width: 800px;
-}
+		line-height: 1.5;
+		max-width: 800px;
+	}
 </style>

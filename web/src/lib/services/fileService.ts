@@ -1,19 +1,23 @@
 import { getWasmInstance } from '$lib/utils/wasm-loader';
-import { error } from '@sveltejs/kit';
 import { ProgressCallback } from './fileProcessor';
 
 export async function downloadAndDecryptFile(
 	fileId: string,
 	key: string,
+	token: string,
 	onProgress: ProgressCallback
-): Promise<{ decrypted: Blob; metadata: any }> {
+): Promise<{ decrypted: Uint8Array; metadata: any }> {
 	const wasmInstance = getWasmInstance();
 	if (!wasmInstance) throw new Error('WASM not initialized');
 
 	await onProgress(0, 'Starting download...');
 
 	// First, fetch just the header to get metadata
-	const headerResponse = await fetch(`/api/metadata/${fileId}`);
+	const headerResponse = await fetch(`/api/metadata/${fileId}`, {
+		headers: {
+			'X-HMAC-Token': token
+		}
+	});
 	if (!headerResponse.ok) {
 		throw new Error('Failed to fetch file metadata');
 	}
@@ -22,8 +26,18 @@ export async function downloadAndDecryptFile(
 	const metadata = await wasmInstance.decryptMetadata(key, headerData);
 
 	// Now start streaming the full file
-	const response = await fetch(`/api/download/${fileId}`);
-	if (!response.ok) throw new Error('Download failed');
+	const response = await fetch(`/api/download/${fileId}`, {
+		headers: {
+			'X-HMAC-Token': token
+		}
+	});
+
+	if (!response.ok) {
+		if (response.status === 403) {
+			throw new Error('Invalid access token');
+		}
+		throw new Error('Failed to download file');
+	}
 
 	const reader = response.body!.getReader();
 	const contentLength = +(response.headers.get('Content-Length') || 0);
@@ -127,12 +141,16 @@ export async function downloadAndDecryptFile(
 	return { decrypted: blob, metadata };
 }
 
-export async function fetchMetadata(fileId: string, key: string): Promise<any> {
+export async function fetchMetadata(fileId: string, key: string, token: string): Promise<any> {
 	try {
 		const wasmInstance = getWasmInstance();
 		if (!wasmInstance) throw new Error('WASM not initialized');
 
-		const response = await fetch(`/api/metadata/${fileId}`);
+		const response = await fetch(`/api/metadata/${fileId}`, {
+			headers: {
+				'X-HMAC-Token': token
+			}
+		});
 
 		if (response.status === 404) {
 			throw new Error('Filen finnes ikke eller har utløpt');
@@ -146,7 +164,7 @@ export async function fetchMetadata(fileId: string, key: string): Promise<any> {
 		const encryptedData = await response.arrayBuffer();
 		const metadata = wasmInstance.decryptMetadata(key, new Uint8Array(encryptedData));
 
-		if (!metadata.filename){
+		if (!metadata.filename) {
 			throw new Error("Invalid metadata received");
 		}
 
