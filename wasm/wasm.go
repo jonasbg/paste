@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"syscall/js"
 )
@@ -69,13 +70,13 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 	h.Write([]byte(fileId))
 	signature := h.Sum(nil)
 
-	// Convert to base64url without padding
-	token := base64.URLEncoding.EncodeToString(signature[:10]) // Take first 10 bytes
-	token = token[:16]
+	// Take first 12 bytes (will give us exactly 16 base64 chars)
+	token := base64.URLEncoding.EncodeToString(signature[:12])
 
-	token = strings.TrimRight(token, "=")
+	// Do base64url transformations
 	token = strings.ReplaceAll(token, "+", "-")
 	token = strings.ReplaceAll(token, "/", "_")
+	token = strings.TrimRight(token, "=")
 
 	// Validate the token is filename safe
 	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
@@ -307,10 +308,60 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 	return uint8Array
 }
 
-func generateKey(_ js.Value, _ []js.Value) interface{} {
-	key := make([]byte, 32)
+// generateKey generates a cryptographically secure random key of a specified size (in bits).
+// It supports key sizes of 128, 192, and 256 bits.  It accepts an optional argument
+// specifying the key size.  If no argument is provided, it defaults to 128 bits.
+// The argument can be either a number or a string that can be parsed as an integer.
+// If an invalid key size is provided (either not one of the supported sizes or a non-numeric string),
+// it defaults to 128 bits and prints an error message to the console.  The generated key
+// is returned as a URL-safe base64 encoded string.
+//
+// Args:
+//
+//	_ (js.Value): The "this" value (unused).
+//	args ([]js.Value): An array of JavaScript values.  args[0], if present, should be
+//	  the desired key size in bits (either as a number or a string).
+//
+// Returns:
+//
+//	interface{}: A URL-safe base64 encoded string representing the generated key, or
+//	  an error object if key generation fails.
+func generateKey(_ js.Value, args []js.Value) interface{} {
+	keySizeBits := 128 // Default key size
+
+	// Check if an argument was provided and attempt to parse it.
+	if len(args) > 0 {
+		if args[0].Type() == js.TypeNumber { //Verify it is a number
+			keySizeBits = args[0].Int()
+		} else if args[0].Type() == js.TypeString { //Try to parse a string
+			parsedSize, err := strconv.Atoi(args[0].String())
+			if err != nil {
+				fmt.Println("Invalid key size provided, defaulting to 128 bits. Error:", err)
+			} else {
+				keySizeBits = parsedSize
+			}
+		} else {
+			fmt.Println("Invalid type provided for key size (expected number or string), defaulting to 128 bits.")
+		}
+
+	}
+
+	var keySize int
+	switch keySizeBits {
+	case 128:
+		keySize = 16 // 128 bits / 8 bits per byte = 16 bytes
+	case 192:
+		keySize = 24 // 192 bits / 8 bits per byte = 24 bytes
+	case 256:
+		keySize = 32 // 256 bits / 8 bits per byte = 32 bytes
+	default:
+		fmt.Printf("Invalid key size (%d bits), defaulting to 128 bits.\n", keySizeBits)
+		keySize = 16 // Default to 128 bits if invalid size provided
+	}
+
+	key := make([]byte, keySize)
 	if _, err := rand.Read(key); err != nil {
-		return handleError(err)
+		return handleError(err) // Assuming handleError is defined elsewhere
 	}
 	return base64.URLEncoding.EncodeToString(key)
 }

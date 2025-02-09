@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -23,12 +24,6 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-type FileUploadInit struct {
-	FileID string `json:"fileId"`
-	Token  string `json:"token"`
-	Type   string `json:"type"`
-}
-
 func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -39,7 +34,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 		defer ws.Close()
 
-		// Read initial message
+		// 1. Initial Message: Size Check
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
 			sendError(ws, "Failed to read initial message")
@@ -56,7 +51,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		if init.Type != "init" {
-			sendError(ws, "Invalid message type")
+			sendError(ws, "Invalid message type: expected 'init'")
 			return
 		}
 
@@ -65,8 +60,8 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Generate and send file ID
-		id, err := generateID()
+		// 2. Generate ID and Send
+		id, err := generateID() // Your existing ID generation
 		if err != nil {
 			sendError(ws, "Failed to generate ID")
 			return
@@ -77,7 +72,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Read token message
+		// 3. Token Message and Validation
 		_, tokenMsg, err := ws.ReadMessage()
 		if err != nil {
 			sendError(ws, "Failed to read token")
@@ -104,10 +99,9 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Create file with token in name
+		// 4. Create File (with token)
 		finalPath := filepath.Join(uploadDir, id+"."+tokenData.Token)
-		tmpPath := finalPath + ".tmp"
-
+		tmpPath := finalPath + ".tmp" // Use a temporary file
 		file, err := os.Create(tmpPath)
 		if err != nil {
 			sendError(ws, "Failed to create file")
@@ -115,12 +109,35 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 		defer file.Close()
 
-		var totalBytes int64
-
-		// Read encrypted metadata header
+		// 5. Read and Validate Encrypted Metadata Header
 		_, header, err := ws.ReadMessage()
 		if err != nil || len(header) < headerSize {
-			cleanup(ws, tmpPath, "Invalid header")
+			cleanup(ws, tmpPath, "Invalid header: incorrect size")
+			return
+		}
+
+		// Basic structural checks on the header (before we even try processing)
+		metadataIV := header[:12] // first 12 is the IV
+		metadataLength := binary.LittleEndian.Uint32(header[12:16])
+		metadataEncryptedDataIV := header[16:28]
+
+		if len(metadataIV) != 12 {
+			cleanup(ws, tmpPath, "Invalid metadata IV size") //Check Metadata IV size
+			return
+		}
+
+		if len(metadataEncryptedDataIV) != 12 {
+			cleanup(ws, tmpPath, "Invalid metadata encrypted data IV size") //Check Metadata IV size
+			return
+		}
+
+		if metadataLength > 65535 { // Example limit: 64KB metadata
+			cleanup(ws, tmpPath, "Metadata size too large")
+			return
+		}
+
+		if int(16+metadataLength) > len(header) {
+			cleanup(ws, tmpPath, "Incomplete metadata in header")
 			return
 		}
 
@@ -128,7 +145,6 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			cleanup(ws, tmpPath, "Failed to write header")
 			return
 		}
-		totalBytes += int64(len(header))
 
 		// Send ready signal after successfully processing the header
 		if err := ws.WriteJSON(gin.H{"ready": true}); err != nil {
@@ -137,10 +153,10 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Read first message after ready (should be IV)
+		// 6. Read and Validate IV
 		_, iv, err := ws.ReadMessage()
-		if err != nil || len(iv) != 12 { // GCM IV size
-			cleanup(ws, tmpPath, "Invalid IV")
+		if err != nil || len(iv) != 12 {
+			cleanup(ws, tmpPath, "Invalid IV: incorrect size")
 			return
 		}
 
@@ -148,9 +164,9 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			cleanup(ws, tmpPath, "Failed to write IV")
 			return
 		}
-		totalBytes += int64(len(iv))
 
-		// Read chunks until end signal
+		// 7.  Chunk Processing Loop (Key Changes)
+		var totalBytes int64 = int64(len(header) + len(iv)) // Initialize with header + IV
 		for {
 			_, chunk, err := ws.ReadMessage()
 			if err != nil {
@@ -161,6 +177,19 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			// Check for end signal (single byte 0)
 			if len(chunk) == 1 && chunk[0] == 0 {
 				break
+			}
+
+			// Chunk Size Validation (Critical)
+			// Maximum chunk size should be 1MB (data) + 16 bytes (GCM tag)
+			if len(chunk) > (1024*1024 + 16) {
+				cleanup(ws, tmpPath, "Chunk size exceeds maximum")
+				return
+			}
+
+			// Minimum chunk size check.  A valid encrypted chunk *must* be at least 16 bytes (the GCM tag).
+			if len(chunk) < 16 {
+				cleanup(ws, tmpPath, "Chunk size too small")
+				return
 			}
 
 			if _, err := file.Write(chunk); err != nil {
@@ -176,7 +205,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				return
 			}
 
-			// Send acknowledgement
+			// Send Acknowledgement
 			if err := ws.WriteJSON(gin.H{"ack": chunkSize}); err != nil {
 				log.Printf("Failed to send acknowledgement: %v", err)
 				cleanup(ws, tmpPath, "Failed to send acknowledgement")
@@ -184,20 +213,21 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			}
 		}
 
-		// Close file before rename
-		if err := file.Close(); err != nil {
+		// 8. Finalization
+		if err := file.Close(); err != nil { // Close before rename
 			cleanup(ws, tmpPath, "Error closing file")
 			return
 		}
 
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			os.Remove(tmpPath)
+			os.Remove(tmpPath) // Clean up temp file if rename fails
 			sendError(ws, "Failed to save file")
 			return
 		}
 
 		duration := time.Since(start)
 
+		// 9. Log Transaction (Your existing code)
 		tx := &types.TransactionLog{
 			Timestamp:  start,
 			Action:     "upload",
@@ -215,6 +245,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			log.Printf("Failed to create transaction log: %v", err)
 		}
 
+		// 10.  Send Completion Message (Your existing code)
 		if err := ws.WriteJSON(gin.H{
 			"id":       id,
 			"size":     totalBytes,
@@ -225,9 +256,10 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 	}
 }
 
-// Helper functions for error handling and cleanup
+// Helper functions (Modified for consistency)
 
 func sendError(ws *websocket.Conn, message string) {
+	log.Printf("Sending error: %s", message)     // Log the error
 	err := ws.WriteJSON(gin.H{"error": message}) //Consistent JSON error
 	if err != nil {
 		log.Printf("Failed to send error message: %v", err)
@@ -237,7 +269,7 @@ func sendError(ws *websocket.Conn, message string) {
 
 func cleanup(ws *websocket.Conn, tmpPath string, message string) {
 	sendError(ws, message)                      // Send the error message first
-	if _, err := os.Stat(tmpPath); err == nil { // Check if file exists before removing
+	if _, err := os.Stat(tmpPath); err == nil { // Check if file exists
 		if err := os.Remove(tmpPath); err != nil {
 			log.Printf("Failed to remove temporary file: %v", err)
 		}
