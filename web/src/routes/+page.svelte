@@ -29,29 +29,30 @@
 	}
 
 	async function handleUpload() {
-		if (!selectedFile) {
-			fileInput.click();
-			return;
-		}
+    if (!selectedFile) {
+        fileInput.click();
+        return;
+    }
 
-		try {
-			isUploading = true;
-			const key = encryptionKey || generateKey();
-			if (!key) throw new Error('Failed to generate encryption key');
+    try {
+        isUploading = true;
+        const key = encryptionKey || generateKey();
+        if (!key) throw new Error('Failed to generate encryption key');
 
-			const fileId = await uploadEncryptedFile(selectedFile, key, async (progress, message) => {
-				uploadProgress = progress;
-				uploadMessage = message;
-			});
+        const result = await uploadEncryptedFile(selectedFile, key, async (progress, message) => {
+            uploadProgress = progress;
+            uploadMessage = message;
+        });
 
-			shareUrl = `${window.location.origin}/${fileId}#key=${key}`;
-			replaceState('', shareUrl);
-		} catch (error) {
-			console.error('Feil: ' + (error as Error).message);
-		} finally {
-			isUploading = false;
-		}
-	}
+        // Use the fileId from the result
+        shareUrl = `${window.location.origin}/${result.fileId}#key=${key}`;
+        replaceState('', shareUrl);
+    } catch (error) {
+        console.error('Error: ' + (error as Error).message);
+    } finally {
+        isUploading = false;
+    }
+}
 
 	onMount(async () => {
 		if (!browser) return;
