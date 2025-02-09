@@ -9,7 +9,7 @@ Paste is created to be an easy and secure way of sharing a file with someone for
 ## 🔒 Security Design
 
 - AES-GCM encryption/decryption using WebAssembly in the browser
-  - Supports 128-bit, 192-bit, and 256-bit keys (defaults to 256-bit)
+  - Supports 128-bit, 192-bit, and 256-bit keys (defaults to 128-bit)
   - Uses cryptographically secure random number generation
   - Implements authenticated encryption (AEAD) with integrity checks
   - Unique 96-bit IV (nonce) for each file and chunk
