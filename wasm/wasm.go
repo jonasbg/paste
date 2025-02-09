@@ -70,7 +70,9 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 	signature := h.Sum(nil)
 
 	// Convert to base64url without padding
-	token := base64.URLEncoding.EncodeToString(signature)
+	token := base64.URLEncoding.EncodeToString(signature[:10]) // Take first 10 bytes
+	token = token[:16]
+
 	token = strings.TrimRight(token, "=")
 	token = strings.ReplaceAll(token, "+", "-")
 	token = strings.ReplaceAll(token, "/", "_")
