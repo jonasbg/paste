@@ -63,10 +63,7 @@ export class FileProcessor {
 
 			// Yield to event loop before progress update
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			await onProgress(
-				Math.round(((i + 1) / totalChunks) * 100),
-				`Laster opp...`
-			);
+			await onProgress(Math.round(((i + 1) / totalChunks) * 100), `Laster opp...`);
 		}
 
 		const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
