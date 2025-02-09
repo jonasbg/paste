@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -43,8 +45,47 @@ func main() {
 		"decryptMetadata":        js.FuncOf(decryptMetadata),
 		"encrypt":                js.FuncOf(encrypt), // Keep the original encrypt
 		"decrypt":                js.FuncOf(decrypt), // Keep the original decrypt
+		"generateHmacToken":      js.FuncOf(generateHmacToken),
 	})
 	<-c
+}
+
+func generateHmacToken(_ js.Value, args []js.Value) interface{} {
+	if len(args) != 2 {
+		return handleError(errors.New("invalid arguments"))
+	}
+
+	fileId := args[0].String()
+	keyBase64 := args[1].String()
+
+	// Decode the base64 key
+	key, err := base64.URLEncoding.DecodeString(keyBase64)
+	if err != nil {
+		return handleError(err)
+	}
+
+	// Create HMAC
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(fileId))
+	signature := h.Sum(nil)
+
+	// Convert to base64url without padding
+	token := base64.URLEncoding.EncodeToString(signature[:10]) // Take first 10 bytes
+	token = token[:16]
+
+	token = strings.TrimRight(token, "=")
+	token = strings.ReplaceAll(token, "+", "-")
+	token = strings.ReplaceAll(token, "/", "_")
+
+	// Validate the token is filename safe
+	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+	for _, char := range token {
+		if !strings.ContainsRune(safeChars, char) {
+			return handleError(errors.New("generated token contains unsafe characters"))
+		}
+	}
+
+	return js.ValueOf(token)
 }
 
 func encrypt(_ js.Value, args []js.Value) interface{} {

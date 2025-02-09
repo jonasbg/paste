@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -26,7 +27,7 @@ const (
 )
 
 func generateID() (string, error) {
-	bytes := make([]byte, 16)
+	bytes := make([]byte, 8)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
@@ -37,64 +38,68 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		if len(id) != 32 {
-			fmt.Println("Error: Invalid ID length")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
 
-		filePath := filepath.Join(uploadDir, id)
+		token := c.GetHeader("X-HMAC-Token")
+		if !validateToken(token) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
+			return
+		}
 
-		// Get file info to get size
-		fileInfo, err := os.Stat(filePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				fmt.Println("Error: File not found:", id)
-				c.JSON(http.StatusNotFound, gin.H{"error": "Resource not found"})
-			} else {
-				fmt.Println("Error: Failed to get file info:", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			}
+		// Look for file with token in name
+		filePath := filepath.Join(uploadDir, id+"."+token)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 			return
 		}
 
 		file, err := os.Open(filePath)
 		if err != nil {
-			fmt.Println("Error: Failed to open file:", err)
+			log.Printf("Error: Failed to open file: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 		defer file.Close()
 
+		// Get file info for size
+		fileInfo, err := file.Stat()
+		if err != nil {
+			log.Printf("Error: Failed to get file info: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+			return
+		}
+
+		// Read header to get metadata length
 		header := make([]byte, 16)
 		if _, err = io.ReadFull(file, header); err != nil {
-			fmt.Println("Error: Failed to read header:", err)
+			log.Printf("Error: Failed to read header: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
 		metadataLen := binary.LittleEndian.Uint32(header[12:16])
-		if metadataLen > 1024*1024 {
-			fmt.Println("Error: Metadata size exceeds limit")
+		if metadataLen > maxMetadataSize {
+			log.Printf("Error: Metadata size exceeds limit")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
+		// Read full metadata including header
 		fullMetadata := make([]byte, 16+int(metadataLen))
 		copy(fullMetadata[:16], header)
 
 		if _, err = io.ReadFull(file, fullMetadata[16:]); err != nil {
-			fmt.Println("Error: Failed to read metadata:", err)
+			log.Printf("Error: Failed to read metadata: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
-		// Get total file size
-		fileSize := fileInfo.Size()
-
 		// Add size to response headers
 		c.Header("Content-Type", "application/octet-stream")
 		c.Header("Cache-Control", "no-cache")
-		c.Header("X-File-Size", strconv.FormatInt(fileSize, 10))
+		c.Header("X-File-Size", strconv.FormatInt(fileInfo.Size(), 10))
 
 		c.Writer.Write(fullMetadata)
 	}
@@ -104,34 +109,45 @@ func HandleDownload(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		if len(id) != 32 {
-			fmt.Println("Error: Invalid ID length")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
 
-		filePath := filepath.Join(uploadDir, id)
-		fi, err := os.Stat(filePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				fmt.Println("Error: File not found:", id)
-				c.JSON(http.StatusNotFound, gin.H{"error": "Resource not found"})
-			} else {
-				fmt.Println("Error: Failed to access file:", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			}
+		token := c.GetHeader("X-HMAC-Token")
+		if !validateToken(token) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
 			return
 		}
 
+		// Look for file with token
+		filePath := filepath.Join(uploadDir, id+"."+token)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+			return
+		}
+
+		// Serve file and delete after download
 		c.Header("Content-Type", "application/octet-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.File(filePath)
 
-		go func(size int64, fileID string) {
+		go func() {
 			if err := os.Remove(filePath); err != nil {
-				fmt.Println("Error: Failed to remove file:", err)
+				log.Printf("Failed to remove file: %v", err)
 			}
-		}(fi.Size(), id)
+		}()
 	}
+}
+
+func validateToken(token string) bool {
+	// Ensure token only contains safe filename characters
+	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+	for _, char := range token {
+		if !strings.ContainsRune(safeChars, char) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateWasmEncryption(header []byte, encryptedMetadata []byte) bool {
