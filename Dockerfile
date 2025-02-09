@@ -48,6 +48,9 @@ ENV GIN_MODE=release
 ENV DATABASE_DIR=/uploads
 ENV PASTE_RETENTION_DAYS=7
 ENV LOGS_RETENTION_DAYS=180
+ENV MAX_FILE_SIZE=2GB
+ENV ID_SIZE=64
+ENV KEY_SIZE=128
 
 # Copy SSL certificates for HTTPS support
 COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

@@ -45,6 +45,8 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
+	handlers.InitConfig()
+
 	limiter := middleware.NewIPRateLimiter(rate.Limit(requestsPerSecond), burstSize)
 
 	r := gin.New()
@@ -54,6 +56,7 @@ func main() {
 	api := r.Group("/api")
 	api.Use(middleware.RateLimit(limiter))
 	{
+		api.GET("/config", handlers.GetConfig())
 		api.GET("/metadata/:id", handlers.HandleMetadata(uploadDir))
 		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
 
