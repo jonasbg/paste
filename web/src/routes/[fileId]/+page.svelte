@@ -9,7 +9,6 @@
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import { replaceState } from '$app/navigation';
-	import { getFileMetadata } from '$lib/api';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let encryptionKey: string = '';
@@ -26,10 +25,8 @@
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
-		// Remove any whitespace
 		input = input.trim();
 
-		// If it's a URL, try to extract the key
 		if (input.includes('://')) {
 			try {
 				const url = new URL(input);
@@ -38,17 +35,15 @@
 				if (key) {
 					return key;
 				}
-				throw new Error('Ingen gyldig nøkkel funnet i URLen');
+				return null; // Indicate no key found
 			} catch (error) {
-				throw new Error('Ugyldig URL-format');
+				return null; // Indicate invalid URL
 			}
 		}
 
-		// If it's just a key, validate its format
-		// Base64 validation regex
 		const base64Regex = /^[A-Za-z0-9+/=_-]+$/;
 		if (!base64Regex.test(input)) {
-			throw new Error('Ugyldig nøkkelformat');
+			return null; // Indicate invalid key format
 		}
 
 		return input;
@@ -57,18 +52,20 @@
 	async function getMetadata() {
 		try {
 			const fileId = $page.params.fileId;
-			const response = await getFileMetadata(fileId);
 			const metadataResponse = await fetchMetadata(fileId, encryptionKey);
 
-			metadata = metadataResponse;
+			metadata = metadataResponse.metadata;
 			// Convert number to string for FileInfo component
-			fileSize = response.size?.toString();
-		} catch (error) {
+			fileSize = metadataResponse.size?.toString();
+		} catch (error) { //is not hit
 			console.error('Metadata error:', error);
-			metadata = { error: (error as Error).message };
+      // Use a specific Norwegian error message here
+			encryptionKey = '';
+			manualKeyInput = '';
+			metadata = { error: 'Kunne ikke hente filinformasjon. Sjekk at nøkkelen er riktig, eller at filen ikke er slettet.' };
 		} finally {
 			isLoading = false;
-    }
+		}
 	}
 
 	// Function to safely handle encryption key without exposing it in URL
@@ -83,26 +80,19 @@
 	async function handleManualKeySubmit() {
 		if (!manualKeyInput.trim()) return;
 
-		try {
-			keyError = null;
-			const extractedKey = validateAndExtractKey(manualKeyInput.trim());
+		const extractedKey = validateAndExtractKey(manualKeyInput.trim());
+		if (extractedKey) {
+			setEncryptionKey(extractedKey);
+			await getMetadata(); // Get metadata first
 
-			if (extractedKey) {
-				setEncryptionKey(extractedKey);
-				await getMetadata();
-
-				if (!downloadError && !metadata?.error) {
-					await initiateDownload();
-				}
-			}
-		} catch (error) {
-			keyError = (error as Error).message;
-			console.error('Key validation error:', error);
+			// The download button will only appear if metadata is valid (see canDownload)
+		} else {
+			keyError = 'Ugyldig nøkkel eller URL'; // More generic error message
 		}
 	}
 
 	async function initiateDownload() {
-		if (!encryptionKey || isDownloading) return;
+		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
 		isDownloading = true;
 		downloadError = null;
 
@@ -164,51 +154,57 @@
 
 		try {
 			await initWasm();
-			const urlParams = new URLSearchParams(window.location.hash.slice(1));
-			const key = urlParams.get('key');
-			if (key) {
-				try {
+            if (window.location.hash) { // Check if a hash exists
+				const urlParams = new URLSearchParams(window.location.hash.slice(1));
+				const key = urlParams.get('key');
+				if (key) {
 					const validatedKey = validateAndExtractKey(key);
 					if (validatedKey) {
 						setEncryptionKey(validatedKey);
-						await getMetadata();
+						await getMetadata(); // Get metadata on mount as well
+					} else {
+						keyError = 'Ugyldig nøkkel eller URL'; // More generic
 					}
-				} catch (error) {
-					keyError = (error as Error).message;
 				}
-			}
+            }
 		} catch (error) {
 			console.error('Failed to initialize:', error);
 			downloadError = 'Failed to initialize the application';
-		} finally{
+		} finally {
 			isLoading = false;
 		}
 	});
 
 	$: canDownload = !!(
 		metadata &&
-		!metadata.error &&
+		!metadata.error &&  // Ensure metadata is available and has no errors
 		!isDownloading &&
 		!isDownloadComplete &&
 		encryptionKey
 	);
+
+    // Reset keyError whenever manualKeyInput changes
+    $: manualKeyInput, keyError = null;
+
 </script>
 
 <div class="container">
 	<div class="download-container">
 		<h1><span>Sikker</span> fildeling</h1>
-    <p class="intro-text">
-        Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt delt med deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig dekrypteringsnøkkel kan få tilgang til innholdet. Etter vellykket nedlasting blir filen automatisk slettet fra våre servere.
-    </p>
+		<p class="intro-text">
+			Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt delt med
+			deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig dekrypteringsnøkkel kan få
+			tilgang til innholdet. Etter vellykket nedlasting blir filen automatisk slettet fra våre servere.
+		</p>
 
 		{#if isLoading}
-			<LoadingSpinner message=""/>
+			<LoadingSpinner message="" />
 		{/if}
 
 		{#if downloadError}
 			<ErrorMessage message={downloadError} />
 		{:else if metadata?.error}
-			<ErrorMessage message={metadata.error} />
+				<ErrorMessage message={metadata.error} />
 		{:else}
 			{#if metadata?.filename}
 				<FileInfo fileName={metadata.filename} {fileSize} />
@@ -222,11 +218,7 @@
 			{/if}
 
 			{#if isDownloading || isDownloadComplete}
-				<ProgressBar
-					progress={downloadProgress}
-					message={downloadMessage}
-					isVisible={isDownloading}
-				/>
+				<ProgressBar progress={downloadProgress} message={downloadMessage} isVisible={isDownloading} />
 			{/if}
 
 			{#if isDownloadComplete}
@@ -241,8 +233,8 @@
 				<h2>Dekrypteringsnøkkel kreves</h2>
 				<p>
 					Du trenger en dekrypteringsnøkkel for å få tilgang til denne filen. Vennligst lim inn hele
-					lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut. Alternativt kan du lime
-					inn dekrypteringsnøkkelen direkte under.
+					lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut. Alternativt kan du lime inn
+					dekrypteringsnøkkelen direkte under.
 				</p>
 				<div class="input-group">
 					<input
@@ -252,11 +244,7 @@
 						bind:value={manualKeyInput}
 						disabled={isDownloading}
 					/>
-					<button
-						type="submit"
-						class="decrypt-button"
-						disabled={!manualKeyInput.trim() || isDownloading}
-					>
+					<button type="submit" class="decrypt-button" disabled={!manualKeyInput.trim() || isDownloading}>
 						Dekrypter
 					</button>
 				</div>
@@ -272,7 +260,6 @@
 
 <style>
 	.download-container {
-		/* background-color: var(--light-gray); */
 		border-radius: var(--border-radius);
 		padding: 2rem;
 	}
@@ -345,8 +332,8 @@
 		font-size: 0.875rem;
 	}
 	.intro-text {
-    color: #666;
-    margin: 1rem 0 2rem 0;
+		color: #666;
+		margin: 1rem 0 2rem 0;
     line-height: 1.5;
     max-width: 800px;
 }
