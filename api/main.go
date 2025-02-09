@@ -54,7 +54,6 @@ func main() {
 	api := r.Group("/api")
 	api.Use(middleware.RateLimit(limiter))
 	{
-		api.POST("/upload", handlers.HandleUpload(uploadDir))
 		api.GET("/metadata/:id", handlers.HandleMetadata(uploadDir))
 		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
 
