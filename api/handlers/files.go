@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -23,18 +24,44 @@ const (
 	bufferSize      = 32 * 1024              // 32KB buffer for copying
 )
 
-func generateID() (string, error) {
-	bytes := make([]byte, 8)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+// generateID generates a cryptographically secure random ID with a specified bit length.
+// It supports bit lengths of 64, 128, 192, and 256.  If no length is provided, it defaults to 64 bits.
+// The generated ID is returned as a hexadecimal string.
+//
+// Args:
+//
+//	bitLength (optional): An integer representing the desired bit length of the ID.
+//	                      Must be one of 64, 128, 192, or 256. Defaults to 64.
+//
+// Returns:
+//
+//	(string, error): The generated ID as a hexadecimal string, or an error if the
+//	                specified bit length is invalid or if random byte generation fails.
+func generateID(bitLength ...int) (string, error) {
+	var length int
+	if len(bitLength) > 0 {
+		length = bitLength[0]
+	} else {
+		length = 64 // Default to 64 bits
 	}
-	return hex.EncodeToString(bytes), nil
+
+	switch length {
+	case 64, 128, 192, 256:
+		byteLength := length / 8
+		bytes := make([]byte, byteLength)
+		if _, err := rand.Read(bytes); err != nil {
+			return "", fmt.Errorf("failed to generate random bytes: %w", err)
+		}
+		return hex.EncodeToString(bytes), nil
+	default:
+		return "", fmt.Errorf("invalid ID length: %d.  Must be 128, 192, or 256", length)
+	}
 }
 
 func HandleMetadata(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		if len(id) != 32 {
+		if len(id) != 16 && len(id) != 24 && len(id) != 32 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
@@ -105,7 +132,7 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 func HandleDownload(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		if len(id) != 32 {
+		if len(id) != 16 && len(id) != 24 && len(id) != 32 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
@@ -144,44 +171,5 @@ func validateToken(token string) bool {
 			return false
 		}
 	}
-	return true
-}
-
-func validateWasmEncryption(header []byte, encryptedMetadata []byte) bool {
-	// Check header size
-	if len(header) != headerSize {
-		return false
-	}
-
-	// Validate that first 12 bytes are a valid IV (non-zero)
-	iv := header[:expectedIVSize]
-	isZero := true
-	for _, b := range iv {
-		if b != 0 {
-			isZero = false
-			break
-		}
-	}
-	if isZero {
-		return false
-	}
-
-	// Check metadata length from header matches actual metadata
-	metadataLen := binary.LittleEndian.Uint32(header[12:16])
-	if metadataLen == 0 || metadataLen > maxMetadataSize {
-		return false
-	}
-
-	// Verify metadata length matches what's in the header
-	if uint32(len(encryptedMetadata)) != metadataLen {
-		return false
-	}
-
-	// Verify metadata has minimum size for encrypted data
-	// GCM adds 16 bytes of auth tag to encrypted data
-	if len(encryptedMetadata) < 16 {
-		return false
-	}
-
 	return true
 }
