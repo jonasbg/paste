@@ -28,7 +28,7 @@
 		background-color: var(--error-bg);
 		border: 1px solid var(--error-border);
 		border-radius: 8px;
-		margin-top: 16px;
+		margin-bottom: 16px;
 	}
 
 	.error-message svg {

@@ -17,11 +17,10 @@ import (
 )
 
 const (
-	maxFileSize     = 5 * 1024 * 1024 * 1024 // 5GB
-	headerSize      = 16                     // Size of metadata header
-	maxMetadataSize = 1024 * 1024            // 1MB max metadata size
-	expectedIVSize  = 12                     // Size of GCM IV
-	bufferSize      = 32 * 1024              // 32KB buffer for copying
+	headerSize      = 16          // Size of metadata header
+	maxMetadataSize = 1024 * 1024 // 1MB max metadata size
+	expectedIVSize  = 12          // Size of GCM IV
+	bufferSize      = 32 * 1024   // 32KB buffer for copying
 )
 
 // generateID generates a cryptographically secure random ID with a specified bit length.
