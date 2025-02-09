@@ -82,7 +82,6 @@ npm run dev
 ## 🔌 API Endpoints
 
 ```bash
-POST   /api/upload            # Upload encrypted blob
 GET    /api/download/:id      # Download encrypted blob
 GET    /api/metadata/:id      # Get encrypted metadata
 GET    /api/ws/upload         # WebSocket upload for large files
