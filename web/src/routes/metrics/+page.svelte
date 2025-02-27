@@ -53,47 +53,77 @@
 	}
 
 	// Function to fill in missing dates in the upload history data
-	function fillMissingDates(data: Array<{ date: string, file_count: number, total_size: number }>) {
-		if (data.length === 0) return [];
+	function fillMissingDates(data: Array<{ date: string, file_count: number, total_size: number }>, rangeType: string) {
+    if (data.length === 0) {
+        // Even with empty data, we should generate dates for the selected range
+        data = [{ date: new Date().toISOString().split('T')[0], file_count: 0, total_size: 0 }];
+    }
 
-		// Sort the data by date
-		const sortedData = [...data].sort((a, b) => a.date.localeCompare(b.date));
+    // Sort the data by date
+    const sortedData = [...data].sort((a, b) => a.date.localeCompare(b.date));
 
-		// Get the start and end dates
-		const startDate = new Date(sortedData[0].date);
-		const endDate = new Date(sortedData[sortedData.length - 1].date);
+    // Calculate start date based on the range selection
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // End of today
+		today.setDate(today.getDate() + 1);
+    let startDate: Date;
 
-		// Create a map of existing dates for quick lookup
-		const dateMap = new Map();
-		sortedData.forEach(item => {
-			dateMap.set(item.date, item);
-		});
+    switch (rangeType) {
+        case '24h':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 1);
+            break;
+        case '7d':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 7);
+            break;
+        case '30d':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 30);
+            break;
+        case '90d':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 90);
+            break;
+        default:
+            // If no specific range, use the data's own start date
+            startDate = new Date(sortedData[0].date);
+    }
 
-		// Create a new array with all dates in the range
-		const result = [];
-		const currentDate = new Date(startDate);
+    // Make sure we start at beginning of the day
+    startDate.setHours(0, 0, 0, 0);
 
-		while (currentDate <= endDate) {
-			const dateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+    // Create a map of existing dates for quick lookup
+    const dateMap = new Map();
+    sortedData.forEach(item => {
+        dateMap.set(item.date, item);
+    });
 
-			if (dateMap.has(dateStr)) {
-				// Use existing data
-				result.push(dateMap.get(dateStr));
-			} else {
-				// Add zero values for missing dates
-				result.push({
-					date: dateStr,
-					file_count: 0,
-					total_size: 0
-				});
-			}
+    // Create a new array with all dates in the range
+    const result = [];
+    const currentDate = new Date(startDate);
 
-			// Move to next day
-			currentDate.setDate(currentDate.getDate() + 1);
-		}
+    while (currentDate <= today) {
+        const dateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-		return result;
-	}
+        if (dateMap.has(dateStr)) {
+            // Use existing data
+            result.push(dateMap.get(dateStr));
+        } else {
+            // Add zero values for missing dates
+            result.push({
+                date: dateStr,
+                file_count: 0,
+                total_size: 0
+            });
+        }
+
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return result;
+}
 
 	async function handleRangeChange() {
 		const searchParams = new URLSearchParams($page.url.searchParams);
@@ -118,7 +148,7 @@
 			.getPropertyValue('--primary-green').trim();
 
 			// Process upload history to fill in missing dates with zeros
-			const filledUploadHistory = fillMissingDates(data.uploadHistory);
+			const filledUploadHistory = fillMissingDates(data.uploadHistory, dateRange);
 
 			// Main Time Series Chart (Unified view)
 			const timeSeriesOptions = {
@@ -298,7 +328,7 @@
 				}
 			};
 
-			// Upload History Chart (New) - Changed to area chart
+			// Upload History Chart - Modified to match time series approach
 			const uploadHistoryOptions = {
 				chart: {
 					type: 'area',
@@ -325,32 +355,26 @@
 				series: [
 					{
 						name: 'File Count',
-						data: filledUploadHistory.map(item => item.file_count)
+						data: filledUploadHistory.map(item => ({
+							x: new Date(item.date).getTime(),
+							y: item.file_count
+						}))
 					},
 					{
 						name: 'Total Size (MB)',
-						data: filledUploadHistory.map(item => Math.round(item.total_size / (1024 * 1024) * 100) / 100)
+						data: filledUploadHistory.map(item => ({
+							x: new Date(item.date).getTime(),
+							y: Math.round(item.total_size / (1024 * 1024) * 100) / 100
+						}))
 					}
 				],
 				dataLabels: {
 					enabled: false
 				},
 				xaxis: {
-					categories: filledUploadHistory.map(item => item.date),
-					type: 'category',
-					tickAmount: Math.min(data.uploadHistory.length, 10), // Show approximately 10 labels or fewer
+					type: 'datetime',
 					labels: {
-						formatter: (val: string) => {
-							// Parse the date string to get a proper date object
-							try {
-								const date = new Date(val);
-								return format(date, 'MMM d');
-							} catch (e) {
-								return val;
-							}
-						},
-						rotate: 0,
-						hideOverlappingLabels: true
+						formatter: (val: string) => format(new Date(parseInt(val)), 'MMM d, yyyy')
 					}
 				},
 				yaxis: [
@@ -381,14 +405,7 @@
 					intersect: false,
 					theme: 'light',
 					x: {
-						formatter: function(val) {
-							try {
-								const date = new Date(val);
-								return format(date, 'MMMM d, yyyy');
-							} catch {
-								return val;
-							}
-						}
+						format: 'dd MMM yyyy'
 					},
 					y: [
 						{
@@ -503,25 +520,25 @@
 	}
 
 	$: if (uploadHistoryChart && data.uploadHistory) {
-		const filledData = fillMissingDates(data.uploadHistory);
+    const filledData = fillMissingDates(data.uploadHistory, dateRange);
 
-		uploadHistoryChart.updateSeries([
-			{
-				name: 'File Count',
-				data: filledData.map(item => item.file_count)
-			},
-			{
-				name: 'Total Size (MB)',
-				data: filledData.map(item => Math.round(item.total_size / (1024 * 1024) * 100) / 100)
-			}
-		]);
-
-		uploadHistoryChart.updateOptions({
-			xaxis: {
-				categories: filledData.map(item => item.date)
-			}
-		});
-	}
+    uploadHistoryChart.updateSeries([
+        {
+            name: 'File Count',
+            data: filledData.map(item => ({
+                x: new Date(item.date).getTime(),
+                y: item.file_count
+            }))
+        },
+        {
+            name: 'Total Size (MB)',
+            data: filledData.map(item => ({
+                x: new Date(item.date).getTime(),
+                y: Math.round(item.total_size / (1024 * 1024) * 100) / 100
+            }))
+        }
+    ]);
+}
 </script>
 
 <div class="dashboard">
