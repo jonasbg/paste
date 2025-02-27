@@ -1,4 +1,5 @@
 export interface StorageSummary {
+	system_total_size_bytes: number;
 	total_files: number;
 	total_size_bytes: number;
 	current_files: number;

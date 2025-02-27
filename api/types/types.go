@@ -15,6 +15,7 @@ type UploadHistoryItem struct {
 
 type StorageSummary struct {
 	TotalSizeBytes       float64        `json:"total_size_bytes"`
+	SystemTotalSizeBytes float64        `json:"system_total_size_bytes"`
 	AvailableSizeBytes   float64        `json:"available_size_bytes"`
 	CurrentSizeBytes     float64        `json:"current_size_bytes"`
 	CurrentFiles         int            `json:"current_files"`
