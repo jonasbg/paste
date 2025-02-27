@@ -150,86 +150,77 @@ func HandleDownload(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
-		// Get file info to determine size
-		fileInfo, err := os.Stat(filePath)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not access file"})
-			return
-		}
-		fileSize := fileInfo.Size()
-
-		// Open the file manually
+		// Open the file
 		file, err := os.Open(filePath)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not open file"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
 			return
 		}
 		defer file.Close()
 
+		// Set a read deadline
+		deadline := time.Now().Add(30 * time.Minute)
+		if err := file.SetReadDeadline(deadline); err != nil {
+			log.Printf("Warning: Could not set read deadline: %v", err)
+		}
+
+		// Get file information
+		fileInfo, err := file.Stat()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file info"})
+			return
+		}
+
 		// Set headers
 		c.Header("Content-Type", "application/octet-stream")
 		c.Header("Cache-Control", "no-cache")
-		c.Header("Content-Length", fmt.Sprintf("%d", fileSize))
+		c.Header("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 		c.Header("Connection", "keep-alive")
 
-		// Use a custom writer that tracks completion
-		downloadCompleted := false
-		bytesWritten := int64(0)
+		// Stream the file to the client with a context timeout
+		c.Status(http.StatusOK)
 
-		// Setup context cancellation monitoring
-		ctx := c.Request.Context()
-		doneCh := make(chan struct{})
-		defer close(doneCh)
+		// Create a channel to signal when the copy is done
+		done := make(chan struct{})
 
-		// Monitor for client disconnection
+		var bytesWritten int64
+		var copyErr error
+
+		// Use a separate goroutine for the copy operation
 		go func() {
-			select {
-			case <-ctx.Done():
-				// Client disconnected before completion
-				log.Printf("Client disconnected during download of file %s", id)
-			case <-doneCh:
-				// Download completed normally
-			}
+			bytesWritten, copyErr = io.Copy(c.Writer, file)
+			close(done)
 		}()
 
-		// Stream the file to the client
-		buf := make([]byte, 4096)
-		for {
-			n, err := file.Read(buf)
-			if err != nil && err != io.EOF {
-				log.Printf("Error reading file: %v", err)
-				return
-			}
-			if n == 0 {
-				break
-			}
-
-			if _, err := c.Writer.Write(buf[:n]); err != nil {
-				log.Printf("Error writing to client: %v", err)
-				return
-			}
-
-			c.Writer.Flush()
-			bytesWritten += int64(n)
+		// Wait for the copy to finish or for the context to be canceled
+		select {
+		case <-done:
+			// Copy completed
+		case <-c.Request.Context().Done():
+			// Request canceled by client
+			copyErr = c.Request.Context().Err()
 		}
 
-		// Check if all bytes were sent
-		downloadCompleted = (bytesWritten == fileSize)
+		// Delete the file based on transfer result
+		go func() {
+			if copyErr != nil {
+				log.Printf("Error during file transfer: %v", copyErr)
+				// Connection error - delete after a short delay
+			} else if bytesWritten == fileInfo.Size() {
+				log.Printf("File download complete: %s (%d bytes)", filePath, bytesWritten)
+				// Successful transfer - delete after a short grace period
+				time.Sleep(5 * time.Minute)
 
-		// Only delete the file if download was completed
-		if downloadCompleted {
-			log.Printf("Download completed successfully for file %s, deleting", id)
-			go func() {
-				// Small delay to ensure all buffers are flushed
-				time.Sleep(1 * time.Second)
 				if err := os.Remove(filePath); err != nil {
 					log.Printf("Failed to remove file: %v", err)
+				} else {
+					log.Printf("Successfully deleted file: %s", filePath)
 				}
-			}()
-		} else {
-			log.Printf("Download incomplete for file %s (%d of %d bytes), file preserved",
-				id, bytesWritten, fileSize)
-		}
+			} else {
+				log.Printf("Incomplete transfer: %s (expected %d, got %d bytes)",
+					filePath, fileInfo.Size(), bytesWritten)
+			}
+		}()
 	}
 }
 

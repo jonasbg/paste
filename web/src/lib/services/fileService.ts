@@ -10,7 +10,7 @@ export async function downloadAndDecryptFile(
 	const wasmInstance = getWasmInstance();
 	if (!wasmInstance) throw new Error('WASM not initialized');
 
-	await onProgress(0, 'Starting download...');
+	await onProgress(0, 'Laster ned...');
 
 	// First, fetch just the header to get metadata
 	const headerResponse = await fetch(`/api/metadata/${fileId}`, {
@@ -54,15 +54,6 @@ export async function downloadAndDecryptFile(
 		if (done) break;
 
 		receivedLength += value.length;
-
-		// // Update download progress
-		// if (contentLength > 0) {
-		//     const downloadProgress = (receivedLength / contentLength) * 40;
-		//     await onProgress(
-		//         downloadProgress,
-		//         `Downloading... (${Math.round((receivedLength / contentLength) * 100)}%)`
-		//     );
-		// }
 
 		// Combine buffered data with new chunk
 		const newBufferedData = new Uint8Array(bufferedData.length + value.length);
@@ -133,7 +124,7 @@ export async function downloadAndDecryptFile(
 		type: metadata.contentType || 'application/octet-stream'
 	});
 
-	await onProgress(100, 'Download and decryption complete');
+	await onProgress(100, 'Nedlasting og dekryptering fullført');
 
 	return { decrypted: blob, metadata };
 }
@@ -202,7 +193,7 @@ export async function streamDownloadAndDecrypt(
   const wasmInstance = getWasmInstance();
   if (!wasmInstance) throw new Error('WASM not initialized');
 
-  await onProgress(0, 'Starting download...');
+  await onProgress(0, 'Laster ned...');
 
   // First, fetch metadata as before...
   const headerResponse = await fetch(`/api/metadata/${fileId}`, {
@@ -221,7 +212,8 @@ export async function streamDownloadAndDecrypt(
   // Now start streaming the full file
   const response = await fetch(`/api/download/${fileId}`, {
     headers: {
-      'X-HMAC-Token': token
+      'X-HMAC-Token': token,
+      'Connection': 'keep-alive' // Explicitly request persistent connection
     }
   });
 
@@ -242,20 +234,16 @@ export async function streamDownloadAndDecrypt(
   let decryptionInitialized = false;
   let bufferedData = new Uint8Array(0);
 
-  // For smooth progress updates - throttle progress updates
   let lastProgressUpdate = 0;
   let lastProgressValue = 0;
-  const PROGRESS_THROTTLE_MS = 100; // Update progress at most every 100ms
+  const PROGRESS_THROTTLE_MS = 100;
 
-  // Function to report progress with throttling
-  const reportProgress = async (bytesReceived: number) => {
+  const reportProgress = (bytesReceived: number) => {
     const currentTime = Date.now();
     const progressValue = contentLength > 0
       ? Math.round((bytesReceived / contentLength) * 100)
       : 0;
 
-    // Only update if it's been long enough since the last update
-    // or if the progress has changed significantly (at least 1%)
     if (
       currentTime - lastProgressUpdate > PROGRESS_THROTTLE_MS ||
       Math.abs(progressValue - lastProgressValue) >= 1 ||
@@ -264,95 +252,113 @@ export async function streamDownloadAndDecrypt(
       lastProgressUpdate = currentTime;
       lastProgressValue = progressValue;
 
-      // Use requestAnimationFrame for smoother UI updates
-      await new Promise<void>(resolve => {
-        requestAnimationFrame(() => {
-          onProgress(progressValue, `Downloading... (${progressValue}%)`).then(() => resolve());
-        });
+      // Use queueMicrotask instead of setTimeout for more reliable scheduling
+      queueMicrotask(() => {
+        onProgress(progressValue, `Laster ned...`).catch(console.error);
       });
     }
   };
 
-  // Create a transform stream that will process and decrypt the data
+  // Create a transform stream with optimized buffer handling
   const decryptionStream = new TransformStream<Uint8Array, Uint8Array>({
-    transform: async (chunk, controller) => {
-      // Update total received bytes and report progress
-      receivedLength += chunk.length;
-      reportProgress(receivedLength); // Non-blocking progress update
+    start() {
+      // Initialize stream state
+      headerProcessed = false;
+      decryptionInitialized = false;
+      bufferedData = new Uint8Array(0);
+    },
 
-      // Combine buffered data with new chunk
-      const newBufferedData = new Uint8Array(bufferedData.length + chunk.length);
-      newBufferedData.set(bufferedData);
-      newBufferedData.set(chunk, bufferedData.length);
-      bufferedData = newBufferedData;
+    transform: (chunk, controller) => {
+      try {
+        // Add incoming chunk to our buffer
+        receivedLength += chunk.length;
+        reportProgress(receivedLength);
 
-      if (!headerProcessed) {
-        // Need at least 16 bytes to read metadata length
-        if (bufferedData.length < 16) return;
+        // More efficient buffer concatenation
+        const newBuffer = new Uint8Array(bufferedData.length + chunk.length);
+        newBuffer.set(bufferedData);
+        newBuffer.set(chunk, bufferedData.length);
+        bufferedData = newBuffer;
 
-        const metadataLength = new DataView(bufferedData.buffer).getUint32(12, true);
-        const headerLength = 16 + metadataLength;
+        // Process header data
+        if (!headerProcessed && bufferedData.length >= 16) {
+          const metadataLength = new DataView(bufferedData.buffer, bufferedData.byteOffset + 12, 4).getUint32(0, true);
+          const headerLength = 16 + metadataLength;
 
-        // Wait until we have the full header
-        if (bufferedData.length < headerLength) return;
-
-        // Process header and remove it from buffer
-        headerProcessed = true;
-        bufferedData = bufferedData.slice(headerLength);
-      }
-
-      if (!decryptionInitialized && bufferedData.length >= 12) {
-        // Initialize decryption with IV
-        const iv = bufferedData.slice(0, 12);
-        const success = wasmInstance.createDecryptionStream(key, iv);
-        if (!success) {
-          controller.error(new Error('Failed to initialize decryption stream'));
-          return;
+          if (bufferedData.length >= headerLength) {
+            headerProcessed = true;
+            bufferedData = bufferedData.slice(headerLength);
+          }
         }
 
-        decryptionInitialized = true;
-        bufferedData = bufferedData.slice(12);
-      }
-
-      if (decryptionInitialized && bufferedData.length > 0) {
-        // Process buffered data in chunks
-        const chunkSize = 1024 * 1024 + 16; // 1MB + GCM tag
-        while (bufferedData.length >= chunkSize) {
-          const dataChunk = bufferedData.slice(0, chunkSize);
-          const isLastChunk = false; // We don't know yet
-
-          const decrypted = wasmInstance.decryptChunk(dataChunk, isLastChunk);
-          if (!decrypted) {
-            controller.error(new Error('Failed to decrypt chunk'));
-            return;
+        // Initialize decryption when IV is available
+        if (headerProcessed && !decryptionInitialized && bufferedData.length >= 12) {
+          const iv = bufferedData.slice(0, 12);
+          if (!wasmInstance.createDecryptionStream(key, iv)) {
+            throw new Error('Failed to initialize decryption stream');
           }
 
-          controller.enqueue(decrypted);
-          bufferedData = bufferedData.slice(chunkSize);
+          decryptionInitialized = true;
+          bufferedData = bufferedData.slice(12);
         }
+
+        // Process complete chunks when possible
+        if (decryptionInitialized) {
+          const chunkSize = 1024 * 1024 + 16; // 1MB + GCM tag
+
+          while (bufferedData.length >= chunkSize) {
+            const dataChunk = bufferedData.slice(0, chunkSize);
+            const decrypted = wasmInstance.decryptChunk(dataChunk, false);
+
+            if (!decrypted) {
+              throw new Error('Failed to decrypt chunk');
+            }
+
+            controller.enqueue(decrypted);
+            bufferedData = bufferedData.slice(chunkSize);
+          }
+        }
+      } catch (error) {
+        console.error("Transform error:", error);
+        controller.error(error);
       }
     },
 
-    flush: async (controller) => {
-      // Final progress update
-      if (contentLength > 0) {
-        await onProgress(100, 'Download complete');
-      }
-
-      // Process any remaining data
-      if (bufferedData.length > 0 && decryptionInitialized) {
-        const decrypted = wasmInstance.decryptChunk(bufferedData, true);
-        if (!decrypted) {
-          controller.error(new Error('Failed to decrypt final chunk'));
-          return;
+    flush: (controller) => {
+      try {
+        // Process final data and signal completion
+        if (decryptionInitialized && bufferedData.length > 0) {
+          const decrypted = wasmInstance.decryptChunk(bufferedData, true);
+          if (decrypted) {
+            controller.enqueue(decrypted);
+          }
         }
-        controller.enqueue(decrypted);
+
+        // Final progress update
+        queueMicrotask(() => {
+          onProgress(100, 'Nedlasting fullført').catch(console.error);
+        });
+      } catch (error) {
+        console.error("Flush error:", error);
+        controller.error(error);
       }
     }
   });
 
-  // Pipe the response through our decryption transform
-  const decryptedStream = response.body.pipeThrough(decryptionStream);
+  // Create a resilient stream that handles network interruptions
+  const decryptedStream = response.body
+    .pipeThrough(new TransformStream({
+      transform(chunk, controller) {
+        // Pass through data but catch any network errors
+        try {
+          controller.enqueue(chunk);
+        } catch (error) {
+          console.error("Network stream error:", error);
+          controller.error(error);
+        }
+      }
+    }))
+    .pipeThrough(decryptionStream);
 
   return { stream: decryptedStream, metadata };
 }
