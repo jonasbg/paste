@@ -130,7 +130,7 @@ func HandleStorage(db *db.DB, uploadDir string) gin.HandlerFunc {
 		usedBytes := totalBytes - availableBytes
 
 		// Set sizes in the summary
-		summary.TotalSizeBytes = totalBytes
+		summary.SystemTotalSizeBytes = totalBytes
 		summary.AvailableSizeBytes = availableBytes
 		summary.UsedSizeBytes = usedBytes
 

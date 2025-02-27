@@ -223,6 +223,10 @@
 					theme: 'light',
 					x: {
 						format: 'dd MMM yyyy'
+					},
+					marker: {
+						size: 6, // Smaller marker size
+						strokeWidth: 0
 					}
 				}
 			};
@@ -404,6 +408,10 @@
 					shared: true,
 					intersect: false,
 					theme: 'light',
+					marker: {
+						size: 6, // Smaller marker size
+						strokeWidth: 0
+					},
 					x: {
 						format: 'dd MMM yyyy'
 					},
@@ -587,20 +595,20 @@
 				<div class="storage-bar">
 					<div
 						class="storage-segment files"
-						style="width: {data.storage ? (data.storage.current_size_bytes / data.storage.total_size_bytes * 100) : 0}%"
+						style="width: {data.storage ? (data.storage.current_size_bytes / data.storage.system_total_size_bytes * 100) : 0}%"
 						title="Files: {formatBytes(data.storage?.current_size_bytes || 0)}"
 					></div>
 					<div
 						class="storage-segment other"
-						style="width: {data.storage ? ((data.storage.used_size_bytes - data.storage.current_size_bytes) / data.storage.total_size_bytes * 100) : 0}%"
+						style="width: {data.storage ? ((data.storage.used_size_bytes - data.storage.current_size_bytes) / data.storage.system_total_size_bytes * 100) : 0}%"
 						title="System & Other: {formatBytes((data.storage?.used_size_bytes || 0) - (data.storage?.current_size_bytes || 0))}
 App storage: {formatBytes(data.storage?.current_size_bytes || 0)}
 Available space: {formatBytes(data.storage?.available_size_bytes || 0)}
 Total space: {formatBytes(data.storage?.total_size_bytes || 0)}
-Usage: {Math.round((data.storage?.used_size_bytes || 0) / (data.storage?.total_size_bytes || 1) * 100)}% of total capacity"					></div>
+Usage: {Math.round((data.storage?.used_size_bytes || 0) / (data.storage?.system_total_size_bytes || 1) * 100)}% of total capacity"					></div>
 					<div
 						class="storage-segment free"
-						style="width: {data.storage ? (data.storage.available_size_bytes / data.storage.total_size_bytes * 100) : 0}%"
+						style="width: {data.storage ? (data.storage.available_size_bytes / data.storage.system_total_size_bytes * 100) : 0}%"
 						title="Free Space: {formatBytes(data.storage?.available_size_bytes || 0)}"
 					></div>
 				</div>
@@ -619,7 +627,7 @@ Usage: {Math.round((data.storage?.used_size_bytes || 0) / (data.storage?.total_s
 					</div>
 				</div>
 				<div class="storage-details">
-					{formatBytes(data.storage?.total_size_bytes || 0)} total
+					{formatBytes(data.storage?.system_total_size_bytes || 0)} total
 				</div>
 			</div>
 			<div class="metrics-card">
@@ -644,8 +652,18 @@ Usage: {Math.round((data.storage?.used_size_bytes || 0) / (data.storage?.total_s
 			</div>
 			<div class="metrics-card">
 				<div class="metric">
-					<h3>Total disk used</h3>
+					<h3>App storage now</h3>
 					<div class="value">{formatBytes(data.storage?.current_size_bytes)} </div>
+				</div>
+				<div class="growth">
+					<span class="positive">+8.3%</span>
+					<small>vs. previous period</small>
+				</div>
+			</div>
+			<div class="metrics-card">
+				<div class="metric">
+					<h3>Total storage accumulated</h3>
+					<div class="value">{formatBytes(data.storage?.total_size_bytes)} </div>
 				</div>
 				<div class="growth">
 					<span class="positive">+8.3%</span>
