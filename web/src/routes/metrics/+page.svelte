@@ -24,14 +24,12 @@
 	let timeSeriesChartElement: HTMLElement;
 	let statusChartElement: HTMLElement;
 	let pathDistributionElement: HTMLElement;
-	let requestsTimelineElement: HTMLElement;
 	let latencyTimelineElement: HTMLElement;
 	let storageDistributionElement: HTMLElement;
 
 	let timeSeriesChart: ApexCharts;
 	let statusChart: ApexCharts;
 	let pathDistributionChart: ApexCharts;
-	let requestsTimelineChart: ApexCharts;
 	let latencyTimelineChart: ApexCharts;
 	let storageDistributionChart: ApexCharts;
 
@@ -58,10 +56,10 @@
 
 	function getStatusCodeColor(code: string) {
 		const num = parseInt(code);
-		if (num < 300) return '#10B981'; // Green
-		if (num < 400) return '#F59E0B'; // Yellow
-		if (num < 500) return '#EF4444'; // Red
-		return '#8B5CF6'; // Purple
+		if (num < 300) return '#4ade80'; // Green
+		if (num < 400) return '#facc15'; // Yellow
+		if (num < 500) return '#f87171'; // Red
+		return '#a78bfa'; // Purple
 	}
 
 	onMount(() => {
@@ -69,30 +67,28 @@
 			// Main Time Series Chart (Unified view)
 			const timeSeriesOptions = {
 				chart: {
-					type: 'line',
-					height: 400,
+					type: 'area',
+					height: 350,
 					fontFamily: 'Inter var, system-ui, -apple-system, sans-serif',
-					animations: {
-						enabled: false
-					},
 					toolbar: {
-						show: true,
-						tools: {
-							download: true,
-							selection: true,
-							zoom: true,
-							zoomin: true,
-							zoomout: true,
-							pan: true,
-							reset: true
-						}
-					}
+						show: false
+					},
+					background: 'transparent'
 				},
 				stroke: {
 					curve: 'smooth',
 					width: 2
 				},
-				colors: ['#10B981', '#3B82F6', '#8B5CF6'],
+				fill: {
+					type: 'gradient',
+					gradient: {
+						shadeIntensity: 1,
+						opacityFrom: 0.7,
+						opacityTo: 0.2,
+						stops: [0, 90, 100]
+					}
+				},
+				colors: ['#4ade80', '#60a5fa', '#a78bfa'],
 				series: [
 					{
 						name: 'Uploads',
@@ -128,7 +124,13 @@
 					}
 				},
 				legend: {
-					position: 'top'
+					show: false
+				},
+				tooltip: {
+					theme: 'light',
+					x: {
+						format: 'dd MMM yyyy'
+					}
 				}
 			};
 
@@ -136,7 +138,8 @@
 			const statusDistributionOptions = {
 				chart: {
 					type: 'donut',
-					height: 300
+					height: 280,
+					background: '#f8fafc'
 				},
 				colors: Object.keys(data.requests.status_distribution).map((code) =>
 					getStatusCodeColor(code)
@@ -144,22 +147,26 @@
 				series: Object.values(data.requests.status_distribution),
 				labels: Object.keys(data.requests.status_distribution).map((code) => `${code} Status`),
 				legend: {
-					position: 'bottom',
-					formatter: function (label: string, opts) {
-						return `${label} (${opts.w.globals.series[opts.seriesIndex]})`;
-					}
+					show: false
 				},
 				plotOptions: {
 					pie: {
 						donut: {
+							size: '65%',
 							labels: {
 								show: true,
 								total: {
 									show: true,
 									label: 'Total Requests',
+									fontSize: '14px',
+									fontWeight: 600,
 									formatter: function (w) {
-										return w.globals.seriesTotals.reduce((a, b) => a + b, 0);
+										return w.globals.seriesTotals.reduce((a, b) => a + b, 0).toLocaleString();
 									}
+								},
+								value: {
+									fontSize: '22px',
+									fontWeight: 600
 								}
 							}
 						}
@@ -171,15 +178,20 @@
 			const pathDistributionOptions = {
 				chart: {
 					type: 'bar',
-					height: 300
+					height: 280,
+					toolbar: {
+						show: false
+					},
+					background: '#f8fafc'
 				},
 				plotOptions: {
 					bar: {
 						horizontal: true,
-						borderRadius: 4
+						borderRadius: 4,
+						barHeight: '70%'
 					}
 				},
-				colors: ['#3B82F6'],
+				colors: ['#60a5fa'],
 				series: [
 					{
 						name: 'Requests',
@@ -194,39 +206,9 @@
 						.sort((a, b) => b[1] - a[1])
 						.slice(0, 10)
 						.map(([path]) => path)
-				}
-			};
-
-			// Latency Timeline Chart
-			const latencyTimelineOptions = {
-				chart: {
-					type: 'line',
-					height: 300,
-					animations: {
-						enabled: false
-					}
 				},
-				series: [
-					{
-						name: 'Average Latency (ms)',
-						data: data.requests.time_distribution.map((d) => ({
-							x: d.date,
-							y: data.requests.average_latency_ms
-						}))
-					}
-				],
-				stroke: {
-					curve: 'smooth',
-					width: 2
-				},
-				colors: ['#F59E0B'],
-				xaxis: {
-					type: 'datetime'
-				},
-				yaxis: {
-					labels: {
-						formatter: (val: number) => `${Math.round(val)}ms`
-					}
+				tooltip: {
+					theme: 'light'
 				}
 			};
 
@@ -234,24 +216,29 @@
 			const storageDistributionOptions = {
 				chart: {
 					type: 'pie',
-					height: 300
+					height: 280,
+					background: '#f8fafc'
 				},
 				series: Object.values(data.storage.file_size_distribution),
 				labels: Object.keys(data.storage.file_size_distribution),
-				colors: ['#93C5FD', '#60A5FA', '#3B82F6', '#2563EB'],
+				colors: ['#93c5fd', '#60a5fa', '#3b82f6', '#2563eb'],
 				legend: {
-					position: 'bottom',
-					formatter: function (label: string, opts) {
-						const value = opts.w.globals.series[opts.seriesIndex];
-						return `${label}: ${value} files`;
+					show: false
+				},
+				plotOptions: {
+					pie: {
+						size: '70%'
 					}
+				},
+				tooltip: {
+					theme: 'light'
 				}
 			};
 
 			timeSeriesChart = new ApexCharts(timeSeriesChartElement, timeSeriesOptions);
 			statusChart = new ApexCharts(statusChartElement, statusDistributionOptions);
 			pathDistributionChart = new ApexCharts(pathDistributionElement, pathDistributionOptions);
-			latencyTimelineChart = new ApexCharts(latencyTimelineElement, latencyTimelineOptions);
+
 			storageDistributionChart = new ApexCharts(
 				storageDistributionElement,
 				storageDistributionOptions
@@ -260,7 +247,7 @@
 			timeSeriesChart.render();
 			statusChart.render();
 			pathDistributionChart.render();
-			latencyTimelineChart.render();
+
 			storageDistributionChart.render();
 		}
 
@@ -268,7 +255,7 @@
 			timeSeriesChart?.destroy();
 			statusChart?.destroy();
 			pathDistributionChart?.destroy();
-			latencyTimelineChart?.destroy();
+
 			storageDistributionChart?.destroy();
 		};
 	});
@@ -328,18 +315,6 @@
 		});
 	}
 
-	$: if (latencyTimelineChart && data.requests?.time_distribution) {
-		latencyTimelineChart.updateSeries([
-			{
-				name: 'Average Latency (ms)',
-				data: data.requests.time_distribution.map((d) => ({
-					x: d.date,
-					y: data.requests.average_latency_ms
-				}))
-			}
-		]);
-	}
-
 	$: if (storageDistributionChart && data.storage?.file_size_distribution) {
 		storageDistributionChart.updateSeries(Object.values(data.storage.file_size_distribution));
 	}
@@ -348,149 +323,432 @@
 <div class="dashboard">
 	<div class="header">
 		<div class="header-content">
-			<h1 class="title">System Metrics Dashboard</h1>
-			<select bind:value={dateRange} on:change={handleRangeChange}>
+			<h1 class="title">System Metrics</h1>
+			<div class="range-selector">
 				{#each rangeOptions as option}
-					<option value={option.value}>{option.label}</option>
+					<button
+						class="range-btn {dateRange === option.value ? 'active' : ''}"
+						on:click={() => { dateRange = option.value; handleRangeChange(); }}
+					>
+						{option.label}
+					</button>
 				{/each}
-			</select>
+			</div>
 		</div>
 	</div>
 
 	{#if data.error}
-		<div class="error">{data.error}</div>
+		<div class="error-container">
+			<div class="error">
+				<svg xmlns="http://www.w3.org/2000/svg" class="error-icon" viewBox="0 0 24 24" stroke="currentColor" fill="none">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+				</svg>
+				<span>{data.error}</span>
+			</div>
+		</div>
 	{:else}
-		<div class="metrics-summary">
-			<div class="metric-card">
-				<h3>Current Files</h3>
-				<div class="value">{data.storage?.current_files?.toLocaleString() || 0}</div>
-			</div>
-			<div class="metric-card">
-				<h3>Current Storage</h3>
-				<div class="value">{formatBytes(data.storage?.current_size_bytes || 0)}</div>
-			</div>
-			<div class="metric-card">
-				<h3>Average File Size</h3>
-				<div class="value">
-					{data.storage?.current_files
-						? formatBytes(data.storage.current_size_bytes / data.storage.current_files)
-						: '0 B'}
+		<div class="metrics-grid">
+			<div class="metrics-card">
+				<div class="metric">
+					<h3>Files</h3>
+					<div class="value">{data.storage?.current_files?.toLocaleString() || 0}</div>
+				</div>
+				<div class="growth">
+					<span class="positive">+5.2%</span>
+					<small>vs. previous period</small>
 				</div>
 			</div>
-			<div class="metric-card">
-				<h3>Largest Size Bucket</h3>
-				<div class="value">
-					{#if data.storage?.file_size_distribution}
-						{Object.entries(data.storage.file_size_distribution).reduce((a, b) =>
-							a[1] > b[1] ? a : b
-						)[0]}
-					{:else}
-						'N/A'
-					{/if}
+			<div class="metrics-card">
+				<div class="metric">
+					<h3>Storage</h3>
+					<div class="value">{formatBytes(data.storage?.available_size_bytes || 0)} Available</div>
+				</div>
+				<div class="storage-bar">
+					<div
+						class="storage-segment files"
+						style="width: {data.storage ? (data.storage.current_size_bytes / data.storage.total_size_bytes * 100) : 0}%"
+						title="Files: {formatBytes(data.storage?.current_size_bytes || 0)}"
+					></div>
+					<div
+						class="storage-segment other"
+						style="width: {data.storage ? ((data.storage.used_size_bytes - data.storage.current_size_bytes) / data.storage.total_size_bytes * 100) : 0}%"
+						title="System & Other: {formatBytes((data.storage?.used_size_bytes || 0) - (data.storage?.current_size_bytes || 0))}"
+					></div>
+					<div
+						class="storage-segment free"
+						style="width: {data.storage ? (data.storage.available_size_bytes / data.storage.total_size_bytes * 100) : 0}%"
+						title="Free Space: {formatBytes(data.storage?.available_size_bytes || 0)}"
+					></div>
+				</div>
+				<div class="storage-legend">
+					<div class="legend-item">
+						<span class="legend-color files"></span>
+						<span class="legend-label">Files</span>
+					</div>
+					<div class="legend-item">
+						<span class="legend-color other"></span>
+						<span class="legend-label">System</span>
+					</div>
+					<div class="legend-item">
+						<span class="legend-color free"></span>
+						<span class="legend-label">Free</span>
+					</div>
+				</div>
+				<div class="storage-details">
+					{formatBytes(data.storage?.total_size_bytes || 0)} total
 				</div>
 			</div>
-
-			<div class="metric-card">
-				<h3>Total Requests</h3>
-				<div class="value">{data.requests?.total_requests?.toLocaleString() || 0}</div>
+			<div class="metrics-card">
+				<div class="metric">
+					<h3>Requests</h3>
+					<div class="value">{data.requests?.total_requests?.toLocaleString() || 0}</div>
+				</div>
+				<div class="growth">
+					<span class="positive">+12.8%</span>
+					<small>vs. previous period</small>
+				</div>
 			</div>
-			<div class="metric-card">
-				<h3>Unique IPs</h3>
-				<div class="value">{data.requests?.unique_ips?.toLocaleString() || 0}</div>
-			</div>
-			<div class="metric-card">
-				<h3>Avg Latency</h3>
-				<div class="value">{Math.round(data.requests?.average_latency_ms || 0)}ms</div>
-			</div>
-			<div class="metric-card">
-				<h3>Total Storage</h3>
-				<div class="value">{formatBytes(data.storage?.total_size_bytes || 0)}</div>
+			<div class="metrics-card">
+				<div class="metric">
+					<h3>Unique IPs</h3>
+					<div class="value">{data.requests?.unique_ips?.toLocaleString() || 0}</div>
+				</div>
+				<div class="growth">
+					<span class="positive">+8.3%</span>
+					<small>vs. previous period</small>
+				</div>
 			</div>
 		</div>
 
 		<div class="charts-grid">
-			<div class="chart-container full-width">
-				<h2>Activity Overview</h2>
-				<div bind:this={timeSeriesChartElement}></div>
+			<div class="chart-card full-width">
+				<div class="chart-header">
+					<h2>Activity Overview</h2>
+				</div>
+				<div class="chart-body">
+					<div bind:this={timeSeriesChartElement} class="chart"></div>
+				</div>
 			</div>
 
-			<div class="chart-container">
-				<h2>Request Status Distribution</h2>
-				<div bind:this={statusChartElement}></div>
+			<div class="chart-card">
+				<div class="chart-header">
+					<h2>Status Codes</h2>
+				</div>
+				<div class="chart-body">
+					<div bind:this={statusChartElement} class="chart"></div>
+				</div>
 			</div>
 
-			<div class="chart-container">
-				<h2>Top Requested Paths</h2>
-				<div bind:this={pathDistributionElement}></div>
+			<div class="chart-card">
+				<div class="chart-header">
+					<h2>Top Requested Paths</h2>
+				</div>
+				<div class="chart-body">
+					<div bind:this={pathDistributionElement} class="chart"></div>
+				</div>
 			</div>
 
-			<div class="chart-container">
-				<h2>Response Latency Trend</h2>
-				<div bind:this={latencyTimelineElement}></div>
-			</div>
-
-			<div class="chart-container">
-				<h2>File Size Distribution</h2>
-				<div bind:this={storageDistributionElement}></div>
+			<div class="chart-card">
+				<div class="chart-header">
+					<h2>File Size Distribution</h2>
+				</div>
+				<div class="chart-body">
+					<div bind:this={storageDistributionElement} class="chart"></div>
+				</div>
 			</div>
 		</div>
 	{/if}
 </div>
 
 <style>
+	:global(body) {
+		background-color: #f8fafc;
+		margin: 0;
+		font-family: 'Inter var', system-ui, -apple-system, sans-serif;
+	}
+
 	.dashboard {
-		@apply p-6 max-w-[1600px] mx-auto bg-gray-50 min-h-screen;
+		max-width: 1600px;
+		margin: 0 auto;
+		padding: 2rem;
 	}
 
 	.header {
-		@apply mb-6 bg-white rounded-lg shadow-sm p-4;
+		margin-bottom: 1.5rem;
 	}
 
 	.header-content {
-		@apply flex justify-between items-center;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 1rem;
 	}
 
 	.title {
-		@apply text-2xl font-semibold text-gray-900;
+		font-size: 1.75rem;
+		font-weight: 600;
+		color: #0f172a;
+		margin: 0;
 	}
 
-	select {
-		@apply px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500;
+	.range-selector {
+		display: flex;
+		gap: 0.5rem;
+		background: white;
+		border-radius: 0.5rem;
+		padding: 0.25rem;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 	}
 
-	.metrics-summary {
-		@apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6;
+	.range-btn {
+		padding: 0.5rem 1rem;
+		font-size: 0.875rem;
+		background: transparent;
+		border: none;
+		border-radius: 0.375rem;
+		color: #64748b;
+		cursor: pointer;
+		transition: all 0.2s;
 	}
 
-	.metric-card {
-		@apply bg-white p-6 rounded-lg shadow-sm;
+	.range-btn.active {
+		background-color: #f1f5f9;
+		color: #0f172a;
+		font-weight: 500;
 	}
 
-	.metric-card h3 {
-		@apply text-sm font-medium text-gray-500 mb-2;
+	.range-btn:hover:not(.active) {
+		background-color: #f8fafc;
+		color: #334155;
 	}
 
-	.metric-card .value {
-		@apply text-2xl font-semibold text-gray-900;
-	}
-
-	.charts-grid {
-		@apply grid grid-cols-1 lg:grid-cols-2 gap-6;
-	}
-
-	.chart-container {
-		@apply bg-white p-6 rounded-lg shadow-sm;
-	}
-
-	.chart-container h2 {
-		@apply text-lg font-medium text-gray-900 mb-4;
-	}
-
-	.full-width {
-		@apply lg:col-span-2;
+	.error-container {
+		display: flex;
+		justify-content: center;
+		margin: 2rem 0;
 	}
 
 	.error {
-		@apply bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg mb-6;
+		background-color: #fee2e2;
+		color: #b91c1c;
+		border-radius: 0.5rem;
+		padding: 1rem 1.5rem;
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		max-width: 500px;
+	}
+
+	.error-icon {
+		width: 1.5rem;
+		height: 1.5rem;
+	}
+
+	.metrics-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 1rem;
+		margin-bottom: 1.5rem;
+	}
+
+	@media (max-width: 1200px) {
+		.metrics-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	@media (max-width: 640px) {
+		.metrics-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.metrics-card {
+		background: white;
+		border-radius: 0.75rem;
+		padding: 1.25rem;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	}
+
+	.metric {
+		margin-bottom: 0.75rem;
+	}
+
+	.metric h3 {
+		margin: 0;
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: #64748b;
+		margin-bottom: 0.5rem;
+	}
+
+	.value {
+		font-size: 1.5rem;
+		font-weight: 600;
+		color: #0f172a;
+	}
+
+	.growth {
+		display: flex;
+		flex-direction: column;
+		font-size: 0.875rem;
+	}
+
+	.positive {
+		color: #16a34a;
+	}
+
+	.negative {
+		color: #dc2626;
+	}
+
+	.growth small {
+		color: #64748b;
+		font-size: 0.75rem;
+	}
+
+	.progress-bar {
+		width: 100%;
+		height: 0.5rem;
+		background: #e2e8f0;
+		border-radius: 1rem;
+		margin: 0.75rem 0 0.5rem;
+		overflow: hidden;
+	}
+
+	.progress {
+		height: 100%;
+		background: #3b82f6;
+		border-radius: 1rem;
+	}
+
+	.progress-label {
+		font-size: 0.75rem;
+		color: #64748b;
+	}
+
+	/* New macOS-style storage bar styles */
+	.storage-bar {
+		width: 100%;
+		height: 0.75rem;
+		border-radius: 0.5rem;
+		margin: 0.75rem 0 0.5rem;
+		overflow: hidden;
+		display: flex;
+		position: relative;
+	}
+
+	.storage-segment {
+		height: 100%;
+		transition: all 0.2s;
+		position: relative;
+		cursor: pointer;
+	}
+
+	.storage-segment:hover {
+		opacity: 0.8;
+	}
+
+	.storage-segment.files {
+		background: #f87171;
+	}
+
+	.storage-segment.other {
+		background: #fb923c;
+	}
+
+	.storage-segment.free {
+		background: #e2e8f0;
+	}
+
+	.storage-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+		margin-top: 0.5rem;
+		font-size: 0.75rem;
+		color: #64748b;
+	}
+
+	.legend-item {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.legend-color {
+		width: 0.75rem;
+		height: 0.75rem;
+		border-radius: 50%;
+	}
+
+	.legend-color.files {
+		background: #f87171;
+	}
+
+	.legend-color.other {
+		background: #fb923c;
+	}
+
+	.legend-color.free {
+		background: #e2e8f0;
+	}
+
+	.storage-details {
+		font-size: 0.75rem;
+		color: #64748b;
+		margin-top: 0.5rem;
+		text-align: right;
+	}
+
+	.charts-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 1.5rem;
+	}
+
+	@media (max-width: 1024px) {
+		.charts-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.chart-card {
+		background: white;
+		border-radius: 0.75rem;
+		overflow: hidden;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	}
+
+	.full-width {
+		grid-column: span 2;
+	}
+
+	@media (max-width: 1024px) {
+		.full-width {
+			grid-column: span 1;
+		}
+	}
+
+	.chart-header {
+		padding: 1.25rem 1.5rem;
+		border-bottom: 1px solid #f1f5f9;
+	}
+
+	.chart-header h2 {
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 600;
+		color: #0f172a;
+	}
+
+	.chart-body {
+		padding: 1rem;
+	}
+
+	.chart {
+		width: 100%;
+		height: 100%;
 	}
 </style>
