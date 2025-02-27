@@ -1,19 +1,29 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-      {
-          "name": "Launch API",
-          "type": "go",
-          "request": "launch",
-          "mode": "debug",
-          "program": "${workspaceFolder}/api/main.go"
-      },
-      {
-          "name": "Launch Current File",
-          "type": "go",
-          "request": "launch",
-          "mode": "debug",
-          "program": "${file}"
-      }
-  ]
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch API",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/api/main.go",
+            "env": {
+                "MAX_FILE_SIZE": "1GB",
+                "ENV": "development",
+                "DEBUG": "true"
+            }
+        },
+        {
+            "name": "Launch Current File",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${file}",
+            "env": {
+                "MAX_FILE_SIZE": "1GB",
+                "ENV": "development",
+                "DEBUG": "true"
+            }
+        }
+    ]
 }
