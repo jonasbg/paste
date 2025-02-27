@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -149,16 +150,86 @@ func HandleDownload(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
-		// Serve file and delete after download
+		// Get file info to determine size
+		fileInfo, err := os.Stat(filePath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not access file"})
+			return
+		}
+		fileSize := fileInfo.Size()
+
+		// Open the file manually
+		file, err := os.Open(filePath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not open file"})
+			return
+		}
+		defer file.Close()
+
+		// Set headers
 		c.Header("Content-Type", "application/octet-stream")
 		c.Header("Cache-Control", "no-cache")
-		c.File(filePath)
+		c.Header("Content-Length", fmt.Sprintf("%d", fileSize))
+		c.Header("Connection", "keep-alive")
 
+		// Use a custom writer that tracks completion
+		downloadCompleted := false
+		bytesWritten := int64(0)
+
+		// Setup context cancellation monitoring
+		ctx := c.Request.Context()
+		doneCh := make(chan struct{})
+		defer close(doneCh)
+
+		// Monitor for client disconnection
 		go func() {
-			if err := os.Remove(filePath); err != nil {
-				log.Printf("Failed to remove file: %v", err)
+			select {
+			case <-ctx.Done():
+				// Client disconnected before completion
+				log.Printf("Client disconnected during download of file %s", id)
+			case <-doneCh:
+				// Download completed normally
 			}
 		}()
+
+		// Stream the file to the client
+		buf := make([]byte, 4096)
+		for {
+			n, err := file.Read(buf)
+			if err != nil && err != io.EOF {
+				log.Printf("Error reading file: %v", err)
+				return
+			}
+			if n == 0 {
+				break
+			}
+
+			if _, err := c.Writer.Write(buf[:n]); err != nil {
+				log.Printf("Error writing to client: %v", err)
+				return
+			}
+
+			c.Writer.Flush()
+			bytesWritten += int64(n)
+		}
+
+		// Check if all bytes were sent
+		downloadCompleted = (bytesWritten == fileSize)
+
+		// Only delete the file if download was completed
+		if downloadCompleted {
+			log.Printf("Download completed successfully for file %s, deleting", id)
+			go func() {
+				// Small delay to ensure all buffers are flushed
+				time.Sleep(1 * time.Second)
+				if err := os.Remove(filePath); err != nil {
+					log.Printf("Failed to remove file: %v", err)
+				}
+			}()
+		} else {
+			log.Printf("Download incomplete for file %s (%d of %d bytes), file preserved",
+				id, bytesWritten, fileSize)
+		}
 	}
 }
 

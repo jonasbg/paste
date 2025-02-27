@@ -3,7 +3,7 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import { downloadAndDecryptFile, fetchMetadata } from '$lib/services/fileService';
+	import { downloadAndDecryptFile, fetchMetadata, streamDownloadAndDecrypt } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
@@ -89,8 +89,8 @@
 		}
 	}
 
-	async function initiateDownload() {
-		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
+	async function initiateStreamingDownload() {
+		if (!encryptionKey || isDownloading || !metadata || metadata.error) return;
 		isDownloading = true;
 		downloadError = null;
 
@@ -98,7 +98,8 @@
 			const fileId = $page.params.fileId;
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-			const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
+			// Use the new streaming function
+			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
 				fileId,
 				encryptionKey,
 				hmacToken,
@@ -108,30 +109,29 @@
 				}
 			);
 
-			if (!decrypted || decrypted.length === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-			}
+			// Create a Response from the stream
+			const response = new Response(stream);
 
-			const blob = new Blob([decrypted], {
-				type: fileMetadata.contentType || 'application/octet-stream'
-			});
+			// Get the blob when the stream is complete
+			const blob = await response.blob();
 
 			if (blob.size === 0) {
 				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
 			}
 
-			const url = window.URL.createObjectURL(blob);
+			// Create a download link
+			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
 			a.download = fileMetadata.filename;
 			document.body.appendChild(a);
 			a.click();
 			document.body.removeChild(a);
-			window.URL.revokeObjectURL(url);
+			URL.revokeObjectURL(url);
 
 			isDownloadComplete = true;
 
-			// Clear sensitive data and reset URL to domain root
+			// Clear sensitive data
 			encryptionKey = '';
 			manualKeyInput = '';
 
@@ -147,6 +147,10 @@
 		} finally {
 			isDownloading = false;
 		}
+	}
+
+	async function initiateDownload() {
+		return initiateStreamingDownload();
 	}
 
 	onMount(async () => {
