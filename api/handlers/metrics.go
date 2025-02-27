@@ -13,6 +13,28 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func HandleUploadHistory(db *db.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var start, end time.Time
+
+		if rangeStr := c.Query("range"); rangeStr != "" {
+			start, end = utils.ParseTimeRange(rangeStr)
+		} else {
+			start, _ = time.Parse(time.RFC3339, c.Query("start"))
+			end, _ = time.Parse(time.RFC3339, c.Query("end"))
+		}
+
+		// Query the transaction log for uploads within the date range
+		history, err := db.GetUploadHistory(start, end)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, history)
+	}
+}
+
 func HandleSecurityMetrics(db *db.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var start, end time.Time
@@ -141,16 +163,6 @@ func HandleStorage(db *db.DB, uploadDir string) gin.HandlerFunc {
 				summary.FileSizeDistribution["100MB+"]++
 			}
 		}
-
-		// Calculate usage percentage to match df output
-		usagePercentage := (summary.UsedSizeBytes / summary.TotalSizeBytes) * 100
-
-		// Log values for debugging
-		log.Printf("Filesystem stats: Total: %s, Used: %s, Available: %s, Usage: %.1f%%",
-			formatBytes(summary.TotalSizeBytes),
-			formatBytes(summary.UsedSizeBytes),
-			formatBytes(summary.AvailableSizeBytes),
-			usagePercentage)
 
 		// Add consistency check for calculated file size vs filesystem usage
 		if summary.CurrentSizeBytes > summary.UsedSizeBytes {

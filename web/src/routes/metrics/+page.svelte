@@ -8,7 +8,8 @@
 		ActivitySummary,
 		SecurityMetrics,
 		StorageSummary,
-		RequestMetrics
+		RequestMetrics,
+		UploadHistoryItem
 	} from '$lib/types';
 
 	export let data: {
@@ -16,6 +17,7 @@
 		metrics: SecurityMetrics;
 		storage: StorageSummary;
 		requests: RequestMetrics;
+		uploadHistory: UploadHistoryItem[];
 		range: string;
 		error?: string;
 	};
@@ -26,12 +28,14 @@
 	let pathDistributionElement: HTMLElement;
 	let latencyTimelineElement: HTMLElement;
 	let storageDistributionElement: HTMLElement;
+	let uploadHistoryChartElement: HTMLElement;
 
 	let timeSeriesChart: ApexCharts;
 	let statusChart: ApexCharts;
 	let pathDistributionChart: ApexCharts;
 	let latencyTimelineChart: ApexCharts;
 	let storageDistributionChart: ApexCharts;
+	let uploadHistoryChart: ApexCharts;
 
 	const rangeOptions = [
 		{ value: '24h', label: 'Last 24 Hours' },
@@ -48,6 +52,49 @@
 		return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 	}
 
+	// Function to fill in missing dates in the upload history data
+	function fillMissingDates(data: Array<{ date: string, file_count: number, total_size: number }>) {
+		if (data.length === 0) return [];
+
+		// Sort the data by date
+		const sortedData = [...data].sort((a, b) => a.date.localeCompare(b.date));
+
+		// Get the start and end dates
+		const startDate = new Date(sortedData[0].date);
+		const endDate = new Date(sortedData[sortedData.length - 1].date);
+
+		// Create a map of existing dates for quick lookup
+		const dateMap = new Map();
+		sortedData.forEach(item => {
+			dateMap.set(item.date, item);
+		});
+
+		// Create a new array with all dates in the range
+		const result = [];
+		const currentDate = new Date(startDate);
+
+		while (currentDate <= endDate) {
+			const dateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+
+			if (dateMap.has(dateStr)) {
+				// Use existing data
+				result.push(dateMap.get(dateStr));
+			} else {
+				// Add zero values for missing dates
+				result.push({
+					date: dateStr,
+					file_count: 0,
+					total_size: 0
+				});
+			}
+
+			// Move to next day
+			currentDate.setDate(currentDate.getDate() + 1);
+		}
+
+		return result;
+	}
+
 	async function handleRangeChange() {
 		const searchParams = new URLSearchParams($page.url.searchParams);
 		searchParams.set('range', dateRange);
@@ -55,15 +102,24 @@
 	}
 
 	function getStatusCodeColor(code: string) {
+		const primaryGreen = getComputedStyle(document.documentElement)
+			.getPropertyValue('--primary-green').trim();
+
 		const num = parseInt(code);
-		if (num < 300) return '#4ade80'; // Green
-		if (num < 400) return '#facc15'; // Yellow
-		if (num < 500) return '#f87171'; // Red
-		return '#a78bfa'; // Purple
+		if (num < 300) return primaryGreen; // Green
+		if (num < 400) return '#DCED31'; // Yellow
+		if (num < 500) return '#E03616'; // Red
+		return '#E03616'; // Purple
 	}
 
 	onMount(() => {
 		if (data.activity && data.metrics && data.requests) {
+			const primaryGreen = getComputedStyle(document.documentElement)
+			.getPropertyValue('--primary-green').trim();
+
+			// Process upload history to fill in missing dates with zeros
+			const filledUploadHistory = fillMissingDates(data.uploadHistory);
+
 			// Main Time Series Chart (Unified view)
 			const timeSeriesOptions = {
 				chart: {
@@ -74,6 +130,13 @@
 						show: false
 					},
 					background: 'transparent'
+				},
+				dataLabels: {
+					enabled: false
+				},
+				zoom: {
+					enabled: false,
+					allowMouseWheelZoom: false,
 				},
 				stroke: {
 					curve: 'smooth',
@@ -88,7 +151,7 @@
 						stops: [0, 90, 100]
 					}
 				},
-				colors: ['#4ade80', '#60a5fa', '#a78bfa'],
+				colors: [primaryGreen, primaryGreen, primaryGreen],
 				series: [
 					{
 						name: 'Uploads',
@@ -139,7 +202,7 @@
 				chart: {
 					type: 'donut',
 					height: 280,
-					background: '#f8fafc'
+					background: 'transparent'
 				},
 				colors: Object.keys(data.requests.status_distribution).map((code) =>
 					getStatusCodeColor(code)
@@ -182,7 +245,7 @@
 					toolbar: {
 						show: false
 					},
-					background: '#f8fafc'
+					background: 'transparent'
 				},
 				plotOptions: {
 					bar: {
@@ -191,7 +254,7 @@
 						barHeight: '70%'
 					}
 				},
-				colors: ['#60a5fa'],
+				colors: [primaryGreen, primaryGreen, primaryGreen],
 				series: [
 					{
 						name: 'Requests',
@@ -217,11 +280,11 @@
 				chart: {
 					type: 'pie',
 					height: 280,
-					background: '#f8fafc'
+					background: 'transparent'
 				},
 				series: Object.values(data.storage.file_size_distribution),
 				labels: Object.keys(data.storage.file_size_distribution),
-				colors: ['#93c5fd', '#60a5fa', '#3b82f6', '#2563eb'],
+				colors: [primaryGreen, '#68CA99', '#86D5AD'],
 				legend: {
 					show: false
 				},
@@ -235,28 +298,148 @@
 				}
 			};
 
+			// Upload History Chart (New) - Changed to area chart
+			const uploadHistoryOptions = {
+				chart: {
+					type: 'area',
+					height: 280,
+					toolbar: {
+						show: false
+					},
+					background: 'transparent'
+				},
+				stroke: {
+					curve: 'smooth',
+					width: 2
+				},
+				fill: {
+					type: 'gradient',
+					gradient: {
+						shadeIntensity: 1,
+						opacityFrom: 0.7,
+						opacityTo: 0.2,
+						stops: [0, 90, 100]
+					}
+				},
+				colors: [primaryGreen, '#68CA99'],
+				series: [
+					{
+						name: 'File Count',
+						data: filledUploadHistory.map(item => item.file_count)
+					},
+					{
+						name: 'Total Size (MB)',
+						data: filledUploadHistory.map(item => Math.round(item.total_size / (1024 * 1024) * 100) / 100)
+					}
+				],
+				dataLabels: {
+					enabled: false
+				},
+				xaxis: {
+					categories: filledUploadHistory.map(item => item.date),
+					type: 'category',
+					tickAmount: Math.min(data.uploadHistory.length, 10), // Show approximately 10 labels or fewer
+					labels: {
+						formatter: (val: string) => {
+							// Parse the date string to get a proper date object
+							try {
+								const date = new Date(val);
+								return format(date, 'MMM d');
+							} catch (e) {
+								return val;
+							}
+						},
+						rotate: 0,
+						hideOverlappingLabels: true
+					}
+				},
+				yaxis: [
+					{
+						title: {
+							text: 'File Count'
+						},
+						min: 0,
+						forceNiceScale: true,
+						labels: {
+							formatter: (val: number) => Math.round(val)
+						}
+					},
+					{
+						opposite: true,
+						title: {
+							text: 'Size (MB)'
+						},
+						min: 0,
+						forceNiceScale: true,
+						labels: {
+							formatter: (val: number) => `${Math.round(val)}`
+						}
+					}
+				],
+				tooltip: {
+					shared: true,
+					intersect: false,
+					theme: 'light',
+					x: {
+						formatter: function(val) {
+							try {
+								const date = new Date(val);
+								return format(date, 'MMMM d, yyyy');
+							} catch {
+								return val;
+							}
+						}
+					},
+					y: [
+						{
+							formatter: function (val: number) {
+								return val + " files";
+							}
+						},
+						{
+							formatter: function (val: number) {
+								return formatBytes(val * 1024 * 1024);
+							}
+						}
+					]
+				},
+				legend: {
+					position: 'top',
+					horizontalAlign: 'right'
+				},
+				grid: {
+					padding: {
+						left: 10,
+						right: 10
+					}
+				}
+			};
+
 			timeSeriesChart = new ApexCharts(timeSeriesChartElement, timeSeriesOptions);
 			statusChart = new ApexCharts(statusChartElement, statusDistributionOptions);
 			pathDistributionChart = new ApexCharts(pathDistributionElement, pathDistributionOptions);
-
 			storageDistributionChart = new ApexCharts(
 				storageDistributionElement,
 				storageDistributionOptions
+			);
+			uploadHistoryChart = new ApexCharts(
+				uploadHistoryChartElement,
+				uploadHistoryOptions
 			);
 
 			timeSeriesChart.render();
 			statusChart.render();
 			pathDistributionChart.render();
-
 			storageDistributionChart.render();
+			uploadHistoryChart.render();
 		}
 
 		return () => {
 			timeSeriesChart?.destroy();
 			statusChart?.destroy();
 			pathDistributionChart?.destroy();
-
 			storageDistributionChart?.destroy();
+			uploadHistoryChart?.destroy();
 		};
 	});
 
@@ -318,6 +501,27 @@
 	$: if (storageDistributionChart && data.storage?.file_size_distribution) {
 		storageDistributionChart.updateSeries(Object.values(data.storage.file_size_distribution));
 	}
+
+	$: if (uploadHistoryChart && data.uploadHistory) {
+		const filledData = fillMissingDates(data.uploadHistory);
+
+		uploadHistoryChart.updateSeries([
+			{
+				name: 'File Count',
+				data: filledData.map(item => item.file_count)
+			},
+			{
+				name: 'Total Size (MB)',
+				data: filledData.map(item => Math.round(item.total_size / (1024 * 1024) * 100) / 100)
+			}
+		]);
+
+		uploadHistoryChart.updateOptions({
+			xaxis: {
+				categories: filledData.map(item => item.date)
+			}
+		});
+	}
 </script>
 
 <div class="dashboard">
@@ -361,7 +565,7 @@
 			<div class="metrics-card">
 				<div class="metric">
 					<h3>Storage</h3>
-					<div class="value">{formatBytes(data.storage?.available_size_bytes || 0)} Available</div>
+					<!-- <div class="value">{formatBytes(data.storage?.available_size_bytes || 0)} Available</div> -->
 				</div>
 				<div class="storage-bar">
 					<div
@@ -372,8 +576,11 @@
 					<div
 						class="storage-segment other"
 						style="width: {data.storage ? ((data.storage.used_size_bytes - data.storage.current_size_bytes) / data.storage.total_size_bytes * 100) : 0}%"
-						title="System & Other: {formatBytes((data.storage?.used_size_bytes || 0) - (data.storage?.current_size_bytes || 0))}"
-					></div>
+						title="System & Other: {formatBytes((data.storage?.used_size_bytes || 0) - (data.storage?.current_size_bytes || 0))}
+App storage: {formatBytes(data.storage?.current_size_bytes || 0)}
+Available space: {formatBytes(data.storage?.available_size_bytes || 0)}
+Total space: {formatBytes(data.storage?.total_size_bytes || 0)}
+Usage: {Math.round((data.storage?.used_size_bytes || 0) / (data.storage?.total_size_bytes || 1) * 100)}% of total capacity"					></div>
 					<div
 						class="storage-segment free"
 						style="width: {data.storage ? (data.storage.available_size_bytes / data.storage.total_size_bytes * 100) : 0}%"
@@ -418,6 +625,16 @@
 					<small>vs. previous period</small>
 				</div>
 			</div>
+			<div class="metrics-card">
+				<div class="metric">
+					<h3>Total disk used</h3>
+					<div class="value">{formatBytes(data.storage?.current_size_bytes)} </div>
+				</div>
+				<div class="growth">
+					<span class="positive">+8.3%</span>
+					<small>vs. previous period</small>
+				</div>
+			</div>
 		</div>
 
 		<div class="charts-grid">
@@ -427,6 +644,16 @@
 				</div>
 				<div class="chart-body">
 					<div bind:this={timeSeriesChartElement} class="chart"></div>
+				</div>
+			</div>
+
+			<!-- New Upload History Chart -->
+			<div class="chart-card full-width">
+				<div class="chart-header">
+					<h2>Daily Upload Trends</h2>
+				</div>
+				<div class="chart-body">
+					<div bind:this={uploadHistoryChartElement} class="chart"></div>
 				</div>
 			</div>
 
@@ -461,6 +688,11 @@
 </div>
 
 <style>
+
+	.growth {
+		display: none !important;
+	}
+
 	:global(body) {
 		background-color: #f8fafc;
 		margin: 0;
@@ -651,11 +883,11 @@
 	}
 
 	.storage-segment.files {
-		background: #f87171;
+		background: #40B87B;
 	}
 
 	.storage-segment.other {
-		background: #fb923c;
+		background: #F38D68;
 	}
 
 	.storage-segment.free {
@@ -684,11 +916,11 @@
 	}
 
 	.legend-color.files {
-		background: #f87171;
+		background: #40B87B;
 	}
 
 	.legend-color.other {
-		background: #fb923c;
+		background: #F38D68;
 	}
 
 	.legend-color.free {

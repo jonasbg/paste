@@ -7,6 +7,12 @@ type ActivitySummary struct {
 	UniqueVisitors int64  `json:"unique_visitors"`
 }
 
+type UploadHistoryItem struct {
+	Date      string  `json:"date"`
+	FileCount int     `json:"file_count"`
+	TotalSize float64 `json:"total_size"` // in bytes
+}
+
 type StorageSummary struct {
 	TotalSizeBytes       float64        `json:"total_size_bytes"`
 	AvailableSizeBytes   float64        `json:"available_size_bytes"`

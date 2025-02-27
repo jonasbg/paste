@@ -66,6 +66,7 @@ func main() {
 		api.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))
 		api.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
 		api.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
+		api.GET("/metrics/upload-history", handlers.HandleUploadHistory(database))
 	}
 
 	spaDirectory := utils.GetEnv("WEB_DIR", "../web")
