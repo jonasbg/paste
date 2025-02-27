@@ -552,7 +552,7 @@
 <div class="dashboard">
 	<div class="header">
 		<div class="header-content">
-			<h1 class="title">System Metrics</h1>
+			<h1 class="title">Dashboard</h1>
 			<div class="range-selector">
 				{#each rangeOptions as option}
 					<button
