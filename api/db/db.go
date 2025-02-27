@@ -142,6 +142,46 @@ func (d *DB) GetActivitySummary(start, end time.Time) ([]types.ActivitySummary, 
 	return summary, nil
 }
 
+func (d *DB) GetUploadHistory(start, end time.Time) ([]types.UploadHistoryItem, error) {
+	var results []types.UploadHistoryItem
+
+	// SQL to aggregate uploads by day
+	// Use different date formatting approach to ensure compatibility
+	rows, err := d.db.Raw(`
+		SELECT
+			STRFTIME('%Y-%m-%d', timestamp) AS date_str,
+			COUNT(*) AS file_count,
+			COALESCE(SUM(size), 0) AS total_size
+		FROM
+			transaction_logs
+		WHERE
+			action = ?
+			AND timestamp BETWEEN ? AND ?
+			AND success = ?
+		GROUP BY
+			date_str
+		ORDER BY
+			date_str ASC
+	`, "upload", start, end, true).Rows()
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item types.UploadHistoryItem
+		var dateStr string
+		if err := rows.Scan(&dateStr, &item.FileCount, &item.TotalSize); err != nil {
+			return nil, err
+		}
+		item.Date = dateStr
+		results = append(results, item)
+	}
+
+	return results, nil
+}
+
 func (d *DB) GetStorageSummary() (types.StorageSummary, error) {
 	var summary types.StorageSummary
 

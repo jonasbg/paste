@@ -5,3 +5,20 @@ export interface StorageSummary {
 	current_size_bytes: number;
 	file_size_distribution: Record<string, number>;
 }
+
+export interface UploadHistoryItem {
+  date: string;
+  file_count: number;
+  total_size: number;
+}
+
+// Update your page data interface to include uploadHistory
+export interface PageData {
+  activity: ActivitySummary[];
+  metrics: SecurityMetrics;
+  storage: StorageSummary;
+  requests: RequestMetrics;
+  uploadHistory: UploadHistoryItem[];
+  range: string;
+  error?: string;
+}
