@@ -205,9 +205,9 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 
 		// Only delete file if download was completed successfully
 		if isComplete {
-			// if err := os.Remove(filePath); err != nil {
-			// 	log.Printf("Failed to remove file: %v", err)
-			// }
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("Failed to remove file: %v", err)
+			}
 
 			// Log successful transaction
 			tx := &types.TransactionLog{
