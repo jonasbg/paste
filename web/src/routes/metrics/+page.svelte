@@ -595,7 +595,7 @@
 				<div class="storage-bar">
 					<div
 						class="storage-segment files"
-						style="width: {data.storage ? (data.storage.current_size_bytes / data.storage.system_total_size_bytes * 100) : 0}%"
+						style="width: {data.storage ? Math.max(1, (data.storage.current_size_bytes / data.storage.system_total_size_bytes * 100)) : 1}%"
 						title="Files: {formatBytes(data.storage?.current_size_bytes || 0)}"
 					></div>
 					<div
