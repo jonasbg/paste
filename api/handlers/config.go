@@ -19,12 +19,14 @@ type Config struct {
 	MaxFileSizeBytes int    `json:"max_file_size_bytes"`
 	IDSize           int    `json:"id_size"`
 	KeySize          int    `json:"key_size"`
+	ChunkSize        int    `json:"chunk_size"`
 }
 
 func InitConfig() error {
 	maxFileSize := getEnv("MAX_FILE_SIZE", "100MB")
 	idSizeStr := getEnv("ID_SIZE", "128")
 	keySizeStr := getEnv("KEY_SIZE", "256")
+	chunkSizeStr := getEnv("CHUNK_SIZE", "4")
 
 	// Validate maxFileSize
 	if !isValidFileSize(maxFileSize) {
@@ -48,11 +50,18 @@ func InitConfig() error {
 		return fmt.Errorf("invalid KEY_SIZE. Must be one of: 128, 192, 256 (optionally followed by 'bit')")
 	}
 
+	// Convert Chunk Size
+	chunkSize, err := strconv.Atoi(chunkSizeStr)
+	if err != nil {
+		return fmt.Errorf("invalid CHUNK_SIZE. Must be an integer")
+	}
+
 	GlobalConfig = Config{
 		MaxFileSize:      maxFileSize,
 		MaxFileSizeBytes: int(maxFileSizeBytes),
 		IDSize:           idSize,
 		KeySize:          keySize,
+		ChunkSize:        chunkSize,
 	}
 
 	return nil

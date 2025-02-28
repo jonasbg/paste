@@ -4,9 +4,11 @@ interface Config {
     max_file_size: string;
     id_size: string;
     key_size: string;
+    chunk_size: number;
 }
 
 interface ConfigStore {
+    chunkSize: number;
     loading: boolean;
     error: string | null;
     data: Config | null;
@@ -16,7 +18,8 @@ function createConfigStore() {
     const { subscribe, set, update } = writable<ConfigStore>({
         loading: false,
         error: null,
-        data: null
+        data: null,
+        chunkSize: 4,
     });
 
     async function fetchConfig() {
@@ -33,13 +36,15 @@ function createConfigStore() {
             update(state => ({
                 loading: false,
                 error: null,
-                data: config
+                data: config,
+                chunkSize: config.chunk_size // Update chunkSize from the fetched config
             }));
         } catch (error) {
             update(state => ({
                 loading: false,
                 error: error instanceof Error ? error.message : 'Failed to fetch config',
-                data: null
+                data: null,
+                chunkSize: 4,
             }));
         }
     }

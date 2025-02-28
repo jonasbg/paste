@@ -1,5 +1,7 @@
+import { configStore } from '$lib/stores/config';
 import { getWasmInstance } from '$lib/utils/wasm-loader';
 import { ProgressCallback } from './fileProcessor';
+import { get } from 'svelte/store';
 
 export async function downloadAndDecryptFile(
 	fileId: string,
@@ -8,6 +10,7 @@ export async function downloadAndDecryptFile(
 	onProgress: ProgressCallback
 ): Promise<{ decrypted: Uint8Array; metadata: any }> {
 	const wasmInstance = getWasmInstance();
+	const config = get(configStore);
 	if (!wasmInstance) throw new Error('WASM not initialized');
 
 	await onProgress(0, 'Laster ned...');
@@ -90,7 +93,7 @@ export async function downloadAndDecryptFile(
 
 		if (decryptionInitialized && bufferedData.length > 0) {
 			// Process buffered data in chunks
-			const chunkSize = 1024 * 1024 + 16; // 1MB + GCM tag
+			const chunkSize = config.chunkSize *1024 * 1024 + 16; // 1MB + GCM tag
 			while (bufferedData.length >= chunkSize) {
 				const chunk = bufferedData.slice(0, chunkSize);
 				const isLastChunk = false; // We don't know yet
@@ -191,6 +194,7 @@ export async function streamDownloadAndDecrypt(
   onProgress: ProgressCallback
 ): Promise<{ stream: ReadableStream<Uint8Array>; metadata: any }> {
   const wasmInstance = getWasmInstance();
+	const config = get(configStore);
   if (!wasmInstance) throw new Error('WASM not initialized');
 
   await onProgress(0, 'Starting download...');
@@ -307,7 +311,7 @@ export async function streamDownloadAndDecrypt(
 
       if (decryptionInitialized && bufferedData.length > 0) {
         // Process buffered data in chunks
-        const chunkSize = 1024 * 1024 + 16; // 1MB + GCM tag
+        const chunkSize =  config.chunkSize*1024 * 1024 + 16; // 1MB + GCM tag
         while (bufferedData.length >= chunkSize) {
           const dataChunk = bufferedData.slice(0, chunkSize);
           const isLastChunk = false; // We don't know yet

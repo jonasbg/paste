@@ -10,7 +10,8 @@
             "env": {
                 "MAX_FILE_SIZE": "10GB",
                 "ENV": "development",
-                "DEBUG": "true"
+                "DEBUG": "true",
+                "CHUNK_SIZE": "10"
             }
         },
         {
@@ -22,7 +23,8 @@
             "env": {
                 "MAX_FILE_SIZE": "10GB",
                 "ENV": "development",
-                "DEBUG": "true"
+                "DEBUG": "true",
+                "CHUNK_SIZE": "1"
             }
         }
     ]

@@ -102,6 +102,7 @@ The application can be configured using the following environment variables:
 | `MAX_FILE_SIZE`  | Maximum allowed size for uploaded files.       | `100MB`          | A number followed by `KB`, `MB`, `GB`, or `TB` (case-insensitive).        | `2MB`, `500KB`, `10GB` |
 | `ID_SIZE`        | Size of the generated IDs.                       | `64` (bit)       | One of: `64`, `128`, `192`, `256` (case-insensitive).              | `128`           |
 | `KEY_SIZE`       | Size of the encryption keys.                     | `128`       | One of: `128`, `192`, `256` (case-insensitive).              | `256`           |
+| `CHUNK_SIZE` | Size of chunks in transmission. Higher is faster transmission, but you can hit max WAF limits. Don't change if you don't know what this does! | `4` | `1`,`4` this is in MB |
 
 ## 🛡️ Security Implementation Details
 

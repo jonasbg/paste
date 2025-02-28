@@ -405,7 +405,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 
 			// Chunk Size Validation (Critical)
 			// Maximum chunk size should be 1MB (data) + 16 bytes (GCM tag)
-			if len(chunk) > (1024*1024 + 16) {
+			if len(chunk) > (GlobalConfig.ChunkSize*1024*1024 + 16) {
 				cleanup(ws, tmpPath, "Chunk size exceeds maximum")
 				return
 			}
