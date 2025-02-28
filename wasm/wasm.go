@@ -188,6 +188,16 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
+	// Clean up any existing cipher before creating a new one
+	if activeCipher != nil {
+		// Clear the IV for security
+		for i := range activeCipher.iv {
+			activeCipher.iv[i] = 0
+		}
+		// Set to nil to help Go's GC
+		activeCipher = nil
+	}
+
 	keyBase64 := args[0].String()
 	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
@@ -225,6 +235,16 @@ func createDecryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
+	// Clean up any existing cipher before creating a new one
+	if activeCipher != nil {
+		// Clear the IV for security
+		for i := range activeCipher.iv {
+			activeCipher.iv[i] = 0
+		}
+		// Set to nil to help Go's GC
+		activeCipher = nil
+	}
+
 	keyBase64 := args[0].String()
 	iv := make([]byte, args[1].Length())
 	js.CopyBytesToGo(iv, args[1])
@@ -258,13 +278,13 @@ func encryptChunk(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
+	if activeCipher == nil {
+		return handleError(errors.New("no active encryption stream"))
+	}
+
 	data := make([]byte, args[0].Length())
 	js.CopyBytesToGo(data, args[0])
 	isLastChunk := args[1].Bool()
-
-	if isLastChunk {
-		defer func() { activeCipher.chunk = 0 }()
-	}
 
 	nonce := make([]byte, 12)
 	copy(nonce, activeCipher.iv)
@@ -275,6 +295,17 @@ func encryptChunk(_ js.Value, args []js.Value) interface{} {
 
 	uint8Array := js.Global().Get("Uint8Array").New(len(encrypted))
 	js.CopyBytesToJS(uint8Array, encrypted)
+
+	// If this is the last chunk, fully clean up the cipher
+	if isLastChunk {
+		// Clear the IV for security
+		for i := range activeCipher.iv {
+			activeCipher.iv[i] = 0
+		}
+		// Set to nil to help Go's GC
+		activeCipher = nil
+	}
+
 	return uint8Array
 }
 
@@ -283,13 +314,13 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
+	if activeCipher == nil {
+		return handleError(errors.New("no active decryption stream"))
+	}
+
 	data := make([]byte, args[0].Length())
 	js.CopyBytesToGo(data, args[0])
 	isLastChunk := args[1].Bool()
-
-	if isLastChunk {
-		defer func() { activeCipher.chunk = 0 }()
-	}
 
 	nonce := make([]byte, 12)
 	copy(nonce, activeCipher.iv)
@@ -305,6 +336,17 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 
 	uint8Array := js.Global().Get("Uint8Array").New(len(decrypted))
 	js.CopyBytesToJS(uint8Array, decrypted)
+
+	// If this is the last chunk, fully clean up the cipher
+	if isLastChunk {
+		// Clear the IV for security
+		for i := range activeCipher.iv {
+			activeCipher.iv[i] = 0
+		}
+		// Set to nil to help Go's GC
+		activeCipher = nil
+	}
+
 	return uint8Array
 }
 
