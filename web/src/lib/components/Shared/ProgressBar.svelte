@@ -69,34 +69,49 @@
 
 <style>
 	.progress-container {
-		background-color: var(--light-gray);
-		border-radius: var(--border-radius);
-		padding: 2rem;
+			background-color: var(--light-gray);
+			border-radius: var(--border-radius);
+			padding: 2rem;
 	}
 
 	.progress-title {
-		font-size: 1.25rem;
-		margin-bottom: 1rem;
-		font-weight: 500;
+			font-size: 1.25rem;
+			margin-bottom: 1rem;
+			font-weight: 500;
 	}
 
 	.progress-bar {
-		width: 100%;
-		height: 8px;
-		background-color: #e0e0e0;
-		border-radius: 4px;
-		overflow: hidden;
+			width: 100%;
+			height: 8px;
+			background-color: #e0e0e0;
+			border-radius: 4px;
+			overflow: hidden;
 	}
 
 	.progress {
-		height: 100%;
-		background-color: var(--primary-green);
-		transition: width 0.15s linear; /* Shorter, more linear transition */
+			height: 100%;
+			background-color: var(--primary-green);
+			transition: width 0.3s linear(0.4, 0, 0.2, 1);
+			background-image: linear-gradient(
+					90deg,
+					rgba(255, 255, 255, 0) 0%,
+					rgba(255, 255, 255, 0.15) 50%,
+					rgba(255, 255, 255, 0) 100%
+			);
+			background-size: 200% 100%;
+			background-position: 0% 0%;
+			animation: shimmer 2s infinite;
+	}
+
+	@keyframes shimmer {
+			to {
+					background-position: 200% 0%;
+			}
 	}
 
 	.progress-text {
-		margin-top: 0.5rem;
-		font-size: 0.875rem;
-		color: #666;
+			margin-top: 0.5rem;
+			font-size: 0.875rem;
+			color: #666;
 	}
 </style>
