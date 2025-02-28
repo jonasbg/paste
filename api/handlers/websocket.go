@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +23,229 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true // Adjust based on your security needs
 	},
+}
+
+func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			log.Printf("WebSocket upgrade failed: %v", err)
+			return
+		}
+		defer ws.Close()
+
+		// Get initial request with fileId and token
+		_, msg, err := ws.ReadMessage()
+		if err != nil {
+			sendError(ws, "Failed to read initial message")
+			return
+		}
+
+		var request struct {
+			Type   string `json:"type"`
+			FileId string `json:"fileId"`
+			Token  string `json:"token"`
+		}
+		if err := json.Unmarshal(msg, &request); err != nil {
+			sendError(ws, "Invalid message format")
+			return
+		}
+
+		if request.Type != "download_init" {
+			sendError(ws, "Invalid message type: expected 'download_init'")
+			return
+		}
+
+		// Validate fileId format
+		if len(request.FileId) != 16 && len(request.FileId) != 24 && len(request.FileId) != 32 {
+			sendError(ws, "Invalid file ID format")
+			return
+		}
+
+		// Validate token
+		if !validateToken(request.Token) {
+			sendError(ws, "Invalid token")
+			return
+		}
+
+		// Locate and open the file
+		filePath := filepath.Join(uploadDir, request.FileId+"."+request.Token)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			sendError(ws, "File not found")
+			return
+		}
+
+		file, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("Error: Failed to open file: %v", err)
+			sendError(ws, "Server error: Cannot open file")
+			return
+		}
+		defer file.Close()
+
+		// Get file info for size
+		fileInfo, err := file.Stat()
+		if err != nil {
+			log.Printf("Error: Failed to get file info: %v", err)
+			sendError(ws, "Server error: Cannot get file info")
+			return
+		}
+
+		// Send file size info
+		if err := ws.WriteJSON(gin.H{
+			"type": "file_info",
+			"size": fileInfo.Size(),
+		}); err != nil {
+			log.Printf("Failed to send file info: %v", err)
+			return
+		}
+
+		// Read client ready confirmation
+		_, readyMsg, err := ws.ReadMessage()
+		if err != nil {
+			log.Printf("Failed to read ready message: %v", err)
+			return
+		}
+
+		var readyResp struct {
+			Type  string `json:"type"`
+			Ready bool   `json:"ready"`
+		}
+		if err := json.Unmarshal(readyMsg, &readyResp); err != nil || readyResp.Type != "ready" || !readyResp.Ready {
+			log.Printf("Client not ready: %v", err)
+			return
+		}
+
+		// Stream file in chunks
+		buffer := make([]byte, bufferSize)
+		var totalSent int64 = 0
+		var isComplete = false
+
+		for {
+			n, err := file.Read(buffer)
+
+			// Send chunk if we read any data
+			if n > 0 {
+				if err := ws.WriteMessage(websocket.BinaryMessage, buffer[:n]); err != nil {
+					log.Printf("Error sending chunk: %v", err)
+					return
+				}
+
+				totalSent += int64(n)
+
+				// Wait for acknowledgment
+				_, ackMsg, err := ws.ReadMessage()
+				if err != nil {
+					log.Printf("Error receiving ack: %v", err)
+					return
+				}
+
+				var ack struct {
+					Type string `json:"type"`
+					Size int    `json:"size"`
+				}
+				if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" || ack.Size != n {
+					log.Printf("Invalid ack: %v", err)
+					return
+				}
+			}
+
+			// Check for end of file
+			if err == io.EOF {
+				// Send completion message
+				if err := ws.WriteJSON(gin.H{
+					"type": "complete",
+					"size": totalSent,
+				}); err != nil {
+					log.Printf("Failed to send complete message: %v", err)
+					return
+				}
+
+				// Wait for final acknowledgment
+				_, completeMsg, err := ws.ReadMessage()
+				if err != nil {
+					log.Printf("Error receiving final ack: %v", err)
+					return
+				}
+
+				var complete struct {
+					Type     string `json:"type"`
+					Complete bool   `json:"complete"`
+				}
+				if err := json.Unmarshal(completeMsg, &complete); err != nil {
+					log.Printf("Error unmarshaling complete ack: %v", err)
+					return
+				}
+
+				if complete.Type != "complete_ack" || !complete.Complete {
+					log.Printf("Invalid complete ack: type=%s, complete=%v", complete.Type, complete.Complete)
+					return
+				}
+
+				isComplete = true
+				break
+			}
+
+			// Check for other errors during read
+			if err != nil {
+				log.Printf("Error reading file: %v", err)
+				sendError(ws, "Error reading file")
+				return
+			}
+
+			// Break if no data was read (unexpected case)
+			if n == 0 {
+				break
+			}
+		}
+
+		// Calculate duration of download
+		duration := time.Since(start)
+
+		// Only delete file if download was completed successfully
+		if isComplete {
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("Failed to remove file: %v", err)
+			}
+
+			// Log successful transaction
+			tx := &types.TransactionLog{
+				Timestamp:  start,
+				Action:     "download",
+				Method:     "websocket",
+				IP:         utils.GetRealIP(c),
+				UserAgent:  c.Request.UserAgent(),
+				FileID:     request.FileId,
+				Duration:   duration.Milliseconds(),
+				Size:       totalSent,
+				Success:    true,
+				StatusCode: 200,
+			}
+
+			if err = db.LogTransaction(tx); err != nil {
+				log.Printf("Failed to create transaction log: %v", err)
+			}
+		} else {
+			// Log incomplete transaction
+			tx := &types.TransactionLog{
+				Timestamp:  start,
+				Action:     "download_incomplete",
+				Method:     "websocket",
+				IP:         utils.GetRealIP(c),
+				UserAgent:  c.Request.UserAgent(),
+				FileID:     request.FileId,
+				Duration:   duration.Milliseconds(),
+				Size:       totalSent,
+				Success:    false,
+				StatusCode: 500,
+			}
+
+			if err = db.LogTransaction(tx); err != nil {
+				log.Printf("Failed to create transaction log: %v", err)
+			}
+		}
+	}
 }
 
 func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {

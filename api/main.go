@@ -59,8 +59,10 @@ func main() {
 		api.GET("/config", handlers.GetConfig())
 		api.GET("/metadata/:id", handlers.HandleMetadata(uploadDir))
 		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
+		api.DELETE("/delete/:id", handlers.HandleDelete(uploadDir))
 
 		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, database))
+		api.GET("/ws/download", handlers.HandleWSDownload(uploadDir, database))
 
 		api.GET("/metrics/activity", handlers.HandleActivity(database))
 		api.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))

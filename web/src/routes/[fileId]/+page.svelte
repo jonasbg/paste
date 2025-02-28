@@ -23,6 +23,7 @@
 	let isDownloadComplete = false;
 	let keyError: string | null = null;
 	let isLoading = true;
+	let deletionError: string | null = null;
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
@@ -129,11 +130,40 @@
 			document.body.removeChild(a);
 			window.URL.revokeObjectURL(url);
 
-			isDownloadComplete = true;
+			try {
+				const deleteResponse = await fetch(`/api/delete/${fileId}`, {
+					method: 'DELETE',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-HMAC-Token': hmacToken
+					}
+				});
 
-			// Clear sensitive data and reset URL to domain root
-			encryptionKey = '';
-			manualKeyInput = '';
+				// Clear sensitive data
+				encryptionKey = '';
+				manualKeyInput = '';
+
+				// Check if deletion was successful
+				if (deleteResponse.ok) {
+					isDownloadComplete = true;
+					deletionError = null;
+				} else {
+					deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
+					console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
+				}
+			} catch (err) {
+				console.error('Error deleting file:', err);
+				deletionError =
+					'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
+			}
+
+			fetch(`/api/delete-file/${fileId}`, {
+				method: 'DELETE',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-HMAC-Token': hmacToken
+				}
+			}).catch(err => console.error('Error deleting file:', err));
 
 			if (browser) {
 				// Clean the URL without redirecting
@@ -227,9 +257,13 @@
 			{/if}
 
 			{#if isDownloadComplete}
-				<SuccessMessage
-					message="Filen er lastet ned og sikkert slettet fra serveren vår. Takk for at du bruker vår sikre fildelingstjeneste!"
-				/>
+				{#if deletionError}
+					<ErrorMessage message={deletionError} />
+				{:else}
+					<SuccessMessage
+						message="Filen er lastet ned og sikkert slettet fra serveren vår. Takk for at du bruker vår sikre fildelingstjeneste!"
+					/>
+				{/if}
 			{/if}
 		{/if}
 
