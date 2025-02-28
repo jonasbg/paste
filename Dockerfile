@@ -6,7 +6,7 @@ RUN GOOS=js GOARCH=wasm go build -o encryption.wasm wasm.go
 RUN cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" .
 
 # Stage 2: Build the SvelteKit frontend with Bun
-FROM node AS frontend-builder
+FROM node:23.9.0-alpine3.21 AS frontend-builder
 WORKDIR /app/frontend
 
 # Copy package.json and bun.lockb (if you're using Bun's lockfile)
