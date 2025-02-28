@@ -54,7 +54,7 @@ export async function uploadEncryptedFile(
     return new Promise((resolve, reject) => {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/upload`);
-        const chunkSize = 1 * 1024 * 1024; // 4MB chunks
+        const chunkSize = config.chunkSize * 1024 * 1024; // 4MB chunks
         let fileOffset = 0;
         let uploadedBytes = 0;
         let currentFileId: string | null = null;
