@@ -8,7 +8,7 @@
             "mode": "debug",
             "program": "${workspaceFolder}/api/main.go",
             "env": {
-                "MAX_FILE_SIZE": "1GB",
+                "MAX_FILE_SIZE": "10GB",
                 "ENV": "development",
                 "DEBUG": "true"
             }
@@ -20,7 +20,7 @@
             "mode": "debug",
             "program": "${file}",
             "env": {
-                "MAX_FILE_SIZE": "1GB",
+                "MAX_FILE_SIZE": "10GB",
                 "ENV": "development",
                 "DEBUG": "true"
             }

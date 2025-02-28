@@ -3,7 +3,7 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import { fetchMetadata, streamDownloadAndDecrypt } from '$lib/services/fileService';
+	import { downloadAndDecryptFile, fetchMetadata } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
@@ -23,6 +23,7 @@
 	let isDownloadComplete = false;
 	let keyError: string | null = null;
 	let isLoading = true;
+	let deletionError: string | null = null;
 
 	// Function to validate and extract key from input
 	function validateAndExtractKey(input: string): string | null {
@@ -89,21 +90,16 @@
 		}
 	}
 
-	async function initiateStreamingDownload() {
-		if (!encryptionKey || isDownloading || !metadata || metadata.error) return;
+	async function initiateDownload() {
+		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
 		isDownloading = true;
 		downloadError = null;
-		downloadProgress = 0;
-		downloadMessage = 'Starter nedlasting...';
 
 		try {
 			const fileId = $page.params.fileId;
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-			console.log("Starting download for file:", fileId);
-
-			// Use the WebSocket streaming function
-			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
+			const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
 				fileId,
 				encryptionKey,
 				hmacToken,
@@ -113,39 +109,53 @@
 				}
 			);
 
-			console.log("Stream received, creating response");
-
-			// Create a Response from the stream
-			const response = new Response(stream);
-
-			// Get the blob when the stream is complete
-			const blob = await response.blob();
-			console.log(`Blob created, size: ${blob.size} bytes`);
-
-			if (blob.size === 0) {
-				throw new Error('Kunne ikke dekryptere filen - ingen data mottatt');
+			if (!decrypted || decrypted.length === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
 			}
 
-			// Create a download link
-			const url = URL.createObjectURL(blob);
+			const blob = new Blob([decrypted], {
+				type: fileMetadata.contentType || 'application/octet-stream'
+			});
+
+			if (blob.size === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+			}
+
+			const url = window.URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
 			a.download = fileMetadata.filename;
 			document.body.appendChild(a);
 			a.click();
 			document.body.removeChild(a);
-			URL.revokeObjectURL(url);
+			window.URL.revokeObjectURL(url);
 
-			console.log("Download completed successfully");
+			try {
+				const deleteResponse = await fetch(`/api/delete/${fileId}`, {
+					method: 'DELETE',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-HMAC-Token': hmacToken
+					}
+				});
 
-			// Update UI to show completion
-			downloadProgress = 100;
-			downloadMessage = 'Nedlasting fullført';
-			isDownloadComplete = true;
+				// Clear sensitive data
+				encryptionKey = '';
+				manualKeyInput = '';
 
-			// Clear sensitive data
-			encryptionKey = '';
-			manualKeyInput = '';
+				// Check if deletion was successful
+				if (deleteResponse.ok) {
+					isDownloadComplete = true;
+					deletionError = null;
+				} else {
+					deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
+					console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
+				}
+			} catch (err) {
+				console.error('Error deleting file:', err);
+				deletionError =
+					'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
+			}
 
 			fetch(`/api/delete-file/${fileId}`, {
 				method: 'DELETE',
@@ -167,10 +177,6 @@
 		} finally {
 			isDownloading = false;
 		}
-	}
-
-	async function initiateDownload() {
-		return initiateStreamingDownload();
 	}
 
 	onMount(async () => {
@@ -251,9 +257,13 @@
 			{/if}
 
 			{#if isDownloadComplete}
-				<SuccessMessage
-					message="Filen er lastet ned og sikkert slettet fra serveren vår. Takk for at du bruker vår sikre fildelingstjeneste!"
-				/>
+				{#if deletionError}
+					<ErrorMessage message={deletionError} />
+				{:else}
+					<SuccessMessage
+						message="Filen er lastet ned og sikkert slettet fra serveren vår. Takk for at du bruker vår sikre fildelingstjeneste!"
+					/>
+				{/if}
 			{/if}
 		{/if}
 
