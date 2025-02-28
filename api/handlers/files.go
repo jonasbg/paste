@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -150,75 +149,17 @@ func HandleDownload(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
-		// Open the file
-		file, err := os.Open(filePath)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
-			return
-		}
-		defer file.Close()
-
-		// Set a read deadline
-		deadline := time.Now().Add(30 * time.Minute)
-		if err := file.SetReadDeadline(deadline); err != nil {
-			log.Printf("Warning: Could not set read deadline: %v", err)
-		}
-
-		// Get file information
-		fileInfo, err := file.Stat()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file info"})
-			return
-		}
-
-		// Set headers
+		// Serve file and delete after download
 		c.Header("Content-Type", "application/octet-stream")
 		c.Header("Cache-Control", "no-cache")
-		c.Header("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 		c.Header("Connection", "keep-alive")
 
-		// Stream the file to the client with a context timeout
-		c.Status(http.StatusOK)
+		c.File(filePath)
 
-		// Create a channel to signal when the copy is done
-		done := make(chan struct{})
-
-		var bytesWritten int64
-		var copyErr error
-
-		// Use a separate goroutine for the copy operation
 		go func() {
-			bytesWritten, copyErr = io.Copy(c.Writer, file)
-			close(done)
-		}()
-
-		// Wait for the copy to finish or for the context to be canceled
-		select {
-		case <-done:
-			// Copy completed
-		case <-c.Request.Context().Done():
-			// Request canceled by client
-			copyErr = c.Request.Context().Err()
-		}
-
-		// Delete the file based on transfer result
-		go func() {
-			if copyErr != nil {
-				log.Printf("Error during file transfer: %v", copyErr)
-				// Connection error - delete after a short delay
-			} else if bytesWritten == fileInfo.Size() {
-				log.Printf("File download complete: %s (%d bytes)", filePath, bytesWritten)
-				// Successful transfer - delete after a short grace period
-				time.Sleep(5 * time.Minute)
-
-				if err := os.Remove(filePath); err != nil {
-					log.Printf("Failed to remove file: %v", err)
-				} else {
-					log.Printf("Successfully deleted file: %s", filePath)
-				}
-			} else {
-				log.Printf("Incomplete transfer: %s (expected %d, got %d bytes)",
-					filePath, fileInfo.Size(), bytesWritten)
+			// time.Sleep(5 * time.Minute)
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("Failed to remove file: %v", err)
 			}
 		}()
 	}
