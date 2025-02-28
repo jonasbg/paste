@@ -147,6 +147,14 @@
 			encryptionKey = '';
 			manualKeyInput = '';
 
+			fetch(`/api/delete-file/${fileId}`, {
+				method: 'DELETE',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-HMAC-Token': hmacToken
+				}
+			}).catch(err => console.error('Error deleting file:', err));
+
 			if (browser) {
 				// Clean the URL without redirecting
 				window.history.replaceState({}, '', '/');
