@@ -248,7 +248,7 @@ export async function streamDownloadAndDecrypt(
 ): Promise<{ stream: ReadableStream<Uint8Array>; metadata: any }> {
   try {
     console.log("Starting download with WebSockets");
-    if ('WebSocket' in window) {
+    if ('WebSocket' in window && false) { //disable websocket download as it is too slow
       return await streamDownloadAndDecryptWS(fileId, key, token, onProgress);
     } else {
       console.log("WebSockets not supported, using HTTP fallback");
