@@ -3,7 +3,7 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import { downloadAndDecryptFile, fetchMetadata, streamDownloadAndDecrypt } from '$lib/services/fileService';
+	import { fetchMetadata, streamDownloadAndDecrypt } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
@@ -93,12 +93,16 @@
 		if (!encryptionKey || isDownloading || !metadata || metadata.error) return;
 		isDownloading = true;
 		downloadError = null;
+		downloadProgress = 0;
+		downloadMessage = 'Starter nedlasting...';
 
 		try {
 			const fileId = $page.params.fileId;
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-			// Use the new streaming function
+			console.log("Starting download for file:", fileId);
+
+			// Use the WebSocket streaming function
 			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
 				fileId,
 				encryptionKey,
@@ -109,14 +113,17 @@
 				}
 			);
 
+			console.log("Stream received, creating response");
+
 			// Create a Response from the stream
 			const response = new Response(stream);
 
 			// Get the blob when the stream is complete
 			const blob = await response.blob();
+			console.log(`Blob created, size: ${blob.size} bytes`);
 
 			if (blob.size === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+				throw new Error('Kunne ikke dekryptere filen - ingen data mottatt');
 			}
 
 			// Create a download link
@@ -129,6 +136,11 @@
 			document.body.removeChild(a);
 			URL.revokeObjectURL(url);
 
+			console.log("Download completed successfully");
+
+			// Update UI to show completion
+			downloadProgress = 100;
+			downloadMessage = 'Nedlasting fullført';
 			isDownloadComplete = true;
 
 			// Clear sensitive data
