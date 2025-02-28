@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -196,47 +195,6 @@ func HandleDownload(uploadDir string) gin.HandlerFunc {
 		c.Header("Connection", "keep-alive")
 
 		c.File(filePath)
-
-		go func() {
-			time.Sleep(30 * time.Minute)
-			if _, err := os.Stat(filePath); err == nil {
-				if err := os.Remove(filePath); err != nil {
-					log.Printf("Failed to remove file: %v", err)
-				}
-			}
-		}()
-	}
-}
-
-func HandleDelete(uploadDir string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		if len(id) != 16 && len(id) != 24 && len(id) != 32 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
-
-		token := c.GetHeader("X-HMAC-Token")
-		if !validateToken(token) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
-			return
-		}
-
-		// Look for file with token
-		filePath := filepath.Join(uploadDir, id+"."+token)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-			return
-		}
-
-		// Delete the file
-		if err := os.Remove(filePath); err != nil {
-			log.Printf("Error: Failed to delete file: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "File deleted successfully"})
 	}
 }
 
