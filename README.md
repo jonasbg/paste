@@ -99,7 +99,7 @@ The application can be configured using the following environment variables:
 | `WEB_DIR` | Directory containing static web files | `../web` | `/app/web` |
 | `FILES_RETENTION_DAYS` | Number of days to keep uploaded files before deletion | `7` | `14` |
 | `LOGS_RETENTION_DAYS` | Number of days to keep logs (negative for infinite) | `180` | `-1` |
-| `MAX_FILE_SIZE`  | Maximum allowed size for uploaded files.       | `1GB`          | A number followed by `KB`, `MB`, `GB`, or `TB` (case-insensitive).        | `2MB`, `500KB`, `10GB` |
+| `MAX_FILE_SIZE`  | Maximum allowed size for uploaded files.       | `100MB`          | A number followed by `KB`, `MB`, `GB`, or `TB` (case-insensitive).        | `2MB`, `500KB`, `10GB` |
 | `ID_SIZE`        | Size of the generated IDs.                       | `64` (bit)       | One of: `64`, `128`, `192`, `256` (case-insensitive).              | `128`           |
 | `KEY_SIZE`       | Size of the encryption keys.                     | `128`       | One of: `128`, `192`, `256` (case-insensitive).              | `256`           |
 
