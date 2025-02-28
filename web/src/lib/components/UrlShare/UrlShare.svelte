@@ -178,6 +178,7 @@
 		padding: 0.75rem 1.5rem;
 		border-radius: var(--border-radius);
 		animation: slideIn 0.3s ease-out;
+		z-index: 999999;
 	}
 
 	@keyframes slideIn {
