@@ -3,7 +3,7 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import { downloadAndDecryptFile, fetchMetadata } from '$lib/services/fileService';
+	import { streamDownloadAndDecrypt, fetchMetadata } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
@@ -91,93 +91,114 @@
 	}
 
 	async function initiateDownload() {
-		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
-		isDownloading = true;
-		downloadError = null;
+    if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
+    isDownloading = true;
+    downloadError = null;
 
-		try {
-			const fileId = $page.params.fileId;
-			const hmacToken = await generateHmacToken(fileId, encryptionKey);
+    try {
+        const fileId = $page.params.fileId;
+        const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-			const { decrypted, metadata: fileMetadata } = await downloadAndDecryptFile(
-				fileId,
-				encryptionKey,
-				hmacToken,
-				async (progress, message) => {
-					downloadProgress = progress;
-					downloadMessage = message;
-				}
-			);
+        // Use streamDownloadAndDecrypt instead of downloadAndDecryptFile
+        const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
+            fileId,
+            encryptionKey,
+            hmacToken,
+            async (progress, message) => {
+                downloadProgress = progress;
+                downloadMessage = message;
+            }
+        );
 
-			if (!decrypted || decrypted.length === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-			}
+        // Read the stream and collect chunks
+        const reader = stream.getReader();
+        const chunks = [];
+        let receivedLength = 0;
 
-			const blob = new Blob([decrypted], {
-				type: fileMetadata.contentType || 'application/octet-stream'
-			});
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+                chunks.push(value);
+                receivedLength += value.length;
+            }
+        }
 
-			if (blob.size === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-			}
+        // Check if any data was received
+        if (receivedLength === 0) {
+            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+        }
 
-			const url = window.URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = fileMetadata.filename;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-			window.URL.revokeObjectURL(url);
+        // Create a Blob from the collected chunks
+        const blob = new Blob(chunks, {
+            type: fileMetadata.contentType || 'application/octet-stream'
+        });
 
-			try {
-				const deleteResponse = await fetch(`/api/delete/${fileId}`, {
-					method: 'DELETE',
-					headers: {
-						'Content-Type': 'application/json',
-						'X-HMAC-Token': hmacToken
-					}
-				});
+        // Verify the Blob has content
+        if (blob.size === 0) {
+            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+        }
 
-				// Clear sensitive data
-				encryptionKey = '';
-				manualKeyInput = '';
+        // Create and trigger the download
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileMetadata.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
 
-				// Check if deletion was successful
-				if (deleteResponse.ok) {
-					isDownloadComplete = true;
-					deletionError = null;
-				} else {
-					deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
-					console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
-				}
-			} catch (err) {
-				console.error('Error deleting file:', err);
-				deletionError =
-					'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
-			}
+        // Attempt to delete the file from the server
+        try {
+            const deleteResponse = await fetch(`/api/delete/${fileId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-HMAC-Token': hmacToken
+                }
+            });
 
-			fetch(`/api/delete-file/${fileId}`, {
-				method: 'DELETE',
-				headers: {
-					'Content-Type': 'application/json',
-					'X-HMAC-Token': hmacToken
-				}
-			}).catch(err => console.error('Error deleting file:', err));
+            // Clear sensitive data
+            encryptionKey = '';
+            manualKeyInput = '';
 
-			if (browser) {
-				// Clean the URL without redirecting
-				window.history.replaceState({}, '', '/');
-			}
-		} catch (error) {
-			console.error('Download error:', error);
-			downloadError = (error as Error).message;
-			downloadProgress = 0;
-			downloadMessage = '';
-		} finally {
-			isDownloading = false;
-		}
-	}
+            // Check if deletion was successful
+            if (deleteResponse.ok) {
+                isDownloadComplete = true;
+                deletionError = null;
+            } else {
+                deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
+                console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
+            }
+        } catch (err) {
+            console.error('Error deleting file:', err);
+            deletionError =
+                'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
+        }
+
+        // Additional Deletion Attempt (unchanged)
+        fetch(`/api/delete-file/${fileId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-HMAC-Token': hmacToken
+            }
+        }).catch(err => console.error('Error deleting file:', err));
+
+        // Clean the URL in the browser
+        if (browser) {
+            window.history.replaceState({}, '', '/');
+        }
+    } catch (error) {
+        console.error('Download error:', error);
+        downloadError = (error as Error).message;
+        downloadProgress = 0;
+        downloadMessage = '';
+    } finally {
+        isDownloading = false;
+    }
+}
 
 	onMount(async () => {
 		if (!browser) return;

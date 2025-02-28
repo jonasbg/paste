@@ -9,6 +9,14 @@
 			"minikube": "none"
 		}
 	},
+	"runArgs": [
+		"--userns=keep-id"
+	],
+	"containerUser": "vscode",
+	"updateRemoteUserUID": true,
+	"containerEnv": {
+		"HOME": "/home/vscode"
+	},
 	"customizations": {
 		"vscode": {
 			"extensions": [

@@ -10,7 +10,7 @@ export async function downloadAndDecryptFile(
 	const wasmInstance = getWasmInstance();
 	if (!wasmInstance) throw new Error('WASM not initialized');
 
-	await onProgress(0, 'Starting download...');
+	await onProgress(0, 'Laster ned...');
 
 	// First, fetch just the header to get metadata
 	const headerResponse = await fetch(`/api/metadata/${fileId}`, {
@@ -124,7 +124,7 @@ export async function downloadAndDecryptFile(
 		type: metadata.contentType || 'application/octet-stream'
 	});
 
-	await onProgress(100, 'Download and decryption complete');
+	await onProgress(100, 'Nedlasting fullført');
 
 	return { decrypted: blob, metadata };
 }

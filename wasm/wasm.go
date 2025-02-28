@@ -17,10 +17,6 @@ import (
 	"syscall/js"
 )
 
-const (
-	chunkSize = 1 * 1024 * 1024 // 1MB chunks
-)
-
 type Metadata struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"contentType"`
