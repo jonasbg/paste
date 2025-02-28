@@ -46,6 +46,28 @@
 			}
 	}
 
+	function cleanupMemoryReferences() {
+    // Release file references if we're done with the file
+    if (shareUrl && selectedFile) {
+        // Only clear if we have a share URL (successful upload)
+        const tempFileRef = selectedFile;
+
+        // Clear the file reference
+        selectedFile = null;
+
+        // Clear the file input value to release browser's reference to the file
+        if (fileInput) {
+            fileInput.value = '';
+        }
+
+        // Suggest browser to garbage collect
+        setTimeout(() => {
+            // This empty timeout can help trigger GC in some browsers
+            console.log('Cleanup completed for file:', tempFileRef.name);
+        }, 100);
+    }
+}
+
 	async function handleUpload() {
 			if (!selectedFile) {
 					fileInput.click();
@@ -77,6 +99,7 @@
 
 					shareUrl = `${window.location.origin}/${result.fileId}#key=${key}`;
 					replaceState('', shareUrl);
+					cleanupMemoryReferences();
 			} catch (error) {
 					console.error('Error: ' + (error instanceof Error ? error.message : String(error)));
 					fileSizeError = "Upload Error: " + (error instanceof Error ? error.message : String(error));
@@ -164,11 +187,19 @@
 	}
 
 	function removeFile() {
-			selectedFile = null;
-			shareUrl = '';
-			uploadProgress = 0;
-			uploadMessage = '';
-			fileSizeError = '';
+    selectedFile = null;
+    shareUrl = '';
+    uploadProgress = 0;
+    uploadMessage = '';
+    fileSizeError = '';
+
+    // Clear the file input value
+    if (fileInput) {
+        fileInput.value = '';
+    }
+
+    // Force a small delay to help with garbage collection
+    setTimeout(() => {}, 100);
 	}
 </script>
 
