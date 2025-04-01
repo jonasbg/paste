@@ -51,6 +51,9 @@ func main() {
 	limiter := middleware.NewIPRateLimiter(rate.Limit(requestsPerSecond), burstSize)
 
 	r := gin.New()
+	r.SetTrustedProxies(utils.GetTrustedProxies())
+	r.TrustedPlatform = "X-Forwarded-For"
+
 	r.Use(gin.Logger(), gin.Recovery())
 
 	// Add compression middleware with custom options
