@@ -3,71 +3,87 @@ package utils
 import (
 	"bytes"
 	"net"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
+func GetTrustedProxies() []string {
+	// Get proxies from environment variable, default to Kubernetes range if not set
+	proxiesEnv := os.Getenv("TRUSTED_PROXIES")
+	if proxiesEnv == "" {
+		return []string{"10.0.0.0/8"}
+	}
+
+	// Split by comma and trim spaces
+	proxies := strings.Split(proxiesEnv, ",")
+	for i := range proxies {
+		proxies[i] = strings.TrimSpace(proxies[i])
+	}
+
+	return proxies
+}
+
 func GetRealIP(c *gin.Context) string {
-	// List of headers to check for IP addresses
-	headers := []string{
-		"X-Real-IP",
-		"X-Forwarded-For",
-		"X-Client-IP",
-		"CF-Connecting-IP", // Cloudflare
-		"True-Client-IP",
+	// Get the immediate client IP
+	remoteAddr := c.Request.RemoteAddr
+	clientIP, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr // Fallback if we can't parse it
 	}
 
-	var candidateIPs []string
+	// Check if the client is a trusted proxy
+	clientIPParsed := net.ParseIP(clientIP)
+	if clientIPParsed == nil {
+		return clientIP // Return immediate client IP if we can't parse it
+	}
 
-	// Check header-provided IPs
-	for _, header := range headers {
-		if ip := c.GetHeader(header); ip != "" {
-			// X-Forwarded-For may contain multiple IPs
-			if header == "X-Forwarded-For" {
-				ips := strings.Split(ip, ",")
-				for _, ip := range ips {
-					candidateIPs = append(candidateIPs, strings.TrimSpace(ip))
-				}
-			} else {
-				candidateIPs = append(candidateIPs, strings.TrimSpace(ip))
-			}
+	// Only proceed with header checking if the immediate client is a trusted proxy
+	trustedProxies := GetTrustedProxies()
+	isTrusted := false
+
+	for _, proxyRange := range trustedProxies {
+		_, ipNet, err := net.ParseCIDR(proxyRange)
+		if err == nil && ipNet.Contains(clientIPParsed) {
+			isTrusted = true
+			break
+		} else if proxyRange == clientIP {
+			isTrusted = true
+			break
 		}
 	}
 
-	// Add the direct remote address
-	if remoteAddr := c.Request.RemoteAddr; remoteAddr != "" {
-		ip, _, err := net.SplitHostPort(remoteAddr)
-		if err == nil {
-			candidateIPs = append(candidateIPs, ip)
-		}
+	if !isTrusted {
+		return clientIP // If not from a trusted proxy, return the immediate client IP
 	}
 
-	// First pass: look for valid public IPs
-	for _, ipStr := range candidateIPs {
-		ip := net.ParseIP(ipStr)
-		if ip != nil && !isPrivateIP(ip) && !ip.IsLoopback() && !ip.IsUnspecified() {
-			return ipStr
-		}
+	// From trusted proxy, check headers in order of preference
+	if cfIP := c.GetHeader("CF-Connecting-IP"); cfIP != "" {
+		return cfIP // Cloudflare-specific header
 	}
 
-	// Second pass: accept private IPs if no public IP was found
-	for _, ipStr := range candidateIPs {
-		ip := net.ParseIP(ipStr)
-		if ip != nil {
-			return ipStr
-		}
+	if realIP := c.GetHeader("X-Real-IP"); realIP != "" {
+		return realIP
 	}
 
-	// Fallback to RemoteAddr if everything else fails
-	if remoteAddr := c.Request.RemoteAddr; remoteAddr != "" {
-		ip, _, err := net.SplitHostPort(remoteAddr)
-		if err == nil {
-			return ip
-		}
+	// For X-Forwarded-For, use the leftmost value as it's the original client
+	if forwardedFor := c.GetHeader("X-Forwarded-For"); forwardedFor != "" {
+		ips := strings.Split(forwardedFor, ",")
+		return strings.TrimSpace(ips[0])
 	}
 
-	return ""
+	// Fallback to other headers
+	if clientIP := c.GetHeader("X-Client-IP"); clientIP != "" {
+		return clientIP
+	}
+
+	if trueClientIP := c.GetHeader("True-Client-IP"); trueClientIP != "" {
+		return trueClientIP
+	}
+
+	// If we get here, just return the immediate client IP
+	return clientIP
 }
 
 // isPrivateIP checks if an IP address is private
