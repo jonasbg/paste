@@ -36,7 +36,7 @@ func getDatabaseDir() string {
 
 func main() {
 	uploadDir := getUploadDir()
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+	if err := os.MkdirAll(uploadDir, 0750); err != nil {
 		log.Fatalf("Failed to create upload directory: %v", err)
 	}
 
