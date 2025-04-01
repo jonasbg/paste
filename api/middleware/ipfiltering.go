@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jonasbg/paste/m/v2/utils"
 )
 
 // IPSourceRestriction creates middleware that only allows requests from specified IP ranges
@@ -14,7 +15,7 @@ func IPSourceRestriction(allowedCIDRs string) gin.HandlerFunc {
 	cidrs := parseCIDRs(allowedCIDRs)
 
 	return func(c *gin.Context) {
-		clientIP := c.ClientIP()
+		clientIP := utils.GetRealIP(c)
 
 		// If no restrictions are set, allow all requests
 		if len(cidrs) == 0 {

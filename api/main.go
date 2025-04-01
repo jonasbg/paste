@@ -52,7 +52,7 @@ func main() {
 
 	r := gin.New()
 	r.SetTrustedProxies(utils.GetTrustedProxies())
-	r.TrustedPlatform = "X-Forwarded-For"
+	r.TrustedPlatform = "X-Real-IP"
 
 	r.Use(gin.Logger(), gin.Recovery())
 
