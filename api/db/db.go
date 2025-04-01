@@ -94,7 +94,7 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 	err = d.db.Model(&types.TransactionLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
 		Group("ip").
-		Select("ip, count(*) as requests, sum(case when status_code >= 400 then 1 else 0 end) as failures").
+		Select("ip, count(*) as requests, COALESCE(SUM(case when status_code >= 400 then 1 else 0 end),0) as failures").
 		Order("requests desc").
 		Limit(10).
 		Find(&metrics.TopIPs).Error
