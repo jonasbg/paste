@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/jonasbg/paste/m/v2/cleanup"
 	"github.com/jonasbg/paste/m/v2/db"
@@ -35,7 +36,7 @@ func getDatabaseDir() string {
 
 func main() {
 	uploadDir := getUploadDir()
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+	if err := os.MkdirAll(uploadDir, 0750); err != nil {
 		log.Fatalf("Failed to create upload directory: %v", err)
 	}
 
@@ -50,7 +51,15 @@ func main() {
 	limiter := middleware.NewIPRateLimiter(rate.Limit(requestsPerSecond), burstSize)
 
 	r := gin.New()
+	r.SetTrustedProxies(utils.GetTrustedProxies())
+	r.TrustedPlatform = "X-Real-IP"
+
 	r.Use(gin.Logger(), gin.Recovery())
+
+	// Add compression middleware with custom options
+	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{".pdf", ".mp4", ".avi", ".mov"}),
+		gzip.WithExcludedPaths([]string{"/api/ws"})))
+
 	r.Use(middleware.Logger(database))
 
 	api := r.Group("/api")
@@ -63,12 +72,19 @@ func main() {
 
 		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, database))
 		api.GET("/ws/download", handlers.HandleWSDownload(uploadDir, database))
+	}
 
-		api.GET("/metrics/activity", handlers.HandleActivity(database))
-		api.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))
-		api.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
-		api.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
-		api.GET("/metrics/upload-history", handlers.HandleUploadHistory(database))
+	allowedMetricsIPs := utils.GetEnv("METRICS_ALLOWED_IPS", "127.0.0.1/8,::1/128")
+
+	// Replace the metrics API group with this:
+	metricsAPI := api.Group("")
+	metricsAPI.Use(middleware.IPSourceRestriction(allowedMetricsIPs))
+	{
+		metricsAPI.GET("/metrics/activity", handlers.HandleActivity(database))
+		metricsAPI.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))
+		metricsAPI.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
+		metricsAPI.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
+		metricsAPI.GET("/metrics/upload-history", handlers.HandleUploadHistory(database))
 	}
 
 	spaDirectory := utils.GetEnv("WEB_DIR", "../web")
@@ -77,6 +93,12 @@ func main() {
 	if _, err := os.Stat(spaDirectory); os.IsNotExist(err) {
 		log.Fatalf("Static files directory does not exist: %s", spaDirectory)
 	}
+
+	// Add custom WASM MIME type configuration
+	r.GET("/encryption.wasm", func(c *gin.Context) {
+		c.Header("Content-Type", "application/wasm")
+		c.FileFromFS("encryption.wasm", gin.Dir(spaDirectory, false))
+	})
 
 	r.Use(middleware.Middleware("/", spaDirectory))
 
