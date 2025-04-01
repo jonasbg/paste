@@ -69,12 +69,19 @@ func main() {
 
 		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, database))
 		api.GET("/ws/download", handlers.HandleWSDownload(uploadDir, database))
+	}
 
-		api.GET("/metrics/activity", handlers.HandleActivity(database))
-		api.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))
-		api.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
-		api.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
-		api.GET("/metrics/upload-history", handlers.HandleUploadHistory(database))
+	allowedMetricsIPs := utils.GetEnv("METRICS_ALLOWED_IPS", "127.0.0.1/8,::1/128")
+
+	// Replace the metrics API group with this:
+	metricsAPI := api.Group("")
+	metricsAPI.Use(middleware.IPSourceRestriction(allowedMetricsIPs))
+	{
+		metricsAPI.GET("/metrics/activity", handlers.HandleActivity(database))
+		metricsAPI.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))
+		metricsAPI.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
+		metricsAPI.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
+		metricsAPI.GET("/metrics/upload-history", handlers.HandleUploadHistory(database))
 	}
 
 	spaDirectory := utils.GetEnv("WEB_DIR", "../web")

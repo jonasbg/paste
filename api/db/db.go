@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/jonasbg/paste/m/v2/types"
@@ -77,12 +78,20 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 	}
 
 	// Get average latency
+	var avgLatency sql.NullFloat64
 	err = d.db.Model(&types.TransactionLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
 		Select("avg(duration) as avg_latency").
-		Row().Scan(&metrics.AverageLatency)
+		Row().Scan(&avgLatency)
 	if err != nil {
 		return metrics, err
+	}
+
+	// Handle NULL case
+	if avgLatency.Valid {
+		metrics.AverageLatency = avgLatency.Float64
+	} else {
+		metrics.AverageLatency = 0 // or another appropriate default value
 	}
 
 	// Get top 10 IPs by request count
