@@ -47,6 +47,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			FileId string `json:"fileId"`
 			Token  string `json:"token"`
 		}
+
 		if err := json.Unmarshal(msg, &request); err != nil {
 			sendError(ws, "Invalid message format")
 			return
@@ -59,6 +60,11 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 
 		// Validate fileId format
 		if len(request.FileId) != 16 && len(request.FileId) != 24 && len(request.FileId) != 32 {
+			sendError(ws, "Invalid file ID format")
+			return
+		}
+
+		if !validateID(request.FileId) {
 			sendError(ws, "Invalid file ID format")
 			return
 		}
@@ -307,6 +313,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			Type  string `json:"type"`
 			Token string `json:"token"`
 		}
+
 		if err := json.Unmarshal(tokenMsg, &tokenData); err != nil {
 			sendError(ws, "Invalid token message")
 			return
