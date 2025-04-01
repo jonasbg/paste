@@ -1,6 +1,7 @@
 package db
 
 import (
+	"sort"
 	"time"
 
 	"github.com/jonasbg/paste/m/v2/types"
@@ -26,6 +27,12 @@ func NewDB(dbPath string) (*DB, error) {
 		return nil, err
 	}
 
+	db.Exec("PRAGMA journal_mode = WAL")
+	db.Exec("PRAGMA synchronous = NORMAL")
+	db.Exec("PRAGMA cache_size = 8000")
+	db.Exec("PRAGMA temp_store = MEMORY")
+	db.Exec("PRAGMA mmap_size = 30000000000")
+
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
@@ -43,6 +50,7 @@ func NewDB(dbPath string) (*DB, error) {
 
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_reqlog_timestamp ON request_logs (timestamp);")
 
+
 	return &DB{db: db}, nil
 }
 
@@ -50,108 +58,148 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 	var metrics types.SecurityMetrics
 	metrics.StatusCodes = make(map[int]int64)
 
-	// Get status code distribution
-	var statusResults []struct {
-		StatusCode int
-		Count      int64
-	}
-	err := d.db.Model(&types.TransactionLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Group("status_code").
-		Select("status_code, count(*) as count").
-		Find(&statusResults).Error
-	if err != nil {
+	// Get all transaction logs for the period with a single query
+	var logs []types.TransactionLog
+	if err := d.db.Where("timestamp BETWEEN ? AND ?", start, end).Find(&logs).Error; err != nil {
 		return metrics, err
 	}
 
-	for _, r := range statusResults {
-		metrics.StatusCodes[r.StatusCode] = r.Count
-		metrics.TotalRequests += r.Count
-		if r.StatusCode >= 400 {
-			metrics.FailedRequests += r.Count
+	// Process everything in memory
+	ipSet := make(map[string]struct{})
+	ipCounts := make(map[string]struct {
+		Requests int64
+		Failures int64
+	})
+
+	var totalDuration float64
+
+	for _, log := range logs {
+		// Track status codes
+		metrics.StatusCodes[log.StatusCode]++
+		metrics.TotalRequests++
+
+		if log.StatusCode >= 400 {
+			metrics.FailedRequests++
 		}
+
+		// Track unique IPs
+		ipSet[log.IP] = struct{}{}
+
+		// Track IP stats
+		stats := ipCounts[log.IP]
+		stats.Requests++
+		if log.StatusCode >= 400 {
+			stats.Failures++
+		}
+		ipCounts[log.IP] = stats
+
+		// Sum durations
+		totalDuration += float64(log.Duration)
 	}
 
-	// Get unique IPs
-	err = d.db.Model(&types.TransactionLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Distinct("ip").
-		Count(&metrics.UniqueIPs).Error
-	if err != nil {
-		return metrics, err
+	// Calculate metrics
+	metrics.UniqueIPs = int64(len(ipSet))
+	if metrics.TotalRequests > 0 {
+		metrics.AverageLatency = totalDuration / float64(metrics.TotalRequests)
 	}
 
-	// Get average latency
-	err = d.db.Model(&types.TransactionLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select("COALESCE(avg(duration),0) as avg_latency").
-		Row().Scan(&metrics.AverageLatency)
-	if err != nil {
-		return metrics, err
+	// Build top IPs list
+	for ip, stats := range ipCounts {
+		metrics.TopIPs = append(metrics.TopIPs, types.TopIPMetrics{
+			IP:           ip,
+			RequestCount: stats.Requests,
+			ErrorCount:   stats.Failures,
+		})
 	}
 
-	// Get top 10 IPs by request count
-	err = d.db.Model(&types.TransactionLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Group("ip").
-		Select("ip, count(*) as requests, COALESCE(SUM(case when status_code >= 400 then 1 else 0 end),0) as failures").
-		Order("requests desc").
-		Limit(10).
-		Find(&metrics.TopIPs).Error
+	// Sort and limit top IPs
+	sort.Slice(metrics.TopIPs, func(i, j int) bool {
+		return metrics.TopIPs[i].RequestCount > metrics.TopIPs[j].RequestCount
+	})
+	if len(metrics.TopIPs) > 10 {
+		metrics.TopIPs = metrics.TopIPs[:10]
+	}
 
-	return metrics, err
+	return metrics, nil
 }
 
 func (d *DB) GetActivitySummary(start, end time.Time) ([]types.ActivitySummary, error) {
 	if end.IsZero() {
 		end = time.Now().UTC()
 	}
-	end = time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.UTC)
+	// Set end to the end of the day (23:59:59.999999999)
+	end = time.Date(end.Year(), end.Month(), end.Day(), 23, 59, 59, 999999999, time.UTC)
 
 	if start.IsZero() {
 		start = end.AddDate(0, -1, 0)
 	}
 	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
 
-	var summary []types.ActivitySummary
-	intervals := int((end.Sub(start).Hours() / 24) + 1)
-
-	for i := intervals - 1; i >= 0; i-- {
-		periodStart := start.AddDate(0, 0, i)
-		periodEnd := periodStart.Add(24 * time.Hour).Add(-time.Nanosecond)
-
-		var periodSummary types.ActivitySummary
-		periodSummary.Period = periodStart.Format("2006-01-02")
-
-		// Count successful uploads
-		d.db.Model(&types.TransactionLog{}).
-			Where("timestamp BETWEEN ? AND ? AND action = ? AND success = ?",
-				periodStart, periodEnd, "upload", true).
-			Count(&periodSummary.Uploads)
-
-		// Count successful downloads
-		d.db.Model(&types.TransactionLog{}).
-			Where("timestamp BETWEEN ? AND ? AND action = ? AND success = ?",
-				periodStart, periodEnd, "download", true).
-			Count(&periodSummary.Downloads)
-
-		// Count unique visitors (IPs) for the period
-		d.db.Model(&types.TransactionLog{}).
-			Where("timestamp BETWEEN ? AND ?", periodStart, periodEnd).
-			Distinct("ip").
-			Count(&periodSummary.UniqueVisitors)
-
-		summary = append(summary, periodSummary)
+	// Get all logs for the period in a single query
+	var logs []types.TransactionLog
+	if err := d.db.Where("timestamp BETWEEN ? AND ?", start, end).Find(&logs).Error; err != nil {
+		return nil, err
 	}
 
-	return summary, nil
+	// Process in memory
+	dayMap := make(map[string]*types.ActivitySummary)
+	intervals := int((end.Sub(start).Hours() / 24) + 1)
+
+	// Initialize all days
+	for i := 0; i < intervals; i++ {
+		day := start.AddDate(0, 0, i)
+		dayStr := day.Format("2006-01-02")
+		dayMap[dayStr] = &types.ActivitySummary{
+			Period: dayStr,
+		}
+	}
+
+	// Process logs
+	ipsByDay := make(map[string]map[string]struct{})
+	for _, log := range logs {
+		day := log.Timestamp.Format("2006-01-02")
+		summary, exists := dayMap[day]
+		if !exists {
+			continue // Skip if outside our range
+		}
+
+		// Track unique IPs
+		if ipsByDay[day] == nil {
+			ipsByDay[day] = make(map[string]struct{})
+		}
+		ipsByDay[day][log.IP] = struct{}{}
+
+		// Count uploads and downloads
+		if log.Action == "upload" && log.Success {
+			summary.Uploads++
+		} else if log.Action == "download" && log.Success {
+			summary.Downloads++
+		}
+	}
+
+	// Count unique visitors
+	for day, ips := range ipsByDay {
+		if summary, exists := dayMap[day]; exists {
+			summary.UniqueVisitors = int64(len(ips))
+		}
+	}
+
+	// Convert map to slice in order
+	result := make([]types.ActivitySummary, 0, intervals)
+	for i := intervals - 1; i >= 0; i-- {
+		day := start.AddDate(0, 0, i)
+		dayStr := day.Format("2006-01-02")
+		if summary, exists := dayMap[dayStr]; exists {
+			result = append(result, *summary)
+		}
+	}
+
+	return result, nil
 }
 
 func (d *DB) GetUploadHistory(start, end time.Time) ([]types.UploadHistoryItem, error) {
 	var results []types.UploadHistoryItem
 
-	// SQL to aggregate uploads by day
-	// Use different date formatting approach to ensure compatibility
 	rows, err := d.db.Raw(`
 		SELECT
 			STRFTIME('%Y-%m-%d', timestamp) AS date_str,
@@ -226,86 +274,121 @@ func (d *DB) GetRequestMetrics(start, end time.Time) (types.RequestMetrics, erro
 	metrics.StatusDistribution = make(map[int]int64)
 	metrics.PathDistribution = make(map[string]int64)
 
-	// Get total requests
-	if err := d.db.Model(&types.RequestLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Count(&metrics.TotalRequests).Error; err != nil {
+	// Get all request logs for the time period in a single query
+	var logs []types.RequestLog
+	if err := d.db.Where("timestamp BETWEEN ? AND ?", start, end).Find(&logs).Error; err != nil {
 		return metrics, err
 	}
 
-	// Get unique IPs
-	if err := d.db.Model(&types.RequestLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Distinct("ip").
-		Count(&metrics.UniqueIPs).Error; err != nil {
-		return metrics, err
+	// Calculate metrics in memory
+	ipSet := make(map[string]struct{})
+	pathCounts := make(map[string]int64)
+	statusCounts := make(map[int]int64)
+	dailyRequests := make(map[string]int64)
+	ipStats := make(map[string]struct {
+		Requests int64
+		Errors   int64
+	})
+
+	var totalDuration float64
+	// Pre-estimate the size of various collections
+	estimatedSize := len(logs)
+
+	// Pre-allocate slices with estimated capacity
+	metrics.TopIPs = make([]types.TopIPMetrics, 0, min(estimatedSize, 10))
+	metrics.TimeDistribution = make([]types.TimeDistributionData, 0, min(31, estimatedSize)) // Assume max 31 days
+
+	for _, log := range logs {
+		metrics.TotalRequests++
+		ipSet[log.IP] = struct{}{}
+		totalDuration += float64(log.Duration)
+
+		// Count status codes
+		statusCounts[log.StatusCode]++
+
+		// Count paths
+		pathCounts[log.Path]++
+
+		// Track IP stats
+		stats := ipStats[log.IP]
+		stats.Requests++
+		if log.StatusCode >= 400 {
+			stats.Errors++
+		}
+		ipStats[log.IP] = stats
+
+		// Track requests by day
+		day := log.Timestamp.Format("2006-01-02")
+		dailyRequests[day]++
 	}
 
-	// Get average latency
-	if err := d.db.Model(&types.RequestLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select("COALESCE(AVG(duration), 0)").
-		Scan(&metrics.AverageLatency).Error; err != nil {
-		return metrics, err
+	// Set calculated metrics
+	metrics.UniqueIPs = int64(len(ipSet))
+	if metrics.TotalRequests > 0 {
+		metrics.AverageLatency = totalDuration / float64(metrics.TotalRequests)
 	}
 
-	// Get status code distribution
-	var statusResults []struct {
-		StatusCode int
-		Count      int64
-	}
-	if err := d.db.Model(&types.RequestLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select("status_code, COUNT(*) as count").
-		Group("status_code").
-		Scan(&statusResults).Error; err != nil {
-		return metrics, err
-	}
-	for _, result := range statusResults {
-		metrics.StatusDistribution[result.StatusCode] = result.Count
-	}
+	// Set status distribution
+	metrics.StatusDistribution = statusCounts
 
-	// Get path distribution (top 10 paths)
-	var pathResults []struct {
+	// Better approach for path distribution: sort all paths by count
+	type pathCount struct {
 		Path  string
 		Count int64
 	}
-	if err := d.db.Model(&types.RequestLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select("path, COUNT(*) as count").
-		Group("path").
-		Order("count DESC").
-		Limit(10).
-		Scan(&pathResults).Error; err != nil {
-		return metrics, err
-	}
-	for _, result := range pathResults {
-		metrics.PathDistribution[result.Path] = result.Count
+	pathsList := make([]pathCount, 0, len(pathCounts))
+	for path, count := range pathCounts {
+		pathsList = append(pathsList, pathCount{Path: path, Count: count})
 	}
 
-	// Get top 10 IPs with their error counts
-	if err := d.db.Model(&types.RequestLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select(`ip,
-							COUNT(*) as request_count,
-							COUNT(CASE WHEN status_code >= 400 THEN 1 END) as error_count`).
-		Group("ip").
-		Order("request_count DESC").
-		Limit(10).
-		Find(&metrics.TopIPs).Error; err != nil {
-		return metrics, err
+	// Sort by count in descending order
+	sort.Slice(pathsList, func(i, j int) bool {
+		return pathsList[i].Count > pathsList[j].Count
+	})
+
+	// Take only top 10
+	for i := 0; i < len(pathsList) && i < 10; i++ {
+		metrics.PathDistribution[pathsList[i].Path] = pathsList[i].Count
 	}
 
-	// Get time distribution (requests per day)
-	// Modified to use strftime for SQLite date formatting
-	if err := d.db.Model(&types.RequestLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select(`strftime('%Y-%m-%d', timestamp) as date, COUNT(*) as count`).
-		Group("date").
-		Order("date ASC").
-		Find(&metrics.TimeDistribution).Error; err != nil {
-		return metrics, err
+	// Set top IPs - pre-allocate a reasonable size for the slice
+	for ip, stats := range ipStats {
+		metrics.TopIPs = append(metrics.TopIPs, types.TopIPMetrics{
+			IP:           ip,
+			RequestCount: stats.Requests,
+			ErrorCount:   stats.Errors,
+		})
 	}
+
+	// Sort TopIPs by request count descending
+	sort.Slice(metrics.TopIPs, func(i, j int) bool {
+		return metrics.TopIPs[i].RequestCount > metrics.TopIPs[j].RequestCount
+	})
+	if len(metrics.TopIPs) > 10 {
+		metrics.TopIPs = metrics.TopIPs[:10]
+	}
+
+	// Set time distribution
+	metrics.TimeDistribution = make([]types.TimeDistributionData, 0, len(dailyRequests))
+	for date, count := range dailyRequests {
+		metrics.TimeDistribution = append(metrics.TimeDistribution, types.TimeDistributionData{
+			Date:  date,
+			Count: count,
+		})
+	}
+
+	// Sort time distribution by date
+	sort.Slice(metrics.TimeDistribution, func(i, j int) bool {
+		return metrics.TimeDistribution[i].Date < metrics.TimeDistribution[j].Date
+	})
 
 	return metrics, nil
+}
+
+// Helper function for min of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
