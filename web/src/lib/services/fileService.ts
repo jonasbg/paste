@@ -194,7 +194,7 @@ export async function streamDownloadAndDecrypt(
   onProgress: ProgressCallback
 ): Promise<{ stream: ReadableStream<Uint8Array>; metadata: any }> {
   const wasmInstance = getWasmInstance();
-	const config = get(configStore);
+  const config = get(configStore);
   if (!wasmInstance) throw new Error('WASM not initialized');
 
   await onProgress(0, 'Starting download...');
@@ -210,6 +210,7 @@ export async function streamDownloadAndDecrypt(
     throw new Error('Failed to fetch file metadata');
   }
 
+	
   const headerData = new Uint8Array(await headerResponse.arrayBuffer());
   const metadata = await wasmInstance.decryptMetadata(key, headerData);
 
@@ -231,7 +232,10 @@ export async function streamDownloadAndDecrypt(
     throw new Error('Response body is null');
   }
 
-  const contentLength = +(response.headers.get('Content-Length') || 0);
+  // Parse content length correctly ensuring it's a number
+  const contentLengthHeader = metadata.size || response.headers.get('Content-Length');
+  const contentLength = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+    
   let receivedLength = 0;
   let headerProcessed = false;
   let decryptionInitialized = false;
@@ -245,8 +249,9 @@ export async function streamDownloadAndDecrypt(
   // Function to report progress with throttling
   const reportProgress = async (bytesReceived: number) => {
     const currentTime = Date.now();
+    // Ensure we have valid numbers for calculation
     const progressValue = contentLength > 0
-      ? Math.round((bytesReceived / contentLength) * 100)
+      ? Math.min(Math.round((bytesReceived / contentLength) * 100), 99) // Cap at 99% until complete
       : 0;
 
     // Only update if it's been long enough since the last update
@@ -258,11 +263,11 @@ export async function streamDownloadAndDecrypt(
     ) {
       lastProgressUpdate = currentTime;
       lastProgressValue = progressValue;
-
+      
       // Use requestAnimationFrame for smoother UI updates
       await new Promise<void>(resolve => {
         requestAnimationFrame(() => {
-          onProgress(progressValue, `Laster ned...`).then(() => resolve());
+          onProgress(progressValue, `Laster ned... ${progressValue}%`).then(() => resolve());
         });
       });
     }
@@ -273,8 +278,8 @@ export async function streamDownloadAndDecrypt(
     transform: async (chunk, controller) => {
       // Update total received bytes and report progress
       receivedLength += chunk.length;
-      reportProgress(receivedLength); // Non-blocking progress update
-
+      await reportProgress(receivedLength); // Wait for progress update to complete
+      
       // Combine buffered data with new chunk
       const newBufferedData = new Uint8Array(bufferedData.length + chunk.length);
       newBufferedData.set(bufferedData);
@@ -329,11 +334,9 @@ export async function streamDownloadAndDecrypt(
     },
 
     flush: async (controller) => {
-      // Final progress update
-      if (contentLength > 0) {
-        await onProgress(100, 'Download complete');
-      }
-
+      // Final progress update with 100%
+      await onProgress(100, 'Download complete');
+      
       // Process any remaining data
       if (bufferedData.length > 0 && decryptionInitialized) {
         const decrypted = wasmInstance.decryptChunk(bufferedData, true);

@@ -65,6 +65,12 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 			return
 		}
 
+		// Validate id contains only safe characters (same as token validation)
+		if !validateID(id) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+			return
+		}
+
 		token := c.GetHeader("X-HMAC-Token")
 		if !validateToken(token) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
@@ -202,6 +208,18 @@ func validateToken(token string) bool {
 	// Ensure token only contains safe filename characters
 	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 	for _, char := range token {
+		if !strings.ContainsRune(safeChars, char) {
+			return false
+		}
+	}
+	return true
+}
+
+// Add this function to validate ID characters
+func validateID(id string) bool {
+	// Ensure ID only contains hexadecimal characters (since it's generated as hex)
+	safeChars := "0123456789abcdefABCDEF"
+	for _, char := range id {
 		if !strings.ContainsRune(safeChars, char) {
 			return false
 		}

@@ -38,6 +38,11 @@ func NewDB(dbPath string) (*DB, error) {
 		return nil, err
 	}
 
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_txlog_timestamp ON transaction_logs (timestamp);")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_txlog_action_success_ts ON transaction_logs (action, success, timestamp);")
+
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_reqlog_timestamp ON request_logs (timestamp);")
+
 	return &DB{db: db}, nil
 }
 
@@ -79,7 +84,7 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 	// Get average latency
 	err = d.db.Model(&types.TransactionLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select("avg(duration) as avg_latency").
+		Select("COALESCE(avg(duration),0) as avg_latency").
 		Row().Scan(&metrics.AverageLatency)
 	if err != nil {
 		return metrics, err
@@ -89,7 +94,7 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 	err = d.db.Model(&types.TransactionLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
 		Group("ip").
-		Select("ip, count(*) as requests, sum(case when status_code >= 400 then 1 else 0 end) as failures").
+		Select("ip, count(*) as requests, COALESCE(SUM(case when status_code >= 400 then 1 else 0 end),0) as failures").
 		Order("requests desc").
 		Limit(10).
 		Find(&metrics.TopIPs).Error
