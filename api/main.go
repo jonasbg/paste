@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/jonasbg/paste/m/v2/cleanup"
 	"github.com/jonasbg/paste/m/v2/db"
@@ -51,6 +52,11 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
+
+	// Add compression middleware with custom options
+	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{".pdf", ".mp4", ".avi", ".mov"}),
+		gzip.WithExcludedPaths([]string{"/api/ws"})))
+
 	r.Use(middleware.Logger(database))
 
 	api := r.Group("/api")
@@ -77,6 +83,12 @@ func main() {
 	if _, err := os.Stat(spaDirectory); os.IsNotExist(err) {
 		log.Fatalf("Static files directory does not exist: %s", spaDirectory)
 	}
+
+	// Add custom WASM MIME type configuration
+	r.GET("/encryption.wasm", func(c *gin.Context) {
+		c.Header("Content-Type", "application/wasm")
+		c.FileFromFS("encryption.wasm", gin.Dir(spaDirectory, false))
+	})
 
 	r.Use(middleware.Middleware("/", spaDirectory))
 
