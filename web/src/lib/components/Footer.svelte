@@ -18,14 +18,14 @@
     right: 20px;
     z-index: 999;
   }
-  
+
   .container {
     padding: 0;
     position: relative;
     display: flex;
     justify-content: flex-end;
   }
-  
+
   .github-link {
     position: relative;
     display: flex;
@@ -33,11 +33,11 @@
     text-decoration: none;
     transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   }
-  
+
   .github-link:hover {
     transform: scale(1.05);
   }
-  
+
   .icon-container {
     background-color: white;
     border-radius: 50%;
@@ -53,22 +53,22 @@
     padding: 0.5rem;
     box-sizing: border-box;
   }
-  
+
   .github-link:hover .icon-container {
     transform: translateX(3px);
   }
-  
+
   .github-icon {
     width: 1.6rem;
     height: 1.6rem;
     fill: #24292e;
     transition: transform 0.3s ease;
   }
-  
+
   .github-link:hover .github-icon {
     transform: rotate(5deg);
   }
-  
+
   .pill {
     padding-right: 2em !important;
     background-color: #24292e;
@@ -79,24 +79,28 @@
     font-size: 0.95rem;
     font-weight: 500;
     opacity: 0;
-    transform: translateX(1.5rem);
+    transform: translateX(0) scale(0.5);
+    transform-origin: right center;
+    position: relative;
+    left: 1.5rem;
     transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     pointer-events: none;
     letter-spacing: 0.03em;
+    white-space: nowrap;
   }
-  
+
   .github-link:hover .pill {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateX(-2rem) scale(1);
     pointer-events: auto;
   }
-  
+
   @keyframes pulse {
     0% { transform: scale(1); }
     50% { transform: scale(1.08); }
     100% { transform: scale(1); }
   }
-  
+
   .icon-container {
     animation: pulse 2s ease-in-out 1;
   }
