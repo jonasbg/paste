@@ -2,8 +2,15 @@
 FROM golang:1.23-alpine AS wasm-builder
 WORKDIR /wasm
 COPY wasm/ .
-RUN GOOS=js GOARCH=wasm go build -o encryption.wasm wasm.go
-RUN cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" .
+
+RUN apk add --no-cache wget
+RUN wget https://github.com/tinygo-org/tinygo/releases/download/v0.37.0/tinygo0.37.0.linux-amd64.tar.gz \
+    && tar -xzf tinygo0.37.0.linux-amd64.tar.gz \
+    && mv tinygo /usr/local/
+
+RUN GOOS=js GOARCH=wasm /usr/local/tinygo/bin/tinygo build -o encryption.wasm --no-debug wasm.go
+
+RUN cp "/usr/local/tinygo/targets/wasm_exec.js" .
 
 # Stage 2: Build the SvelteKit frontend with Bun
 FROM node:23.9.0-alpine3.21 AS frontend-builder
