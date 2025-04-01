@@ -25,13 +25,13 @@ type StorageSummary struct {
 }
 
 type SecurityMetrics struct {
-	Period         string        `json:"period"`
-	StatusCodes    map[int]int64 `json:"status_codes"`
-	TotalRequests  int64         `json:"total_requests"`
-	FailedRequests int64         `json:"failed_requests"`
-	UniqueIPs      int64         `json:"unique_ips"`
-	TopIPs         []IPStats     `json:"top_ips"`
-	AverageLatency float64       `json:"average_latency"`
+	Period         string         `json:"period"`
+	StatusCodes    map[int]int64  `json:"status_codes"`
+	TotalRequests  int64          `json:"total_requests"`
+	FailedRequests int64          `json:"failed_requests"`
+	UniqueIPs      int64          `json:"unique_ips"`
+	TopIPs         []TopIPMetrics `json:"top_ips"`
+	AverageLatency float64        `json:"average_latency"`
 }
 
 type IPStats struct {
