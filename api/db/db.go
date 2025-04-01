@@ -84,7 +84,7 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 	// Get average latency
 	err = d.db.Model(&types.TransactionLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
-		Select("avg(duration) as avg_latency").
+		Select("COALESCE(avg(duration),0) as avg_latency").
 		Row().Scan(&metrics.AverageLatency)
 	if err != nil {
 		return metrics, err
