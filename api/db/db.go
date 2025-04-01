@@ -56,40 +56,38 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 
 	// 1. Get combined simple aggregates (Total, Failed, Avg Latency)
 	var simpleAggregates struct {
-		TotalRequests  int64
-		FailedRequests int64           // Using SUM(CASE...) is slightly more portable than COUNT(CASE...)
+		TotalRequests  int64           // COUNT(*) returns 0 for no rows, so it's safe as int64
+		FailedRequests int64           // Will receive 0 from COALESCE if SUM is NULL
 		AvgLatency     sql.NullFloat64 // Keep using sql.NullFloat64 for AVG
 	}
+
 	err := baseQuery.Select(`
 			COUNT(*) as total_requests,
-			SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as failed_requests,
+			COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) as failed_requests,
 			AVG(duration) as avg_latency
 	`).Row().Scan(
 		&simpleAggregates.TotalRequests,
-		&simpleAggregates.FailedRequests,
+		&simpleAggregates.FailedRequests, // Now scanning into int64 is safe
 		&simpleAggregates.AvgLatency,
 	)
-	// Check for ErrRecordNotFound specifically if needed, though aggregates usually return 0/NULL
-	if err != nil && err != sql.ErrNoRows { // Allow sql.ErrNoRows for aggregates
-		return metrics, err
+	if err != nil {
+		return metrics, err // Return other errors
 	}
 
 	metrics.TotalRequests = simpleAggregates.TotalRequests
-	metrics.FailedRequests = simpleAggregates.FailedRequests
+	metrics.FailedRequests = simpleAggregates.FailedRequests // Direct assignment is now safe
 	if simpleAggregates.AvgLatency.Valid {
 		metrics.AverageLatency = simpleAggregates.AvgLatency.Float64
 	} else {
-		metrics.AverageLatency = 0
+		metrics.AverageLatency = 0 // Handle NULL average latency
 	}
 
-	// 2. Get status code distribution (Requires GROUP BY status_code)
 	var statusResults []struct {
 		StatusCode int
 		Count      int64
 	}
-	// Re-use baseQuery by cloning it if needed, or create anew
 	err = d.db.Model(&types.TransactionLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end). // Repeat Where for clarity or Clone baseQuery
+		Where("timestamp BETWEEN ? AND ?", start, end).
 		Group("status_code").
 		Select("status_code, count(*) as count").
 		Find(&statusResults).Error
@@ -98,29 +96,33 @@ func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, er
 	}
 	for _, r := range statusResults {
 		metrics.StatusCodes[r.StatusCode] = r.Count
-		// Note: TotalRequests is already calculated above, no need to sum here
 	}
 
-	// 3. Get unique IPs (Requires DISTINCT)
+	var uniqueIPCount int64
 	err = d.db.Model(&types.TransactionLog{}).
 		Where("timestamp BETWEEN ? AND ?", start, end).
-		Distinct("ip").
-		Count(&metrics.UniqueIPs).Error
+		Select("COUNT(DISTINCT ip)").
+		Row().Scan(&uniqueIPCount)
+	// Handle potential error during scan (though COUNT should return 0 if no rows)
+	if err != nil && err != sql.ErrNoRows {
+		return metrics, err
+	}
+	metrics.UniqueIPs = uniqueIPCount
+
+	// 4. Get top 10 IPs
+	err = d.db.Model(&types.TransactionLog{}).
+		Where("timestamp BETWEEN ? AND ?", start, end).
+		Group("ip").
+		// Add COALESCE here too for consistency, though count(*) should be okay
+		Select("ip, count(*) as requests, COALESCE(sum(case when status_code >= 400 then 1 else 0 end), 0) as failures").
+		Order("requests desc").
+		Limit(10).
+		Find(&metrics.TopIPs).Error // Ensure types.IPStats struct fields match 'ip', 'requests', 'failures'
 	if err != nil {
 		return metrics, err
 	}
 
-	// 4. Get top 10 IPs (Requires GROUP BY ip)
-	err = d.db.Model(&types.TransactionLog{}).
-		Where("timestamp BETWEEN ? AND ?", start, end).
-		Group("ip").
-		// Using SUM(CASE...) for failures is often clearer
-		Select("ip, count(*) as requests, sum(case when status_code >= 400 then 1 else 0 end) as failures").
-		Order("requests desc").
-		Limit(10).
-		Find(&metrics.TopIPs).Error // Assumes metrics.TopIPs is already initialized []types.IPMetric
-
-	return metrics, err
+	return metrics, nil // return nil error on success
 }
 
 func (d *DB) GetActivitySummary(start, end time.Time) ([]types.ActivitySummary, error) {
