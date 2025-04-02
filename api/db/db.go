@@ -50,7 +50,6 @@ func NewDB(dbPath string) (*DB, error) {
 
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_reqlog_timestamp ON request_logs (timestamp);")
 
-
 	return &DB{db: db}, nil
 }
 
@@ -267,6 +266,21 @@ func (d *DB) LogRequest(log *types.RequestLog) error {
 
 func (d *DB) CleanOldRequestLogs(before time.Time) error {
 	return d.db.Where("timestamp < ?", before).Delete(&types.RequestLog{}).Error
+}
+
+func (d *DB) BatchInsertTransactionLogs(logs []*types.TransactionLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	return d.db.Create(&logs).Error
+}
+
+// BatchInsertRequestLogs inserts multiple request logs in a single operation
+func (d *DB) BatchInsertRequestLogs(logs []*types.RequestLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	return d.db.Create(&logs).Error
 }
 
 func (d *DB) GetRequestMetrics(start, end time.Time) (types.RequestMetrics, error) {
