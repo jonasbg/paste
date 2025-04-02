@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,7 +11,31 @@ import (
 	"github.com/jonasbg/paste/m/v2/utils"
 )
 
+// Global log manager instance
+var (
+	logManager *LogManager
+	logOnce    sync.Once
+)
+
+// InitLogManager initializes the global log manager
+func InitLogManager(database *db.DB, options ...func(*LogManager)) {
+	logOnce.Do(func() {
+		logManager = NewLogManager(database, options...)
+	})
+}
+
+// CloseLogManager shuts down the log manager and flushes all logs
+func CloseLogManager() {
+	if logManager != nil {
+		logManager.Close()
+	}
+}
+
+// Logger returns a middleware function that logs requests
 func Logger(database *db.DB) gin.HandlerFunc {
+	// Initialize log manager if not already done
+	InitLogManager(database)
+
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
@@ -62,10 +87,8 @@ func Logger(database *db.DB) gin.HandlerFunc {
 			requestLog.Error = c.Errors.String()
 		}
 
-		// Log the request
-		if err := database.LogRequest(requestLog); err != nil {
-			c.Error(err)
-		}
+		// Log the request using the log manager
+		logManager.LogRequest(requestLog)
 
 		// Complete transaction log if it exists
 		if tx != nil {
@@ -91,9 +114,7 @@ func Logger(database *db.DB) gin.HandlerFunc {
 
 			// Only log if we have a valid file ID or there was an error
 			if tx.FileID != "" || !tx.Success {
-				if err := database.LogTransaction(tx); err != nil {
-					c.Error(err)
-				}
+				logManager.LogTransaction(tx)
 			}
 		}
 
@@ -105,18 +126,19 @@ func Logger(database *db.DB) gin.HandlerFunc {
 	}
 }
 
+// The helper functions remain unchanged
 func isFileOperation(path string) bool {
 	return strings.HasPrefix(path, "/api/upload") ||
 		strings.HasPrefix(path, "/api/download") ||
 		strings.HasPrefix(path, "/api/metadata") ||
-		strings.HasPrefix(path, "/api/ws/upload") // Add WebSocket path
+		strings.HasPrefix(path, "/api/ws/upload")
 }
 
 func getMethodType(c *gin.Context) string {
 	if c.IsWebsocket() {
 		return "websocket"
 	}
-	return strings.ToLower(c.Request.Method) // "get", "post", etc.
+	return strings.ToLower(c.Request.Method)
 }
 
 func getActionType(path string, method string) string {

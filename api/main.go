@@ -3,7 +3,9 @@ package main
 import (
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
@@ -104,6 +106,18 @@ func main() {
 
 	cleanup.StartLogRotation(database)
 	cleanup.StartFileCleanup(uploadDir)
+
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		<-c
+		log.Println("Shutting down server...")
+
+		// Flush logs before exit
+		middleware.CloseLogManager()
+		log.Println("Logs flushed, shutting down")
+		os.Exit(0)
+	}()
 
 	log.Printf("Starting server on :8080 with upload directory: %s", uploadDir)
 	log.Fatal(r.Run(":8080"))
