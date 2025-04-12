@@ -1,5 +1,7 @@
 # Paste (pɛjstə)
 
+![paste banner](.github/docs/paste_banner.png)
+
 Zero-knowledge file sharing server with client-side encryption in Golang. The server never sees unencrypted file contents or metadata.
 
 Paste is created to be an easy and secure way of sharing a file with someone for a short period of time.
