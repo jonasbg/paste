@@ -3,7 +3,7 @@ module github.com/jonasbg/paste/m/v2
 go 1.23
 
 require (
-	github.com/gin-gonic/gin v1.10.0
+	github.com/gin-gonic/gin v1.10.1
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/sys v0.30.0
 	golang.org/x/time v0.10.0
