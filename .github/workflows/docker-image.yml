@@ -52,7 +52,7 @@ jobs:
         with:
           registry: ${{ vars.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Build and push Docker image with caching
       - name: Build and push Docker image
@@ -92,7 +92,7 @@ jobs:
           DIGEST="latest@$DIGEST"
           sed -i "s/tag: \"latest\"/tag: \"$DIGEST\"/" .helm/values.yaml
 
-          echo ${{ secrets.REGISTRY_ACCESS_TOKEN }} | helm registry login ${{ vars.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ vars.REGISTRY }} -u ${{ github.actor }} --password-stdin
           cd .helm
           helm package .
 
