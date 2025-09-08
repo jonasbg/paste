@@ -84,10 +84,17 @@ npm run dev
 ## 🔌 API Endpoints
 
 ```bash
-GET    /api/download/:id      # Download encrypted blob
-GET    /api/metadata/:id      # Get encrypted metadata
-GET    /api/ws/upload         # WebSocket upload for large files
-GET    /api/metrics/*         # Server stats (no file info)
+GET    /api/config                 # Get server configuration
+GET    /api/download/:id           # Download encrypted blob
+GET    /api/metadata/:id           # Get encrypted metadata
+DELETE /api/delete/:id             # Delete a file
+GET    /api/ws/upload              # WebSocket upload for large files
+GET    /api/ws/download            # WebSocket download for large files
+GET    /api/metrics/activity       # Server activity statistics
+GET    /api/metrics/storage        # Storage usage statistics
+GET    /api/metrics/requests       # Request statistics
+GET    /api/metrics/security       # Security-related metrics
+GET    /api/metrics/upload-history # Upload history statistics
 ```
 
 ## 🌍 Environment Variables
@@ -105,6 +112,8 @@ The application can be configured using the following environment variables:
 | `ID_SIZE`        | Size of the generated IDs.                       | `64` (bit)       | One of: `64`, `128`, `192`, `256` (case-insensitive).              | `128`           |
 | `KEY_SIZE`       | Size of the encryption keys.                     | `128`       | One of: `128`, `192`, `256` (case-insensitive).              | `256`           |
 | `CHUNK_SIZE` | Size of chunks in transmission. Higher is faster transmission, but you can hit max WAF limits. Don't change if you don't know what this does! | `4` | `1`,`4` this is in MB |
+| `METRICS_ALLOWED_IPS` | IP addresses allowed to access metrics endpoints (CIDR format, comma-separated) | `127.0.0.1/8,::1/128` | `192.168.1.0/24,10.0.0.0/8` |
+| `TRUSTED_PROXIES` | IP ranges of trusted proxies for correct client IP detection (CIDR format, comma-separated) | `10.0.0.0/8` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
 
 ## 🛡️ Security Implementation Details
 
@@ -137,7 +146,6 @@ This section provides a deeper dive into how Paste achieves its security goals.
     - **Client-Side Generation:** Note that the token generation happens within the WebAssembly module in the user's browser.
 - **Verification:**
     - The client provides the File ID and the *HMAC token* (in the request headers) when requesting a download or metadata. The encryption key itself is *never* sent to the server.
-    - The `fetchMetadata` function (`+page.svelte`, and likely `downloadAndDecryptFile`) sends both file id and HMAC token.
     - The server uses the file id to fetch the stored encrypted blob.
     - The client-computed HMAC token helps ensure that whoever is requesting to decrypt the file *actually possesses* the correct encryption key. Since only someone with the key can generate the correct token, successful token generation implies authorized access.
 
@@ -183,6 +191,32 @@ Files are processed in 1MB chunks, allowing for efficient handling of large file
 
 ### Can I delete files after upload?
 Yes, by downloading the blob.
+
+## 🚀 Performance Tuning
+
+Several optimizations are in place to improve large file transfer throughput:
+
+- Increased WebSocket read/write buffers to 64KB (was 1KB) to reduce syscall overhead.
+- WebSocket download now uses the configured `CHUNK_SIZE` (in MB) + 16 bytes (GCM tag) instead of a fixed 32KB buffer.
+- ACKs for download are batched (every 8 chunks) to reduce round‑trip latency. (Adjust `batchAckInterval` in `websocket.go`).
+- `/api/download` is excluded from gzip compression since encrypted data is already high entropy and uncompressible—this saves CPU.
+ - Upload path now sends ACK *before* persisting chunk (early ack) to let the client prepare/send the next frame sooner; disk flush happens asynchronously after the ack.
+
+Environment variable guidance:
+
+| Variable | Description | Suggested Values |
+|----------|-------------|------------------|
+| `CHUNK_SIZE` | Chunk size in MB for upload/download (encryption frames). | 4–8 (test 16 for LAN/high BW) |
+| `MAX_FILE_SIZE` | Maximum accepted file size. | Keep within infra limits |
+
+Further improvements you can try:
+
+1. Raise `CHUNK_SIZE` gradually while monitoring memory and proxy limits.
+2. Increase ACK batch size or move to a single final integrity check (would require client protocol changes).
+3. Ensure TLS termination and reverse proxy aren’t buffering entire WS frames.
+4. Run benchmarks (e.g. 1GB file) and watch CPU, memory, and effective Mbps.
+
+Encrypted data is effectively incompressible—avoid middleware that attempts to transform or compress these streams.
 
 ## 📝 License
 

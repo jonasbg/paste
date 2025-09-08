@@ -177,15 +177,6 @@
                 'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
         }
 
-        // Additional Deletion Attempt (unchanged)
-        fetch(`/api/delete-file/${fileId}`, {
-            method: 'DELETE',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-HMAC-Token': hmacToken
-            }
-        }).catch(err => console.error('Error deleting file:', err));
-
         // Clean the URL in the browser
         if (browser) {
             window.history.replaceState({}, '', '/');
