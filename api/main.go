@@ -95,6 +95,8 @@ func main() {
 		log.Fatalf("Static files directory does not exist: %s", spaDirectory)
 	}
 
+	r.Use(middleware.CacheHeaders(spaDirectory))
+
 	// Add custom WASM MIME type configuration
 	r.GET("/encryption.wasm", func(c *gin.Context) {
 		c.Header("Content-Type", "application/wasm")
