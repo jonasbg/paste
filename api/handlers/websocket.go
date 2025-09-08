@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -18,10 +19,11 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	// Larger buffers reduce syscall overhead for large binary frames (default 1KB -> 64KB)
+	ReadBufferSize:  64 * 1024,
+	WriteBufferSize: 64 * 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Adjust based on your security needs
+		return true // TODO: tighten this with origin checks if exposed publicly
 	},
 }
 
@@ -124,83 +126,90 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		// Stream file in chunks
-		buffer := make([]byte, bufferSize)
+		// Use the configured chunk size (+16 tag) to match upload pipeline; fall back to 1MB if unset
+		configuredChunkBytes := GlobalConfig.ChunkSize * 1024 * 1024
+		if configuredChunkBytes <= 0 {
+			configuredChunkBytes = 1 * 1024 * 1024
+		}
+		buffer := make([]byte, configuredChunkBytes+16)
 		var totalSent int64 = 0
 		var isComplete = false
+		// Ack batching: require client to ack every batchAckInterval chunks instead of every chunk
+		const batchAckInterval = 8 // tuneable; higher reduces round trips
+		chunksSinceAck := 0
 
 		for {
 			n, err := file.Read(buffer)
-
-			// Send chunk if we read any data
 			if n > 0 {
 				if err := ws.WriteMessage(websocket.BinaryMessage, buffer[:n]); err != nil {
 					log.Printf("Error sending chunk: %v", err)
 					return
 				}
-
 				totalSent += int64(n)
+				chunksSinceAck++
 
-				// Wait for acknowledgment
-				_, ackMsg, err := ws.ReadMessage()
-				if err != nil {
-					log.Printf("Error receiving ack: %v", err)
-					return
-				}
-
-				var ack struct {
-					Type string `json:"type"`
-					Size int    `json:"size"`
-				}
-				if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" || ack.Size != n {
-					log.Printf("Invalid ack: %v", err)
-					return
+				// Only wait for an ACK every batchAckInterval chunks to improve throughput
+				if chunksSinceAck >= batchAckInterval {
+					_, ackMsg, err := ws.ReadMessage()
+					if err != nil {
+						log.Printf("Error receiving ack: %v", err)
+						return
+					}
+					var ack struct {
+						Type string `json:"type"`
+						Size int    `json:"size"`
+					}
+					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" || ack.Size != n {
+						log.Printf("Invalid ack: %v (expected size %d, got %d)", err, n, ack.Size)
+						return
+					}
+					chunksSinceAck = 0
 				}
 			}
 
-			// Check for end of file
 			if err == io.EOF {
-				// Send completion message
-				if err := ws.WriteJSON(gin.H{
-					"type": "complete",
-					"size": totalSent,
-				}); err != nil {
+				// Flush final ack if there are outstanding unacked chunks
+				if chunksSinceAck > 0 {
+					_, ackMsg, err := ws.ReadMessage()
+					if err != nil {
+						log.Printf("Error receiving final batch ack: %v", err)
+						return
+					}
+					var ack struct {
+						Type string `json:"type"`
+					}
+					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" {
+						log.Printf("Invalid final batch ack: %v", err)
+						return
+					}
+				}
+
+				if err := ws.WriteJSON(gin.H{"type": "complete", "size": totalSent}); err != nil {
 					log.Printf("Failed to send complete message: %v", err)
 					return
 				}
-
-				// Wait for final acknowledgment
 				_, completeMsg, err := ws.ReadMessage()
 				if err != nil {
 					log.Printf("Error receiving final ack: %v", err)
 					return
 				}
-
 				var complete struct {
 					Type     string `json:"type"`
 					Complete bool   `json:"complete"`
 				}
-				if err := json.Unmarshal(completeMsg, &complete); err != nil {
-					log.Printf("Error unmarshaling complete ack: %v", err)
+				if err := json.Unmarshal(completeMsg, &complete); err != nil || complete.Type != "complete_ack" || !complete.Complete {
+					log.Printf("Invalid complete ack")
 					return
 				}
-
-				if complete.Type != "complete_ack" || !complete.Complete {
-					log.Printf("Invalid complete ack: type=%s, complete=%v", complete.Type, complete.Complete)
-					return
-				}
-
 				isComplete = true
 				break
 			}
 
-			// Check for other errors during read
 			if err != nil {
 				log.Printf("Error reading file: %v", err)
 				sendError(ws, "Error reading file")
 				return
 			}
-
-			// Break if no data was read (unexpected case)
 			if n == 0 {
 				break
 			}
@@ -338,7 +347,12 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			sendError(ws, "Failed to create file")
 			return
 		}
-		defer file.Close()
+		// Buffered writer to minimize syscalls; buffer ~2 chunks
+		bufWriter := bufio.NewWriterSize(file, (GlobalConfig.ChunkSize*1024*1024+16)*2)
+		defer func() {
+			bufWriter.Flush()
+			file.Close()
+		}()
 
 		// 5. Read and Validate Encrypted Metadata Header
 		_, header, err := ws.ReadMessage()
@@ -372,7 +386,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		if _, err := file.Write(header); err != nil {
+		if _, err := bufWriter.Write(header); err != nil {
 			cleanup(ws, tmpPath, "Failed to write header")
 			return
 		}
@@ -391,7 +405,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		if _, err := file.Write(iv); err != nil {
+		if _, err := bufWriter.Write(iv); err != nil {
 			cleanup(ws, tmpPath, "Failed to write IV")
 			return
 		}
@@ -405,46 +419,49 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				return
 			}
 
-			// Check for end signal (single byte 0)
+			// End signal (single byte 0)
 			if len(chunk) == 1 && chunk[0] == 0 {
 				break
 			}
 
-			// Chunk Size Validation (Critical)
-			// Maximum chunk size should be 1MB (data) + 16 bytes (GCM tag)
+			// Validate size
 			if len(chunk) > (GlobalConfig.ChunkSize*1024*1024 + 16) {
 				cleanup(ws, tmpPath, "Chunk size exceeds maximum")
 				return
 			}
-
-			// Minimum chunk size check.  A valid encrypted chunk *must* be at least 16 bytes (the GCM tag).
-			if len(chunk) < 16 {
+			if len(chunk) < 16 { // must at least contain GCM tag
 				cleanup(ws, tmpPath, "Chunk size too small")
 				return
 			}
 
-			if _, err := file.Write(chunk); err != nil {
-				cleanup(ws, tmpPath, "Failed to write chunk")
-				return
-			}
-
 			chunkSize := int64(len(chunk))
-			totalBytes += chunkSize
-
-			if totalBytes > int64(GlobalConfig.MaxFileSizeBytes) {
+			projectedTotal := totalBytes + chunkSize
+			if projectedTotal > int64(GlobalConfig.MaxFileSizeBytes) {
 				cleanup(ws, tmpPath, "File too large")
 				return
 			}
 
-			// Send Acknowledgement
+			// EARLY ACK: send acknowledgement BEFORE disk write to let client pipeline faster
 			if err := ws.WriteJSON(gin.H{"ack": chunkSize}); err != nil {
 				log.Printf("Failed to send acknowledgement: %v", err)
 				cleanup(ws, tmpPath, "Failed to send acknowledgement")
 				return
 			}
+
+			// Now persist chunk
+			if _, err := bufWriter.Write(chunk); err != nil {
+				cleanup(ws, tmpPath, "Failed to write chunk")
+				return
+			}
+			totalBytes = projectedTotal
 		}
 
 		// 8. Finalization
+		// Ensure all buffered data is flushed before closing/renaming
+		if err := bufWriter.Flush(); err != nil {
+			cleanup(ws, tmpPath, "Error flushing buffer")
+			return
+		}
 		if err := file.Close(); err != nil { // Close before rename
 			cleanup(ws, tmpPath, "Error closing file")
 			return

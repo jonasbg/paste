@@ -63,14 +63,14 @@ func GetRealIP(c *gin.Context) string {
 		return cfIP // Cloudflare-specific header
 	}
 
-	if realIP := c.GetHeader("X-Real-IP"); realIP != "" {
-		return realIP
-	}
-
 	// For X-Forwarded-For, use the leftmost value as it's the original client
 	if forwardedFor := c.GetHeader("X-Forwarded-For"); forwardedFor != "" {
 		ips := strings.Split(forwardedFor, ",")
 		return strings.TrimSpace(ips[0])
+	}
+
+	if realIP := c.GetHeader("X-Real-IP"); realIP != "" {
+		return realIP
 	}
 
 	// Fallback to other headers
