@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"mime"
 	"net/http"
 	"os"
@@ -53,13 +54,17 @@ func Middleware(urlPrefix, spaDirectory string) gin.HandlerFunc {
 			fileCache.mutex.RUnlock()
 
 			if exists {
-				// Serve from cache
+				// Always serve from cache regardless of client cache headers
+				fmt.Printf("[SPA Cache] HIT: %s (size: %d bytes)\n", filePath, len(cachedFile.Content))
 				c.Header("Content-Type", cachedFile.ContentType)
 				c.Header("Last-Modified", cachedFile.ModTime.Format(http.TimeFormat))
+				c.Header("Cache-Control", "no-cache") // Forces revalidation but we'll always serve our cached version
 				c.Data(http.StatusOK, cachedFile.ContentType, cachedFile.Content)
 				c.Abort()
 				return
 			}
+
+			fmt.Printf("[SPA Cache] MISS: %s\n", filePath)
 
 			// Check if file exists on disk
 			file, err := http.Dir(spaDirectory).Open(filePath)
@@ -112,15 +117,17 @@ func Middleware(urlPrefix, spaDirectory string) gin.HandlerFunc {
 		fileCache.mutex.RUnlock()
 
 		if exists {
-			// Serve index.html from cache
+			// Always serve index.html from cache regardless of client cache headers
+			fmt.Printf("[SPA Cache] HIT: %s (size: %d bytes)\n", indexPath, len(cachedIndex.Content))
 			c.Header("Content-Type", cachedIndex.ContentType)
 			c.Header("Last-Modified", cachedIndex.ModTime.Format(http.TimeFormat))
+			c.Header("Cache-Control", "no-cache") // Forces revalidation but we'll always serve our cached version
 			c.Data(http.StatusOK, cachedIndex.ContentType, cachedIndex.Content)
 			c.Abort()
 			return
 		}
 
-		// Fallback to standard file server
+		fmt.Printf("[SPA Cache] MISS: %s (fallback)\n", indexPath) // Fallback to standard file server
 		c.Request.URL.Path = "/"
 		c.Header("Content-Type", "text/html")
 		fileserver.ServeHTTP(c.Writer, c.Request)
