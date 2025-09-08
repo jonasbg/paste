@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -158,8 +159,8 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 						Type string `json:"type"`
 						Size int    `json:"size"`
 					}
-					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" {
-						log.Printf("Invalid ack: %v", err)
+					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" || ack.Size != n {
+						log.Printf("Invalid ack: %v (expected size %d, got %d)", err, n, ack.Size)
 						return
 					}
 					chunksSinceAck = 0
@@ -346,7 +347,12 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			sendError(ws, "Failed to create file")
 			return
 		}
-		defer file.Close()
+		// Buffered writer to minimize syscalls; buffer ~2 chunks
+		bufWriter := bufio.NewWriterSize(file, (GlobalConfig.ChunkSize*1024*1024+16)*2)
+		defer func() {
+			bufWriter.Flush()
+			file.Close()
+		}()
 
 		// 5. Read and Validate Encrypted Metadata Header
 		_, header, err := ws.ReadMessage()
@@ -380,7 +386,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		if _, err := file.Write(header); err != nil {
+		if _, err := bufWriter.Write(header); err != nil {
 			cleanup(ws, tmpPath, "Failed to write header")
 			return
 		}
@@ -399,7 +405,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		if _, err := file.Write(iv); err != nil {
+		if _, err := bufWriter.Write(iv); err != nil {
 			cleanup(ws, tmpPath, "Failed to write IV")
 			return
 		}
@@ -413,46 +419,49 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				return
 			}
 
-			// Check for end signal (single byte 0)
+			// End signal (single byte 0)
 			if len(chunk) == 1 && chunk[0] == 0 {
 				break
 			}
 
-			// Chunk Size Validation (Critical)
-			// Maximum chunk size should be 1MB (data) + 16 bytes (GCM tag)
+			// Validate size
 			if len(chunk) > (GlobalConfig.ChunkSize*1024*1024 + 16) {
 				cleanup(ws, tmpPath, "Chunk size exceeds maximum")
 				return
 			}
-
-			// Minimum chunk size check.  A valid encrypted chunk *must* be at least 16 bytes (the GCM tag).
-			if len(chunk) < 16 {
+			if len(chunk) < 16 { // must at least contain GCM tag
 				cleanup(ws, tmpPath, "Chunk size too small")
 				return
 			}
 
-			if _, err := file.Write(chunk); err != nil {
-				cleanup(ws, tmpPath, "Failed to write chunk")
-				return
-			}
-
 			chunkSize := int64(len(chunk))
-			totalBytes += chunkSize
-
-			if totalBytes > int64(GlobalConfig.MaxFileSizeBytes) {
+			projectedTotal := totalBytes + chunkSize
+			if projectedTotal > int64(GlobalConfig.MaxFileSizeBytes) {
 				cleanup(ws, tmpPath, "File too large")
 				return
 			}
 
-			// Send Acknowledgement
+			// EARLY ACK: send acknowledgement BEFORE disk write to let client pipeline faster
 			if err := ws.WriteJSON(gin.H{"ack": chunkSize}); err != nil {
 				log.Printf("Failed to send acknowledgement: %v", err)
 				cleanup(ws, tmpPath, "Failed to send acknowledgement")
 				return
 			}
+
+			// Now persist chunk
+			if _, err := bufWriter.Write(chunk); err != nil {
+				cleanup(ws, tmpPath, "Failed to write chunk")
+				return
+			}
+			totalBytes = projectedTotal
 		}
 
 		// 8. Finalization
+		// Ensure all buffered data is flushed before closing/renaming
+		if err := bufWriter.Flush(); err != nil {
+			cleanup(ws, tmpPath, "Error flushing buffer")
+			return
+		}
 		if err := file.Close(); err != nil { // Close before rename
 			cleanup(ws, tmpPath, "Error closing file")
 			return
