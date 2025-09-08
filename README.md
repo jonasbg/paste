@@ -190,7 +190,7 @@ Files are processed in 1MB chunks, allowing for efficient handling of large file
 ### Can I delete files after upload?
 Yes, by downloading the blob.
 
-## � Performance Tuning
+## 🚀 Performance Tuning
 
 Several optimizations are in place to improve large file transfer throughput:
 
@@ -198,6 +198,7 @@ Several optimizations are in place to improve large file transfer throughput:
 - WebSocket download now uses the configured `CHUNK_SIZE` (in MB) + 16 bytes (GCM tag) instead of a fixed 32KB buffer.
 - ACKs for download are batched (every 8 chunks) to reduce round‑trip latency. (Adjust `batchAckInterval` in `websocket.go`).
 - `/api/download` is excluded from gzip compression since encrypted data is already high entropy and uncompressible—this saves CPU.
+ - Upload path now sends ACK *before* persisting chunk (early ack) to let the client prepare/send the next frame sooner; disk flush happens asynchronously after the ack.
 
 Environment variable guidance:
 
@@ -215,6 +216,6 @@ Further improvements you can try:
 
 Encrypted data is effectively incompressible—avoid middleware that attempts to transform or compress these streams.
 
-## �📝 License
+## 📝 License
 
 MIT License - see [LICENSE](LICENSE)
