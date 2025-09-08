@@ -18,10 +18,11 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	// Larger buffers reduce syscall overhead for large binary frames (default 1KB -> 64KB)
+	ReadBufferSize:  64 * 1024,
+	WriteBufferSize: 64 * 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Adjust based on your security needs
+		return true // TODO: tighten this with origin checks if exposed publicly
 	},
 }
 
@@ -124,83 +125,90 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		// Stream file in chunks
-		buffer := make([]byte, bufferSize)
+		// Use the configured chunk size (+16 tag) to match upload pipeline; fall back to 1MB if unset
+		configuredChunkBytes := GlobalConfig.ChunkSize * 1024 * 1024
+		if configuredChunkBytes <= 0 {
+			configuredChunkBytes = 1 * 1024 * 1024
+		}
+		buffer := make([]byte, configuredChunkBytes+16)
 		var totalSent int64 = 0
 		var isComplete = false
+		// Ack batching: require client to ack every batchAckInterval chunks instead of every chunk
+		const batchAckInterval = 8 // tuneable; higher reduces round trips
+		chunksSinceAck := 0
 
 		for {
 			n, err := file.Read(buffer)
-
-			// Send chunk if we read any data
 			if n > 0 {
 				if err := ws.WriteMessage(websocket.BinaryMessage, buffer[:n]); err != nil {
 					log.Printf("Error sending chunk: %v", err)
 					return
 				}
-
 				totalSent += int64(n)
+				chunksSinceAck++
 
-				// Wait for acknowledgment
-				_, ackMsg, err := ws.ReadMessage()
-				if err != nil {
-					log.Printf("Error receiving ack: %v", err)
-					return
-				}
-
-				var ack struct {
-					Type string `json:"type"`
-					Size int    `json:"size"`
-				}
-				if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" || ack.Size != n {
-					log.Printf("Invalid ack: %v", err)
-					return
+				// Only wait for an ACK every batchAckInterval chunks to improve throughput
+				if chunksSinceAck >= batchAckInterval {
+					_, ackMsg, err := ws.ReadMessage()
+					if err != nil {
+						log.Printf("Error receiving ack: %v", err)
+						return
+					}
+					var ack struct {
+						Type string `json:"type"`
+						Size int    `json:"size"`
+					}
+					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" {
+						log.Printf("Invalid ack: %v", err)
+						return
+					}
+					chunksSinceAck = 0
 				}
 			}
 
-			// Check for end of file
 			if err == io.EOF {
-				// Send completion message
-				if err := ws.WriteJSON(gin.H{
-					"type": "complete",
-					"size": totalSent,
-				}); err != nil {
+				// Flush final ack if there are outstanding unacked chunks
+				if chunksSinceAck > 0 {
+					_, ackMsg, err := ws.ReadMessage()
+					if err != nil {
+						log.Printf("Error receiving final batch ack: %v", err)
+						return
+					}
+					var ack struct {
+						Type string `json:"type"`
+					}
+					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" {
+						log.Printf("Invalid final batch ack: %v", err)
+						return
+					}
+				}
+
+				if err := ws.WriteJSON(gin.H{"type": "complete", "size": totalSent}); err != nil {
 					log.Printf("Failed to send complete message: %v", err)
 					return
 				}
-
-				// Wait for final acknowledgment
 				_, completeMsg, err := ws.ReadMessage()
 				if err != nil {
 					log.Printf("Error receiving final ack: %v", err)
 					return
 				}
-
 				var complete struct {
 					Type     string `json:"type"`
 					Complete bool   `json:"complete"`
 				}
-				if err := json.Unmarshal(completeMsg, &complete); err != nil {
-					log.Printf("Error unmarshaling complete ack: %v", err)
+				if err := json.Unmarshal(completeMsg, &complete); err != nil || complete.Type != "complete_ack" || !complete.Complete {
+					log.Printf("Invalid complete ack")
 					return
 				}
-
-				if complete.Type != "complete_ack" || !complete.Complete {
-					log.Printf("Invalid complete ack: type=%s, complete=%v", complete.Type, complete.Complete)
-					return
-				}
-
 				isComplete = true
 				break
 			}
 
-			// Check for other errors during read
 			if err != nil {
 				log.Printf("Error reading file: %v", err)
 				sendError(ws, "Error reading file")
 				return
 			}
-
-			// Break if no data was read (unexpected case)
 			if n == 0 {
 				break
 			}

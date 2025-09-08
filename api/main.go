@@ -52,13 +52,14 @@ func main() {
 
 	r := gin.New()
 	r.SetTrustedProxies(utils.GetTrustedProxies())
-	r.TrustedPlatform = "X-Real-IP"
+	r.TrustedPlatform = "X-Forwarded-For"
 
 	r.Use(gin.Logger(), gin.Recovery())
 
 	// Add compression middleware with custom options
 	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{".pdf", ".mp4", ".avi", ".mov"}),
-		gzip.WithExcludedPaths([]string{"/api/ws"})))
+		// Exclude websocket endpoints and raw download endpoint (already encrypted/compressed data)
+		gzip.WithExcludedPaths([]string{"/api/ws", "/api/download"})))
 
 	r.Use(middleware.Logger(database))
 
