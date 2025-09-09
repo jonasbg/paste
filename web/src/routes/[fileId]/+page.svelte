@@ -197,6 +197,7 @@
 		if (!browser) return;
 
 		try {
+			const { initWasm } = await import('$lib/utils/wasm-loader');
 			await initWasm();
 			if (window.location.hash) {
 				// Check if a hash exists

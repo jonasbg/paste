@@ -4,8 +4,8 @@ WORKDIR /wasm
 COPY wasm/ .
 
 RUN apk add --no-cache wget
-RUN wget https://github.com/tinygo-org/tinygo/releases/download/v0.37.0/tinygo0.37.0.linux-amd64.tar.gz \
-    && tar -xzf tinygo0.37.0.linux-amd64.tar.gz \
+RUN wget https://github.com/tinygo-org/tinygo/releases/download/v0.39.0/tinygo0.39.0.linux-amd64.tar.gz \
+    && tar -xzf tinygo0.39.0.linux-amd64.tar.gz \
     && mv tinygo /usr/local/
 
 RUN GOOS=js GOARCH=wasm /usr/local/tinygo/bin/tinygo build -o encryption.wasm --no-debug wasm.go
