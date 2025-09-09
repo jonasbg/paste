@@ -1,5 +1,5 @@
 # Stage 1: Build WASM binaries and dependencies
-FROM golang:1.23-alpine AS wasm-builder
+FROM golang:1.24-alpine AS wasm-builder
 WORKDIR /wasm
 COPY wasm/ .
 
@@ -29,7 +29,7 @@ COPY web .
 RUN NODE_ENV=production npm run build
 
 # Stage 3: Build the Go backend
-FROM golang:1.23-alpine AS backend-builder
+FROM golang:1.24-alpine AS backend-builder
 RUN apk add --update gcc musl-dev sqlite-dev --no-cache
 
 WORKDIR /app/backend

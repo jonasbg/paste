@@ -97,3 +97,5 @@ jobs:
           helm package .
 
           helm push *.tgz oci://${{ vars.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
