@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
-	import { initWasm } from '$lib/utils/wasm-loader';
 	import { streamDownloadAndDecrypt, fetchMetadata } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
@@ -49,6 +48,9 @@
 
 	async function getMetadata() {
 		try {
+			// Ensure WASM runtime is initialized before HMAC generation or decryption
+			const { initWasm } = await import('$lib/utils/wasm-loader');
+			await initWasm();
 			const fileId = $page.params.fileId;
 			// Generate token from encryption key
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
