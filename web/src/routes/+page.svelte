@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { initWasm } from '$lib/utils/wasm-loader';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { generateKey, uploadEncryptedFile } from '$lib/services/encryptionService';
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
@@ -89,6 +88,9 @@
 
 			try {
 					isUploading = true;
+					// Lazy load WASM runtime just-in-time before generating key / encrypting
+					const { initWasm } = await import('$lib/utils/wasm-loader');
+					await initWasm();
 					const key = encryptionKey || generateKey();
 					if (!key) throw new Error('Failed to generate encryption key');
 
@@ -110,7 +112,6 @@
 
 	onMount(async () => {
 			if (!browser) return;
-			await initWasm();
 
 			// Wait for config to be loaded if it's still loading
 			if ($configStore.loading) {
