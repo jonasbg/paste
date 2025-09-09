@@ -76,6 +76,8 @@ jobs:
       # Helm setup
       - name: Install Helm
         uses: azure/setup-helm@v3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Push Helm chart to GitHub Container Registry
       - name: Push Helm chart
@@ -92,7 +94,7 @@ jobs:
           DIGEST="latest@$DIGEST"
           sed -i "s/tag: \"latest\"/tag: \"$DIGEST\"/" .helm/values.yaml
 
-          echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ vars.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          echo ${{ env.GITHUB_TOKEN }} | helm registry login ${{ vars.REGISTRY }} -u ${{ github.actor }} --password-stdin
           cd .helm
           helm package .
 
