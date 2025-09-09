@@ -3,6 +3,7 @@ package middleware
 import (
 	"mime"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,14 +19,14 @@ func Middleware(urlPrefix, spaDirectory string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
-		// Serve the requested file if it exists
+		// Serve the requested file if it exists (Stat instead of Open)
 		if _, err := filepath.Rel(urlPrefix, path); err == nil {
-			if _, err := http.Dir(spaDirectory).Open(strings.TrimPrefix(path, "/")); err == nil {
-				// Set the correct Content-Type header based on file extension
-				ext := filepath.Ext(path)
-				if ext != "" {
-					if mimeType := mime.TypeByExtension(ext); mimeType != "" {
-						c.Header("Content-Type", mimeType)
+			rel := strings.TrimPrefix(path, "/")
+			full := filepath.Join(spaDirectory, rel)
+			if info, err := os.Stat(full); err == nil && !info.IsDir() {
+				if ext := filepath.Ext(path); ext != "" {
+					if mt := mime.TypeByExtension(ext); mt != "" {
+						c.Header("Content-Type", mt)
 					}
 				}
 				fileserver.ServeHTTP(c.Writer, c.Request)
