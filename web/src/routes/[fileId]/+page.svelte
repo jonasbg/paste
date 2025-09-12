@@ -250,7 +250,7 @@
 		{:else if metadata?.error}
 			<ErrorMessage message={metadata.error} />
 		{:else}
-			{#if metadata?.filename}
+			{#if metadata?.filename && !isDownloadComplete}
 				<FileInfo fileName={metadata.filename} {fileSize} />
 				{#if !isDownloadComplete}
 					{#if !isDownloading}
