@@ -29,10 +29,10 @@ No database required for file storage. No server-side encryption keys. Upload an
 
 ## High-Level Architecture
 ```
-                    ┌──────────────────┐
-                    │   Web Browser    │
-                    │ (SvelteKit + WASM)│
-                    └─────────┬────────┘
+                    ┌────────────────────┐
+                    │   Web Browser      │
+                    │ (SvelteKit + WASM) │
+                    └─────────┬──────────┘
                               │ WebSocket/HTTP (encrypted data only)
                     ┌─────────▼────────┐
                     │  Paste Server    │
