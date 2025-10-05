@@ -330,9 +330,6 @@
 		margin-bottom: 1.25rem;
 	}
 
-	.file-input-container {
-	}
-
 	.file-input {
 		display: none;
 	}
@@ -406,11 +403,6 @@
 	.button:disabled {
 		opacity: 0.7;
 		cursor: not-allowed;
-	}
-
-	.error-message {
-		color: red;
-		margin-bottom: 1rem;
 	}
 
 	/* Responsive styles */
