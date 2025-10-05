@@ -1,6 +1,6 @@
 {
 	"name": "Go",
-	"image": "mcr.microsoft.com/devcontainers/go:1.24-bookworm",
+	"image": "mcr.microsoft.com/devcontainers/go:1.25",
 	"features": {
 		"ghcr.io/devcontainers/features/node:1": {},
 		"ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
@@ -33,5 +33,5 @@
 			"onAutoForward": "ignore"
 		}
 	},
-	"postCreateCommand": "mkdir -p web/static && cp \"$(go env GOROOT)/misc/wasm/wasm_exec.js\" web/static/ && cd web && npm install && cd .. && GOOS=js GOARCH=wasm go build -o web/static/encryption.wasm ./wasm/wasm.go"
+	"postCreateCommand": "./.devcontainer/setup.sh"
 }
