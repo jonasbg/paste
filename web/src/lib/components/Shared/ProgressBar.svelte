@@ -99,6 +99,8 @@
 		background-color: var(--light-gray);
 		border-radius: var(--border-radius);
 		padding: 2rem;
+		border: 1px solid #e0e0e0;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 	}
 
 	.file-metadata {
@@ -128,12 +130,6 @@
 
 	.file-size {
 		color: #666;
-	}
-
-	.progress-title {
-		font-size: 1.25rem;
-		margin-bottom: 1rem;
-		font-weight: 500;
 	}
 
 	.progress-bar {

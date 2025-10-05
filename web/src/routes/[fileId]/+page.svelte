@@ -345,6 +345,8 @@
 		border-radius: var(--border-radius);
 		padding: 2rem;
 		margin-top: 2rem;
+		border: 1px solid #e0e0e0;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 	}
 
 	.key-prompt h2 {
