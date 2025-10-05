@@ -6,7 +6,6 @@
 	import { streamDownloadAndDecrypt, fetchMetadata } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
-	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
@@ -251,7 +250,13 @@
 			<ErrorMessage message={metadata.error} />
 		{:else}
 			{#if metadata?.filename && !isDownloadComplete}
-				<FileInfo fileName={metadata.filename} {fileSize} />
+				<FileInfo
+					fileName={metadata.filename}
+					{fileSize}
+					{downloadProgress}
+					{downloadMessage}
+					{isDownloading}
+				/>
 				{#if !isDownloadComplete}
 					{#if !isDownloading}
 						<button class="button" on:click={initiateDownload} disabled={!canDownload}>
@@ -259,14 +264,6 @@
 						</button>
 					{/if}
 				{/if}
-			{/if}
-
-			{#if isDownloading || isDownloadComplete}
-				<ProgressBar
-					progress={downloadProgress}
-					message={downloadMessage}
-					isVisible={isDownloading}
-				/>
 			{/if}
 
 			{#if isDownloadComplete}

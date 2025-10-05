@@ -1,9 +1,21 @@
 <script lang="ts">
 	import { fade, fly } from 'svelte/transition';
+	import { onMount, onDestroy } from 'svelte';
+
 	export let fileName: string = '';
 	export let fileSize: string = '';
 	export let isVisible: boolean = true;
 	export let onRemove: (() => void) | undefined = undefined;
+	export let downloadProgress: number = 0;
+	export let downloadMessage: string = '';
+	export let isDownloading: boolean = false;
+	export let uploadProgress: number = 0;
+	export let uploadMessage: string = '';
+	export let isUploading: boolean = false;
+
+	// For smooth animation
+	let displayProgress: number = 0;
+	let animationFrame: number;
 
 	// Helper function to format file size
 	function formatFileSize(bytes: number): string {
@@ -19,10 +31,61 @@
 
 		return `${size.toFixed(1)} ${units[unitIndex]}`;
 	}
+
+	// Get the current progress based on what operation is active
+	$: currentProgress = isUploading ? uploadProgress : downloadProgress;
+	$: currentMessage = isUploading ? uploadMessage : downloadMessage;
+	$: isActive = isUploading || isDownloading;
+
+	// Update display progress smoothly using animation frames
+	function updateDisplayProgress() {
+		// Calculate the difference between target and current
+		const diff = currentProgress - displayProgress;
+
+		// If we're very close to the target, just snap to it
+		if (Math.abs(diff) < 0.2) {
+			displayProgress = currentProgress;
+		} else {
+			// Otherwise move a percentage of the remaining distance
+			displayProgress += diff * 0.1;
+		}
+
+		// Continue animation if we haven't reached the target
+		if (displayProgress !== currentProgress) {
+			animationFrame = requestAnimationFrame(updateDisplayProgress);
+		}
+	}
+
+	// Watch for changes in progress and start animation
+	$: if (currentProgress !== displayProgress) {
+		// Cancel any existing animation
+		if (animationFrame) {
+			cancelAnimationFrame(animationFrame);
+		}
+		// Start new animation
+		animationFrame = requestAnimationFrame(updateDisplayProgress);
+	}
+
+	onMount(() => {
+		// Initialize display progress
+		displayProgress = currentProgress;
+	});
+
+	onDestroy(() => {
+		// Clean up any pending animation frames
+		if (animationFrame) {
+			cancelAnimationFrame(animationFrame);
+		}
+	});
 </script>
 
 {#if isVisible}
 	<div class="file-info" in:fly={{ y: 20, duration: 300 }} out:fade={{ duration: 200 }}>
+		<!-- Progress background overlay -->
+		{#if isActive}
+			<div class="progress-background" style="width: {displayProgress}%"></div>
+		{/if}
+
 		{#if onRemove}
 			<button class="remove-button" on:click={onRemove} aria-label="Remove file">
 				<svg
@@ -64,6 +127,12 @@
 						{typeof fileSize === 'number' ? formatFileSize(fileSize) : fileSize}
 					</div>
 				{/if}
+				{#if isActive && currentMessage}
+					<div class="progress-message">{currentMessage}</div>
+				{/if}
+				{#if isActive}
+					<div class="progress-text">{Math.round(displayProgress)}%</div>
+				{/if}
 			</div>
 		</div>
 	</div>
@@ -79,10 +148,35 @@
 		border: 1px solid #eee;
 		transition: all 0.2s ease;
 		margin-bottom: 2rem;
+		overflow: hidden; /* Ensure progress background doesn't overflow */
 	}
 
 	.file-info:hover {
 		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+	}
+
+	.progress-background {
+		position: absolute;
+		top: 0;
+		left: 0;
+		height: 100%;
+		background: linear-gradient(
+			90deg,
+			rgba(64, 184, 123, 0.2) 0%,
+			rgba(64, 184, 123, 0.3) 50%,
+			rgba(64, 184, 123, 0.2) 100%
+		);
+		transition: width 0.3s linear(0.4, 0, 0.2, 1);
+		background-size: 200% 100%;
+		background-position: 0% 0%;
+		animation: shimmer 2s infinite;
+		z-index: 1;
+	}
+
+	@keyframes shimmer {
+		to {
+			background-position: 200% 0%;
+		}
 	}
 
 	.remove-button {
@@ -101,6 +195,7 @@
 		padding: 0;
 		color: white;
 		transition: transform 0.2s ease;
+		z-index: 3; /* Above progress background */
 	}
 
 	.remove-button:hover {
@@ -111,6 +206,8 @@
 		display: flex;
 		align-items: center;
 		gap: 1rem;
+		position: relative;
+		z-index: 2; /* Above progress background */
 	}
 
 	.file-icon {
@@ -130,5 +227,19 @@
 	.filesize {
 		color: #666;
 		font-size: 0.875rem;
+		margin-bottom: 0.25rem;
+	}
+
+	.progress-message {
+		color: var(--primary-green, #40b87b);
+		font-size: 0.875rem;
+		font-weight: 500;
+		margin-bottom: 0.25rem;
+	}
+
+	.progress-text {
+		color: var(--primary-green, #40b87b);
+		font-size: 0.875rem;
+		font-weight: 600;
 	}
 </style>

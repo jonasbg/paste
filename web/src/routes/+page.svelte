@@ -4,7 +4,6 @@
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { generateKey, uploadEncryptedFile } from '$lib/services/encryptionService';
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
-	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import UrlShare from '$lib/components/UrlShare/UrlShare.svelte';
 	import { replaceState } from '$app/navigation';
 	import { fade } from 'svelte/transition';
@@ -220,7 +219,7 @@
 				lastes opp, og dekrypteres først når mottakeren laster dem ned.
 			</p>
 
-			{#if !isUploading && !shareUrl}
+			{#if !shareUrl}
 				{#if fileSizeError}
 					<ErrorMessage message={fileSizeError} />
 				{/if}
@@ -229,28 +228,31 @@
 						fileName={selectedFile.name}
 						fileSize={FileProcessor.formatFileSize(selectedFile.size)}
 						isVisible={true}
-						onRemove={removeFile}
+						onRemove={isUploading ? undefined : removeFile}
+						{uploadProgress}
+						{uploadMessage}
+						{isUploading}
 					/>
 				{/if}
-				<div class="file-input-container">
-					<input
-						type="file"
-						bind:this={fileInput}
-						on:change={handleFileSelect}
-						class="file-input"
-						hidden
-					/>
-					<button
-						class="button"
-						on:click={handleUpload}
-						disabled={isUploading || $configStore.loading}
-					>
-						{selectedFile ? 'Last opp' : 'Velg en fil'}
-					</button>
-				</div>
+				{#if !isUploading}
+					<div class="file-input-container">
+						<input
+							type="file"
+							bind:this={fileInput}
+							on:change={handleFileSelect}
+							class="file-input"
+							hidden
+						/>
+						<button
+							class="button"
+							on:click={handleUpload}
+							disabled={isUploading || $configStore.loading}
+						>
+							{selectedFile ? 'Last opp' : 'Velg en fil'}
+						</button>
+					</div>
+				{/if}
 			{/if}
-
-			<ProgressBar progress={uploadProgress} message={uploadMessage} isVisible={isUploading} />
 			<UrlShare url={shareUrl} isVisible={!!shareUrl} />
 		</div>
 	</div>
