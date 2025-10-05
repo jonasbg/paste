@@ -315,10 +315,6 @@
 </div>
 
 <style>
-	.download-container {
-		border-radius: var(--border-radius);
-		padding: 2rem;
-	}
 
 	h1 {
 		font-size: 2.5rem;

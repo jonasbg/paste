@@ -69,7 +69,7 @@
 		<span>eller</span>
 	</div>
 
-	<div class="copy-section">
+	<div class="copy-section advanced-section">
 		<h3>Separat lenke og nøkkel</h3>
 		<p class="hint">Del disse separat for økt sikkerhet</p>
 
@@ -179,6 +179,32 @@
 		border-radius: var(--border-radius);
 		animation: slideIn 0.3s ease-out;
 		z-index: 999999;
+	}
+
+	/* Responsive styles */
+	@media (max-width: 768px) {
+		.input-group {
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+
+		.input-group .button {
+			width: 100%;
+		}
+
+		.url-field {
+			font-size: 16px; /* Prevents zoom on iOS */
+		}
+
+		.copy-section {
+			padding: 0.75rem;
+		}
+
+		.copy-message {
+			left: 1rem;
+			right: 1rem;
+			bottom: 1rem;
+		}
 	}
 
 	@keyframes slideIn {
