@@ -253,7 +253,7 @@
 			{#if metadata?.filename && !isDownloadComplete && !isDownloading}
 				<FileInfo fileName={metadata.filename} {fileSize} />
 			{/if}
-			{#if !isDownloadComplete}
+			{#if metadata?.filename && !isDownloadComplete}
 				{#if !isDownloading}
 					<button class="button" on:click={initiateDownload} disabled={!canDownload}>
 						{isDownloading ? 'Laster ned...' : 'Last ned'}
@@ -341,12 +341,11 @@
 	}
 
 	.key-prompt {
-		background-color: var(--light-gray);
+		background: #fff;
+		padding: 1rem;
 		border-radius: var(--border-radius);
-		padding: 2rem;
-		margin-top: 2rem;
 		border: 1px solid #e0e0e0;
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+		margin-bottom: 1rem;
 	}
 
 	.key-prompt h2 {
@@ -366,6 +365,7 @@
 		border: 1px solid #e0e0e0;
 		border-radius: var(--border-radius);
 		font-family: inherit;
+		background: #f5f5f5;
 	}
 
 	.key-input:focus {
