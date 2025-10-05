@@ -125,7 +125,7 @@
 	}
 
 	.input-group .button {
-		width: 12rem;
+		width: 13rem;
 		flex-shrink: 0;
 	}
 
