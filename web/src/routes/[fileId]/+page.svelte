@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
-		import { initWasm } from '$lib/utils/wasm-loader';
+	import { initWasm } from '$lib/utils/wasm-loader';
 	import { streamDownloadAndDecrypt, fetchMetadata } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
@@ -91,105 +91,105 @@
 	}
 
 	async function initiateDownload() {
-    if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
-    isDownloading = true;
-    downloadError = null;
+		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
+		isDownloading = true;
+		downloadError = null;
 
-    try {
-        const fileId = $page.params.fileId;
-        const hmacToken = await generateHmacToken(fileId, encryptionKey);
+		try {
+			const fileId = $page.params.fileId;
+			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-        // Use streamDownloadAndDecrypt instead of downloadAndDecryptFile
-        const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
-            fileId,
-            encryptionKey,
-            hmacToken,
-            async (progress, message) => {
-                downloadProgress = progress;
-                downloadMessage = message;
-            }
-        );
+			// Use streamDownloadAndDecrypt instead of downloadAndDecryptFile
+			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
+				fileId,
+				encryptionKey,
+				hmacToken,
+				async (progress, message) => {
+					downloadProgress = progress;
+					downloadMessage = message;
+				}
+			);
 
-        // Read the stream and collect chunks
-        const reader = stream.getReader();
-        const chunks = [];
-        let receivedLength = 0;
+			// Read the stream and collect chunks
+			const reader = stream.getReader();
+			const chunks = [];
+			let receivedLength = 0;
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-                chunks.push(value);
-                receivedLength += value.length;
-            }
-        }
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				if (value) {
+					chunks.push(value);
+					receivedLength += value.length;
+				}
+			}
 
-        // Check if any data was received
-        if (receivedLength === 0) {
-            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-        }
+			// Check if any data was received
+			if (receivedLength === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+			}
 
-        // Create a Blob from the collected chunks
-        const blob = new Blob(chunks, {
-            type: fileMetadata.contentType || 'application/octet-stream'
-        });
+			// Create a Blob from the collected chunks
+			const blob = new Blob(chunks, {
+				type: fileMetadata.contentType || 'application/octet-stream'
+			});
 
-        // Verify the Blob has content
-        if (blob.size === 0) {
-            throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
-        }
+			// Verify the Blob has content
+			if (blob.size === 0) {
+				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+			}
 
-        // Create and trigger the download
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileMetadata.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
+			// Create and trigger the download
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = fileMetadata.filename;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			window.URL.revokeObjectURL(url);
 
-        // Attempt to delete the file from the server
-        try {
-            const deleteResponse = await fetch(`/api/delete/${fileId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-HMAC-Token': hmacToken
-                }
-            });
+			// Attempt to delete the file from the server
+			try {
+				const deleteResponse = await fetch(`/api/delete/${fileId}`, {
+					method: 'DELETE',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-HMAC-Token': hmacToken
+					}
+				});
 
-            // Clear sensitive data
-            encryptionKey = '';
-            manualKeyInput = '';
+				// Clear sensitive data
+				encryptionKey = '';
+				manualKeyInput = '';
 
-            // Check if deletion was successful
-            if (deleteResponse.ok) {
-                isDownloadComplete = true;
-                deletionError = null;
-            } else {
-                deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
-                console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
-            }
-        } catch (err) {
-            console.error('Error deleting file:', err);
-            deletionError =
-                'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
-        }
+				// Check if deletion was successful
+				if (deleteResponse.ok) {
+					isDownloadComplete = true;
+					deletionError = null;
+				} else {
+					deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
+					console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
+				}
+			} catch (err) {
+				console.error('Error deleting file:', err);
+				deletionError =
+					'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
+			}
 
-        // Clean the URL in the browser
-        if (browser) {
-            window.history.replaceState({}, '', '/');
-        }
-    } catch (error) {
-        console.error('Download error:', error);
-        downloadError = (error as Error).message;
-        downloadProgress = 0;
-        downloadMessage = '';
-    } finally {
-        isDownloading = false;
-    }
-}
+			// Clean the URL in the browser
+			if (browser) {
+				window.history.replaceState({}, '', '/');
+			}
+		} catch (error) {
+			console.error('Download error:', error);
+			downloadError = (error as Error).message;
+			downloadProgress = 0;
+			downloadMessage = '';
+		} finally {
+			isDownloading = false;
+		}
+	}
 
 	onMount(async () => {
 		if (!browser) return;
@@ -315,10 +315,25 @@
 </div>
 
 <style>
+	.container {
+		flex: 1;
+		max-width: 1200px;
+		margin: 0 auto;
+		padding: 2rem;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.download-container {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
 
 	h1 {
 		font-size: 2.5rem;
 		font-weight: 500;
+		margin-bottom: 1.5rem;
 	}
 
 	h1 span {
@@ -388,5 +403,58 @@
 		margin: 1rem 0 2rem 0;
 		line-height: 1.5;
 		max-width: 800px;
+	}
+
+	.button {
+		background-color: var(--primary-green);
+		color: white;
+		border: none;
+		border-radius: 6px;
+		padding: 0.75rem 1.5rem;
+		font-size: 1rem;
+		cursor: pointer;
+		transition: all 0.2s ease;
+		max-width: 8em;
+	}
+
+	.button:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+	}
+
+	.button:disabled {
+		opacity: 0.7;
+		cursor: not-allowed;
+	}
+
+	/* Responsive styles */
+	@media (max-width: 768px) {
+		.container {
+			padding: 1rem;
+		}
+
+		h1 {
+			font-size: 2rem;
+			margin-bottom: 1rem;
+		}
+
+		.intro-text {
+			font-size: 1rem;
+			margin: 1rem 0 1.5rem 0;
+		}
+
+		.key-prompt {
+			padding: 1.5rem;
+			margin-top: 1.5rem;
+		}
+
+		.input-group {
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+
+		.decrypt-button {
+			width: 100%;
+		}
 	}
 </style>
