@@ -1,72 +1,83 @@
-# Paste (pɛjstə)
+<div align="center">
 
-![paste banner](.github/docs/paste_banner.png)
-
-Zero-knowledge file sharing server with client-side encryption in Golang. The server never sees unencrypted file contents or metadata.
-
-Paste is created to be an easy and secure way of sharing a file with someone for a short period of time.
+<h1>Paste (pɛjstə)</h1>
+<p><strong>Zero-knowledge file sharing server with client-side encryption in Golang</strong></p>
 
 ![landing page](.github/docs/index.png)
 
-## 🔒 Security Design
+<p>
+<a href="#why">Why</a> ·
+<a href="#quick-start">Quick Start</a> ·
+<a href="#development">Development</a> ·
+<a href="#api">API</a> ·
+<a href="#security-implementation">Security</a> ·
+<a href="#configuration">Configuration</a>
+</p>
 
-- AES-GCM encryption/decryption using WebAssembly in the browser
-  - Supports 128-bit, 192-bit, and 256-bit keys (defaults to 128-bit)
-  - Uses cryptographically secure random number generation
-  - Implements authenticated encryption (AEAD) with integrity checks
-  - Unique 96-bit IV (nonce) for each file and chunk
-- Streaming encryption for large files
-  - Processes files in 1MB chunks to avoid memory issues
-  - Ensures unique nonces across chunks using counters
-  - Maintains data integrity across chunk boundaries
-- Zero server-side knowledge
-  - Server stores only encrypted blobs
-  - No unencrypted metadata or filenames stored server-side
-  - Encryption keys never leave the client
-  - Each file gets a unique identifier and encryption key
+</div>
 
-## 📸 Screenshots
+## Why
+You need to share files securely but don't trust the server with your data. Traditional file sharing services can see your files, metadata, and encryption keys. This project provides:
 
-### Upload
-![encryption](.github/docs/encyption.png)
-*Client-side WASM encryption before upload*
+- A lightweight Go server (single static binary + embedded SvelteKit UI)
+- Client-side AES-GCM encryption using WebAssembly
+- Zero server-side knowledge of file contents, names, or encryption keys
+- Streaming encryption for large files without memory issues
+- Automatic file deletion after configurable retention period
 
-### Share
-![sharesheet](.github/docs/sharesheet.png)
-*Share encrypted file ID and key*
+No database required for file storage. No server-side encryption keys. Upload and share with confidence.
 
-### Download
-![download](.github/docs/download.png)
-*Client-side decryption with provided key*
+## High-Level Architecture
+```
+                    ┌──────────────────┐
+                    │   Web Browser    │
+                    │ (SvelteKit + WASM)│
+                    └─────────┬────────┘
+                              │ WebSocket/HTTP (encrypted data only)
+                    ┌─────────▼────────┐
+                    │  Paste Server    │
+                    │  - REST API      │
+                    │  - Static UI     │
+                    │  - File Storage  │
+                    │  - SQLite Logs   │
+                    └──────────────────┘
 
-### Decryption
-![encryption](.github/docs/decryption.png)
-*Client-side WASM decryption with optional private key input*
+Client-side encryption flow:
+File → WASM Encryption → Chunked Upload → Server Storage
+Server only sees: Encrypted blobs + File IDs + HMAC tokens
+```
 
-## 🚀 Development
+## Features
+- **Client-side encryption**: AES-GCM encryption using WebAssembly in the browser
+- **Zero server knowledge**: Server stores only encrypted blobs, never sees keys or metadata
+- **Streaming encryption**: Process files in chunks to avoid memory issues with large files
+- **WebSocket uploads**: Bypass HTTP proxy size limits with chunked transfers
+- **Configurable security**: Support for 128-bit, 192-bit, and 256-bit encryption keys
+- **Authenticated encryption**: AEAD with integrity checks and unique IVs per file
+- **Automatic cleanup**: Files deleted after configurable retention period
+- **Performance optimized**: Batched ACKs, early acknowledgments, and optimized buffers
+- **Single binary deployment**: Go server with embedded SvelteKit UI
 
-### Using Dev Container (Recommended)
+## Quick Start
 
-1. Install [VS Code](https://code.visualstudio.com/) and [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+### 1. Using Dev Container (Recommended)
+Prerequisites: VS Code with Dev Containers extension.
 
-2. Clone and open:
+1. Clone and open:
 ```bash
 git clone https://github.com/jonasbg/paste
 code paste
 ```
 
-3. When prompted, click "Reopen in Container"
+2. When prompted, click "Reopen in Container"
 
-The dev container provides:
-- Go 1.23 with debugging
-- Node.js for SvelteKit
-- SQLite for access logging only
-- Auto-built WASM encryption
+The dev container provides Go 1.23, Node.js, SQLite, and auto-built WASM encryption.
 
-### Manual Setup
+### 2. Manual Setup
+Prerequisites: Go 1.23+, Node.js 18+.
 
 ```bash
-# Build WASM
+# Build WASM encryption module
 mkdir -p web/static
 cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" web/static/
 GOOS=js GOARCH=wasm go build -o web/static/encryption.wasm ./wasm/wasm.go
@@ -75,96 +86,127 @@ GOOS=js GOARCH=wasm go build -o web/static/encryption.wasm ./wasm/wasm.go
 cd api && go build -o pastly
 ./pastly
 
-# Run frontend
+# Run frontend (separate terminal)
 cd ../web
 npm install
 npm run dev
 ```
 
-## 🔌 API Endpoints
+Visit http://localhost:5173 for development or http://localhost:8080 for production.
 
+## Screenshots
+
+### Upload Process
+![encryption](.github/docs/encyption.png)
+*Client-side WASM encryption before upload*
+
+### Share Link
+![sharesheet](.github/docs/sharesheet.png)
+*Share encrypted file ID and key*
+
+### Download & Decryption
+![download](.github/docs/download.png)
+*Client-side decryption with provided key*
+
+![decryption](.github/docs/decryption.png)
+*WASM decryption with optional private key input*
+
+## Development
+
+### Frontend (SvelteKit dev server)
 ```bash
-GET    /api/config                 # Get server configuration
-GET    /api/download/:id           # Download encrypted blob
-GET    /api/metadata/:id           # Get encrypted metadata
-DELETE /api/delete/:id             # Delete a file
-GET    /api/ws/upload              # WebSocket upload for large files
-GET    /api/ws/download            # WebSocket download for large files
-GET    /api/metrics/activity       # Server activity statistics
-GET    /api/metrics/storage        # Storage usage statistics
-GET    /api/metrics/requests       # Request statistics
-GET    /api/metrics/security       # Security-related metrics
-GET    /api/metrics/upload-history # Upload history statistics
+cd web
+npm run dev
 ```
 
-## 🌍 Environment Variables
+### Backend (Go API serving built assets)
+```bash
+cd api
+go run main.go
+```
 
-The application can be configured using the following environment variables:
+Hot reloading of frontend is via Vite dev server. Production build is embedded into the Go binary.
 
-| Variable | Description | Default | Example |
-|----------|-------------|---------|---------|
-| `UPLOAD_DIR` | Directory where uploaded files are stored | `./uploads` | `/data/uploads` |
-| `DATABASE_DIR` | Directory where the SQLite database is stored | `./uploads` | `/data/db` |
-| `WEB_DIR` | Directory containing static web files | `../web` | `/app/web` |
-| `FILES_RETENTION_DAYS` | Number of days to keep uploaded files before deletion | `7` | `14` |
-| `LOGS_RETENTION_DAYS` | Number of days to keep logs (negative for infinite) | `180` | `-1` |
-| `MAX_FILE_SIZE`  | Maximum allowed size for uploaded files.       | `100MB`          | A number followed by `KB`, `MB`, `GB`, or `TB` (case-insensitive).        | `2MB`, `500KB`, `10GB` |
-| `ID_SIZE`        | Size of the generated IDs.                       | `64` (bit)       | One of: `64`, `128`, `192`, `256` (case-insensitive).              | `128`           |
-| `KEY_SIZE`       | Size of the encryption keys.                     | `128`       | One of: `128`, `192`, `256` (case-insensitive).              | `256`           |
-| `CHUNK_SIZE` | Size of chunks in transmission. Higher is faster transmission, but you can hit max WAF limits. Don't change if you don't know what this does! | `4` | `1`,`4` this is in MB |
-| `METRICS_ALLOWED_IPS` | IP addresses allowed to access metrics endpoints (CIDR format, comma-separated) | `127.0.0.1/8,::1/128` | `192.168.1.0/24,10.0.0.0/8` |
-| `TRUSTED_PROXIES` | IP ranges of trusted proxies for correct client IP detection (CIDR format, comma-separated) | `10.0.0.0/8` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
+### Building for Production
+```bash
+# Build frontend
+cd web
+npm ci
+npm run build
 
-## 🛡️ Security Implementation Details
+# Build server with embedded UI
+cd ../api
+go build -o pastly .
+```
+
+## API
+
+Base path: `/api`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/config` | Get server configuration |
+| GET | `/download/:id` | Download encrypted blob |
+| GET | `/metadata/:id` | Get encrypted metadata |
+| DELETE | `/delete/:id` | Delete a file |
+| GET | `/ws/upload` | WebSocket upload for large files |
+| GET | `/ws/download` | WebSocket download for large files |
+| GET | `/metrics/activity` | Server activity statistics |
+| GET | `/metrics/storage` | Storage usage statistics |
+| GET | `/metrics/requests` | Request statistics |
+| GET | `/metrics/security` | Security-related metrics |
+| GET | `/metrics/upload-history` | Upload history statistics |
+
+Notes:
+- All file data is encrypted client-side before reaching the server
+- HMAC tokens provide proof of key possession without exposing keys
+- WebSocket endpoints support chunked transfers for large files
+
+## Configuration
+
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UPLOAD_DIR` | `./uploads` | Directory where uploaded files are stored |
+| `DATABASE_DIR` | `./uploads` | Directory where the SQLite database is stored |
+| `WEB_DIR` | `../web` | Directory containing static web files |
+| `FILES_RETENTION_DAYS` | `7` | Number of days to keep uploaded files before deletion |
+| `LOGS_RETENTION_DAYS` | `180` | Number of days to keep logs (negative for infinite) |
+| `MAX_FILE_SIZE` | `100MB` | Maximum allowed size for uploaded files |
+| `ID_SIZE` | `64` | Size of the generated IDs (64, 128, 192, 256 bit) |
+| `KEY_SIZE` | `128` | Size of the encryption keys (128, 192, 256 bit) |
+| `CHUNK_SIZE` | `4` | Size of chunks in MB for transmission |
+| `METRICS_ALLOWED_IPS` | `127.0.0.1/8,::1/128` | IP addresses allowed to access metrics endpoints |
+| `TRUSTED_PROXIES` | `10.0.0.0/8` | IP ranges of trusted proxies for correct client IP detection |
+
+## Security Implementation
 
 This section provides a deeper dive into how Paste achieves its security goals.
 
-### Key Generation
+### Client-Side Encryption
+- **Key Generation**: Encryption keys are generated exclusively in the browser using WebAssembly and Go's `crypto/rand` package
+- **AES-GCM**: Uses Advanced Encryption Standard in Galois/Counter Mode for authenticated encryption
+- **Unique IVs**: Each file and chunk gets a unique 96-bit initialization vector to prevent nonce-reuse attacks
+- **Streaming**: Large files are processed in chunks to avoid loading entire files into memory
 
-- **Client-Side Key Generation:** Encryption keys are *never* sent to the server. They are generated exclusively within the user's browser using WebAssembly.
-- **Cryptographically Secure Randomness:** The `generateKey` function (implemented in `wasm.go` and called from JavaScript) leverages Go's `crypto/rand` package (`rand.Read`). This provides a cryptographically secure source of random numbers, crucial for strong key generation.
-- **Configurable Key Size:** The application supports configurable key sizes (128-bit, 192-bit, and 256-bit AES). The key size defaults to 256 bits.
-- **AES-GCM:** The application uses the Advanced Encryption Standard in Galois/Counter Mode (AES-GCM).  This is a modern, authenticated encryption mode providing both confidentiality (encryption) and authenticity (integrity verification, protecting against tampering). The Go standard library's `crypto/aes` and `crypto/cipher` packages are used (`wasm.go`).
+### Zero-Knowledge Server
+- **Encrypted Storage**: Server only stores encrypted blobs, never sees plaintext data
+- **No Metadata**: Filenames, content types, and sizes are encrypted client-side
+- **Key Isolation**: Encryption keys never leave the client browser
+- **HMAC Verification**: Server verifies key possession through HMAC tokens without seeing actual keys
 
-### File and Metadata Encryption
+### Data Integrity
+- **Authenticated Encryption**: AES-GCM provides both confidentiality and authenticity
+- **Chunk Validation**: Each chunk includes authentication tags for tamper detection
+- **Header Validation**: Server validates encryption headers before any decryption attempts
+- **Unique Identifiers**: Each file gets a unique identifier and encryption key pair
 
-- **Streaming Encryption:** Large files are processed in chunks to avoid loading the entire file into memory. This is handled by the `encryptChunk` and `decryptChunk` functions in the WebAssembly module (`wasm.go`). The JavaScript code slices the file into chunks and sends them sequentially.
-- **Unique IVs (Initialization Vectors/Nonces):** A unique 96-bit (12-byte) IV is generated for *each* file using `crypto/rand` (`wasm.go`, `createEncryptionStream` function). This IV is prepended to the encrypted data.  For chunked uploads, the `StreamingCipher` struct (`wasm.go`) manages the IV, incrementing a counter (`chunk`) for each chunk to guarantee uniqueness, preventing nonce-reuse attacks.
-- **Metadata Encryption:** File metadata (filename, content type, size) is also encrypted using AES-GCM. The *same* file encryption key is used, but with a *different* IV. The `decryptMetadata` function (`wasm.go`) handles metadata decryption. Metadata is serialized to JSON before encryption and deserialized after. The length of the encrypted metadata, along with the IV, is prepended to the encrypted metadata.
-- **Header and Metadata Validation:**  The `validateWasmEncryption` function (`files.go` - *server-side*) performs several checks *before* any decryption attempt:
-    - **Header Size:** Verifies the header size.
-    - **IV Validity:** Checks that the IV is not all zeros (a weak IV).
-    - **Metadata Length:** Ensures the metadata length in the header matches the actual encrypted metadata length and is within reasonable bounds.
-    - **Minimum Encrypted Data Size:** Checks for a minimum size, accounting for the GCM authentication tag.
-
-### File ID and HMAC Token Generation (and Verification)
-
-- **File ID:** The File ID is generated on the server side when a new upload begins. The server uses this ID to retrieve the encrypted blob.
-- **HMAC Token:**  For download verification, an HMAC (Hash-based Message Authentication Code) token is generated *client-side* using the `generateHmacToken` function (`wasm.go`).
-    - **Purpose:** This token acts as proof of possession of the encryption key.  It prevents unauthorized downloads even if the File ID is known. The server *never* sees the encryption key itself.
-    - **Generation:** The token is derived from the *file encryption key* and the *File ID* using HMAC-SHA256.  The first 12 bytes of the HMAC signature are base64 URL-encoded to create the token.
-    - **Client-Side Generation:** Note that the token generation happens within the WebAssembly module in the user's browser.
-- **Verification:**
-    - The client provides the File ID and the *HMAC token* (in the request headers) when requesting a download or metadata. The encryption key itself is *never* sent to the server.
-    - The server uses the file id to fetch the stored encrypted blob.
-    - The client-computed HMAC token helps ensure that whoever is requesting to decrypt the file *actually possesses* the correct encryption key. Since only someone with the key can generate the correct token, successful token generation implies authorized access.
-
-### Server-Side Handling
-
-- **Zero-Knowledge Storage:** The server *only* stores encrypted data. It has *no* knowledge of file contents, filenames, or encryption keys.
-- **Database Interactions:**  Some metadata *about* the files (e.g., upload timestamps, potentially encrypted metadata sizes) is stored in a database, but the database *never* contains decryption keys.
-- **File Deletion:** Files are automatically deleted after a configured retention period (`FILES_RETENTION_DAYS` environment variable).
-
-### Overall Security Posture
-
-- **Defense in Depth:** The system uses multiple layers of security:
-    - **Client-side Encryption:** The primary layer, ensuring the server never sees plaintext.
-    - **Authenticated Encryption (AES-GCM):** Protects against both eavesdropping and tampering.
-    - **Unique IVs:** Prevents nonce-reuse attacks.
-    - **HMAC Token Verification:** Verifies possession of the encryption key before allowing downloads.
-    - **Server-Side Validation:** Checks the integrity of encrypted data *before* any decryption attempt.
-    - **Short Retention Period:** Minimizes the window of opportunity for attacks.
-- **No Single Point of Failure:** Even if the server is compromised, the attacker cannot decrypt the files without the encryption keys. The keys are **only ever** present in the user's browser, and the server cannot derive them from the HMAC tokens.
+### Performance & Security Balance
+- **Chunked Processing**: 1MB chunks balance memory usage and performance
+- **WebSocket Transfers**: Bypass HTTP size limits while maintaining security
+- **Optimized Buffers**: 64KB WebSocket buffers reduce syscall overhead
+- **Early ACKs**: Asynchronous disk operations improve upload throughput
 
 ## ❓ FAQ
 
@@ -175,48 +217,58 @@ While browsers provide the Web Crypto API, it requires loading the entire file i
 Many HTTP proxies and servers have file size limits when using traditional multipart form uploads. WebSockets allow us to chunk large files into 1MB blocks, bypassing these limitations while providing upload progress feedback.
 
 ### Does that means it violates ToS?
-Probably. Most certain. While WebSocket chunking can technically bypass file size limits, this should only be implemented on your own infrastructure. Most cloud providers and CDNs like Cloudflare have file size limits (e.g. 100MB). You should read their Terms of Service.
+This should only be implemented on your own infrastructure. Most cloud providers and CDNs like Cloudflare have file size limits (e.g. 100MB). You should read their Terms of Service before deploying.
 
 ### Is my data really secure?
-Yes. All encryption happens in your browser using AES-GCM with 256-bit keys before upload. The server only sees encrypted data and never receives encryption keys or unencrypted metadata. Each file gets a unique identifier, encryption key, and IV (nonce), making it impossible to list or access files without having both the ID and key.
+Yes. All encryption happens in your browser using AES-GCM with configurable key sizes before upload. The server only sees encrypted data and never receives encryption keys or unencrypted metadata. Each file gets a unique identifier, encryption key, and IV (nonce), making it impossible to list or access files without having both the ID and key.
 
 ### What encryption algorithm is used?
-We use AES-GCM (Galois/Counter Mode) which provides both confidentiality and authentication. For streaming large files, we implement chunked encryption with unique nonces per chunk. Keys are 256-bit by default and generated using cryptographically secure random number generation in the browser.
+We use AES-GCM (Galois/Counter Mode) which provides both confidentiality and authentication. For streaming large files, we implement chunked encryption with unique nonces per chunk. Keys are configurable (128/192/256-bit) and generated using cryptographically secure random number generation in the browser.
 
 ### How long are files stored?
-Files are deleted after 7 days after uploading.
+Files are deleted after 7 days by default. This can be configured with the `FILES_RETENTION_DAYS` environment variable.
 
 ### Are there file size limits?
-Files are processed in 1MB chunks, allowing for efficient handling of large files. While there's no hard size limit, browser memory constraints and network conditions may affect performance for extremely large files.
+Files are processed in 1MB chunks, allowing for efficient handling of large files. The default maximum file size is 100MB but can be configured. Browser memory constraints and network conditions may affect performance for extremely large files.
 
 ### Can I delete files after upload?
-Yes, by downloading the blob.
+Yes, files can be deleted by accessing the download endpoint, which provides a deletion option.
 
-## 🚀 Performance Tuning
+## Performance Tuning
 
 Several optimizations are in place to improve large file transfer throughput:
 
-- Increased WebSocket read/write buffers to 64KB (was 1KB) to reduce syscall overhead.
-- WebSocket download now uses the configured `CHUNK_SIZE` (in MB) + 16 bytes (GCM tag) instead of a fixed 32KB buffer.
-- ACKs for download are batched (every 8 chunks) to reduce round‑trip latency. (Adjust `batchAckInterval` in `websocket.go`).
-- `/api/download` is excluded from gzip compression since encrypted data is already high entropy and uncompressible—this saves CPU.
- - Upload path now sends ACK *before* persisting chunk (early ack) to let the client prepare/send the next frame sooner; disk flush happens asynchronously after the ack.
-
-Environment variable guidance:
-
 | Variable | Description | Suggested Values |
 |----------|-------------|------------------|
-| `CHUNK_SIZE` | Chunk size in MB for upload/download (encryption frames). | 4–8 (test 16 for LAN/high BW) |
-| `MAX_FILE_SIZE` | Maximum accepted file size. | Keep within infra limits |
+| `CHUNK_SIZE` | Chunk size in MB for upload/download (encryption frames) | 4–8 (test 16 for LAN/high BW) |
+| `MAX_FILE_SIZE` | Maximum accepted file size | Keep within infra limits |
+
+Optimizations implemented:
+- Increased WebSocket read/write buffers to 64KB (was 1KB) to reduce syscall overhead
+- WebSocket download uses configured `CHUNK_SIZE` + 16 bytes (GCM tag) instead of fixed 32KB buffer
+- ACKs for download are batched (every 8 chunks) to reduce round‑trip latency
+- `/api/download` is excluded from gzip compression since encrypted data is already high entropy
+- Upload path sends ACK before persisting chunk (early ack) for better pipeline performance
 
 Further improvements you can try:
+1. Raise `CHUNK_SIZE` gradually while monitoring memory and proxy limits
+2. Increase ACK batch size or move to single final integrity check
+3. Ensure TLS termination and reverse proxy aren't buffering entire WebSocket frames
+4. Run benchmarks and monitor CPU, memory, and effective throughput
 
-1. Raise `CHUNK_SIZE` gradually while monitoring memory and proxy limits.
-2. Increase ACK batch size or move to a single final integrity check (would require client protocol changes).
-3. Ensure TLS termination and reverse proxy aren’t buffering entire WS frames.
-4. Run benchmarks (e.g. 1GB file) and watch CPU, memory, and effective Mbps.
+## Security Considerations
+- Files are automatically deleted after retention period (default 7 days)
+- Optional IP filtering for metrics endpoints
+- No multi-tenant authentication; treat as single-user or trusted group tool
+- Consider network policies and access restrictions in production deployments
+- Encrypted data is effectively incompressible—avoid middleware that attempts compression
 
-Encrypted data is effectively incompressible—avoid middleware that attempts to transform or compress these streams.
+## License
+
+MIT License - see [LICENSE](LICENSE)
+
+---
+Feel free to open an issue if you'd like an additional feature or have questions about the security implementation.
 
 ## 📝 License
 
