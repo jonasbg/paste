@@ -46,13 +46,9 @@
 	}
 
 	function cleanupMemoryReferences() {
-		// Release file references if we're done with the file
+		// Release file input references but keep selectedFile for display
 		if (shareUrl && selectedFile) {
-			// Only clear if we have a share URL (successful upload)
 			const tempFileRef = selectedFile;
-
-			// Clear the file reference
-			selectedFile = null;
 
 			// Clear the file input value to release browser's reference to the file
 			if (fileInput) {
@@ -250,7 +246,13 @@
 				</div>
 			{/if}
 
-			<ProgressBar progress={uploadProgress} message={uploadMessage} isVisible={isUploading} />
+			<ProgressBar
+				progress={uploadProgress}
+				message={uploadMessage}
+				isVisible={isUploading}
+				fileName={selectedFile?.name}
+				fileSize={selectedFile ? FileProcessor.formatFileSize(selectedFile.size) : ''}
+			/>
 			<UrlShare url={shareUrl} isVisible={!!shareUrl} />
 		</div>
 	</div>

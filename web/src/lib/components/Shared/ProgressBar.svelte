@@ -4,6 +4,8 @@
 	export let progress: number = 0;
 	export let message: string = '';
 	export let isVisible: boolean = false;
+	export let fileName: string = '';
+	export let fileSize: string = '';
 
 	// For smooth animation
 	let displayProgress: number = 0;
@@ -60,7 +62,32 @@
 </script>
 
 <div class="progress-container" style="display: {isVisible ? 'block' : 'none'}">
-	<div class="progress-title">{message}</div>
+	{#if fileName}
+		<div class="file-metadata">
+			<div class="file-icon">
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+					<polyline points="13 2 13 9 20 9" />
+				</svg>
+			</div>
+			<div class="file-details">
+				<span class="file-name">{fileName}</span>
+				{#if fileSize}
+					<span class="file-size">({fileSize})</span>
+				{/if}
+			</div>
+		</div>
+	{/if}
+	<!-- <div class="progress-title">{message}</div> Show message later if you want -->
 	<div class="progress-bar">
 		<div class="progress" style="width: {displayProgress}%"></div>
 	</div>
@@ -69,49 +96,78 @@
 
 <style>
 	.progress-container {
-			background-color: var(--light-gray);
-			border-radius: var(--border-radius);
-			padding: 2rem;
+		background-color: var(--light-gray);
+		border-radius: var(--border-radius);
+		padding: 2rem;
+	}
+
+	.file-metadata {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+		font-size: 0.875rem;
+		color: #666;
+	}
+
+	.file-icon {
+		color: #888;
+	}
+
+	.file-details {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.file-name {
+		font-weight: 600;
+		color: #333;
+		font-size: 1.125rem;
+	}
+
+	.file-size {
+		color: #666;
 	}
 
 	.progress-title {
-			font-size: 1.25rem;
-			margin-bottom: 1rem;
-			font-weight: 500;
+		font-size: 1.25rem;
+		margin-bottom: 1rem;
+		font-weight: 500;
 	}
 
 	.progress-bar {
-			width: 100%;
-			height: 8px;
-			background-color: #e0e0e0;
-			border-radius: 4px;
-			overflow: hidden;
+		width: 100%;
+		height: 8px;
+		background-color: #e0e0e0;
+		border-radius: 4px;
+		overflow: hidden;
 	}
 
 	.progress {
-			height: 100%;
-			background-color: var(--primary-green);
-			transition: width 0.3s linear(0.4, 0, 0.2, 1);
-			background-image: linear-gradient(
-					90deg,
-					rgba(255, 255, 255, 0) 0%,
-					rgba(255, 255, 255, 0.15) 50%,
-					rgba(255, 255, 255, 0) 100%
-			);
-			background-size: 200% 100%;
-			background-position: 0% 0%;
-			animation: shimmer 2s infinite;
+		height: 100%;
+		background-color: var(--primary-green);
+		transition: width 0.3s linear(0.4, 0, 0.2, 1);
+		background-image: linear-gradient(
+			90deg,
+			rgba(255, 255, 255, 0) 0%,
+			rgba(255, 255, 255, 0.15) 50%,
+			rgba(255, 255, 255, 0) 100%
+		);
+		background-size: 200% 100%;
+		background-position: 0% 0%;
+		animation: shimmer 2s infinite;
 	}
 
 	@keyframes shimmer {
-			to {
-					background-position: 200% 0%;
-			}
+		to {
+			background-position: 200% 0%;
+		}
 	}
 
 	.progress-text {
-			margin-top: 0.5rem;
-			font-size: 0.875rem;
-			color: #666;
+		margin-top: 0.5rem;
+		font-size: 0.875rem;
+		color: #666;
 	}
 </style>

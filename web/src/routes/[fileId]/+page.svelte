@@ -250,25 +250,25 @@
 		{:else if metadata?.error}
 			<ErrorMessage message={metadata.error} />
 		{:else}
-			{#if metadata?.filename && !isDownloadComplete}
+			{#if metadata?.filename && !isDownloadComplete && !isDownloading}
 				<FileInfo fileName={metadata.filename} {fileSize} />
-				{#if !isDownloadComplete}
-					{#if !isDownloading}
-						<button class="button" on:click={initiateDownload} disabled={!canDownload}>
-							{isDownloading ? 'Laster ned...' : 'Last ned'}
-						</button>
-					{/if}
+			{/if}
+			{#if !isDownloadComplete}
+				{#if !isDownloading}
+					<button class="button" on:click={initiateDownload} disabled={!canDownload}>
+						{isDownloading ? 'Laster ned...' : 'Last ned'}
+					</button>
 				{/if}
 			{/if}
-
 			{#if isDownloading || isDownloadComplete}
 				<ProgressBar
 					progress={downloadProgress}
 					message={downloadMessage}
 					isVisible={isDownloading}
+					fileName={metadata?.filename || ''}
+					{fileSize}
 				/>
 			{/if}
-
 			{#if isDownloadComplete}
 				{#if deletionError}
 					<ErrorMessage message={deletionError} />
