@@ -11,19 +11,35 @@
 	let displayProgress: number = 0;
 	let animationFrame: number;
 	let lastLoggedProgress: number = -1;
+	let lastRealProgress: number = 0;
+	let lastUpdateTime: number = 0;
+	let isAnimating: boolean = false;
 
-	// Update display progress smoothly using animation frames
+	// Simulate continuous progress between real updates
 	function updateDisplayProgress() {
+		const now = Date.now();
+		const timeSinceLastUpdate = now - lastUpdateTime;
+
 		// Calculate the difference between target and current
 		const diff = progress - displayProgress;
 
 		// If we're very close to the target, just snap to it
-		if (Math.abs(diff) < 0.2) {
+		if (Math.abs(diff) < 0.1) {
 			displayProgress = progress;
+			lastRealProgress = progress;
 		} else {
-			// Otherwise move a percentage of the remaining distance
-			// Smaller value = smoother but slower animation
-			displayProgress += diff * 0.1;
+			// Smooth catch-up to the real progress
+			displayProgress += diff * 0.15;
+		}
+
+		// Add subtle continuous progress when waiting for updates (simulate work)
+		// Only if we haven't received an update in a while and we're not at 100%
+		if (timeSinceLastUpdate > 800 && displayProgress < progress - 0.5 && progress < 100) {
+			// Very slow creep forward to show activity
+			const creepAmount = 0.02; // Very small increment
+			if (displayProgress < progress - 2) {
+				displayProgress += creepAmount;
+			}
 		}
 
 		// Only log when progress changes significantly (avoid console spam)
@@ -32,25 +48,42 @@
 			console.log('Progress updated:', Math.round(displayProgress), '–', message);
 		}
 
-		// Continue animation if we haven't reached the target
-		if (displayProgress !== progress) {
+		// Continue animation if we're visible and not at 100%
+		if (isVisible && (displayProgress < 100 || Math.abs(progress - displayProgress) > 0.1)) {
 			animationFrame = requestAnimationFrame(updateDisplayProgress);
+		} else {
+			isAnimating = false;
 		}
 	}
 
 	// Watch for changes in progress and start animation
-	$: if (progress !== displayProgress) {
-		// Cancel any existing animation
+	$: if (progress !== lastRealProgress && isVisible) {
+		lastRealProgress = progress;
+		lastUpdateTime = Date.now();
+
+		// Cancel any existing animation and start new one
 		if (animationFrame) {
 			cancelAnimationFrame(animationFrame);
 		}
-		// Start new animation
+
+		if (!isAnimating) {
+			isAnimating = true;
+			animationFrame = requestAnimationFrame(updateDisplayProgress);
+		}
+	}
+
+	// Start animation when component becomes visible
+	$: if (isVisible && !isAnimating) {
+		isAnimating = true;
+		lastUpdateTime = Date.now();
 		animationFrame = requestAnimationFrame(updateDisplayProgress);
 	}
 
 	onMount(() => {
 		// Initialize display progress
 		displayProgress = progress;
+		lastRealProgress = progress;
+		lastUpdateTime = Date.now();
 	});
 
 	onDestroy(() => {
@@ -58,6 +91,7 @@
 		if (animationFrame) {
 			cancelAnimationFrame(animationFrame);
 		}
+		isAnimating = false;
 	});
 </script>
 
@@ -134,16 +168,17 @@
 
 	.progress-bar {
 		width: 100%;
-		height: 8px;
+		height: 12px;
 		background-color: #e0e0e0;
-		border-radius: 4px;
+		border-radius: 6px;
 		overflow: hidden;
+		margin-bottom: 0.5rem;
 	}
 
 	.progress {
 		height: 100%;
 		background-color: var(--primary-green);
-		transition: width 0.3s linear(0.4, 0, 0.2, 1);
+		transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 		background-image: linear-gradient(
 			90deg,
 			rgba(255, 255, 255, 0) 0%,
@@ -153,6 +188,7 @@
 		background-size: 200% 100%;
 		background-position: 0% 0%;
 		animation: shimmer 2s infinite;
+		will-change: width;
 	}
 
 	@keyframes shimmer {
@@ -162,8 +198,10 @@
 	}
 
 	.progress-text {
-		margin-top: 0.5rem;
-		font-size: 0.875rem;
-		color: #666;
+		margin-top: 0.75rem;
+		font-size: 1.25rem;
+		font-weight: 600;
+		color: var(--primary-green);
+		text-align: center;
 	}
 </style>
