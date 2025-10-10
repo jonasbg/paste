@@ -9,11 +9,9 @@
 
 	// For smooth animation
 	let displayProgress: number = 0;
-	let animationFrame: number;
+	let animationFrame: number | null = null;
 	let lastLoggedProgress: number = -1;
-	let lastRealProgress: number = 0;
 	let lastUpdateTime: number = 0;
-	let isAnimating: boolean = false;
 
 	// Simulate continuous progress between real updates
 	function updateDisplayProgress() {
@@ -26,7 +24,6 @@
 		// If we're very close to the target, just snap to it
 		if (Math.abs(diff) < 0.1) {
 			displayProgress = progress;
-			lastRealProgress = progress;
 		} else {
 			// Smooth catch-up to the real progress
 			displayProgress += diff * 0.15;
@@ -48,77 +45,70 @@
 			console.log('Progress updated:', Math.round(displayProgress), '–', message);
 		}
 
-		// Continue animation if we're visible and not at 100%
-		if (isVisible && (displayProgress < 100 || Math.abs(progress - displayProgress) > 0.1)) {
+		// Continue animation if we're visible and haven't reached 100%
+		if (isVisible && displayProgress < 99.9) {
 			animationFrame = requestAnimationFrame(updateDisplayProgress);
 		} else {
-			isAnimating = false;
+			animationFrame = null;
 		}
 	}
 
-	// Watch for changes in progress and start animation
-	$: if (progress !== lastRealProgress && isVisible) {
-		lastRealProgress = progress;
+	// Start/restart animation when progress changes or visibility changes
+	$: if (isVisible && progress >= 0) {
+		// Update the timestamp whenever progress changes
 		lastUpdateTime = Date.now();
 
-		// Cancel any existing animation and start new one
-		if (animationFrame) {
-			cancelAnimationFrame(animationFrame);
-		}
-
-		if (!isAnimating) {
-			isAnimating = true;
+		// Start animation loop if not already running
+		if (animationFrame === null && displayProgress < 99.9) {
 			animationFrame = requestAnimationFrame(updateDisplayProgress);
 		}
 	}
 
-	// Start animation when component becomes visible
-	$: if (isVisible && !isAnimating) {
-		isAnimating = true;
-		lastUpdateTime = Date.now();
-		animationFrame = requestAnimationFrame(updateDisplayProgress);
+	// Stop animation when not visible
+	$: if (!isVisible && animationFrame !== null) {
+		cancelAnimationFrame(animationFrame);
+		animationFrame = null;
 	}
 
 	onMount(() => {
 		// Initialize display progress
 		displayProgress = progress;
-		lastRealProgress = progress;
 		lastUpdateTime = Date.now();
 	});
 
 	onDestroy(() => {
 		// Clean up any pending animation frames
-		if (animationFrame) {
+		if (animationFrame !== null) {
 			cancelAnimationFrame(animationFrame);
+			animationFrame = null;
 		}
-		isAnimating = false;
 	});
 </script>
 
 <div class="progress-container" style="display: {isVisible ? 'block' : 'none'}">
 	{#if fileName}
 		<div class="file-metadata">
-			<div class="file-icon">
-				<svg
-					width="16"
-					height="16"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				>
-					<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-					<polyline points="13 2 13 9 20 9" />
-				</svg>
-			</div>
-			<div class="file-details">
+			<div class="file-info-left">
+				<div class="file-icon">
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+						<polyline points="13 2 13 9 20 9" />
+					</svg>
+				</div>
 				<span class="file-name">{fileName}</span>
-				{#if fileSize}
-					<span class="file-size">({fileSize})</span>
-				{/if}
 			</div>
+			{#if fileSize}
+				<span class="file-size">{fileSize}</span>
+			{/if}
 		</div>
 	{/if}
 	<!-- <div class="progress-title">{message}</div> Show message later if you want -->
@@ -140,10 +130,17 @@
 	.file-metadata {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		gap: 0.5rem;
 		margin-bottom: 1rem;
 		font-size: 0.875rem;
 		color: #666;
+	}
+
+	.file-info-left {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.file-icon {
@@ -164,6 +161,7 @@
 
 	.file-size {
 		color: #666;
+		font-size: 1.175rem;
 	}
 
 	.progress-bar {
@@ -199,9 +197,9 @@
 
 	.progress-text {
 		margin-top: 0.75rem;
-		font-size: 1.25rem;
+		font-size: 1.15rem;
 		font-weight: 600;
-		color: var(--primary-green);
-		text-align: center;
+		color: #333;
+		text-align: left;
 	}
 </style>
