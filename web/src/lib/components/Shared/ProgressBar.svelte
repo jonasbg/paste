@@ -9,34 +9,21 @@
 
 	// For smooth animation
 	let displayProgress: number = 0;
-	let animationFrame: number | null = null;
+	let animationFrame: number;
 	let lastLoggedProgress: number = -1;
-	let lastUpdateTime: number = 0;
 
-	// Simulate continuous progress between real updates
+	// Update display progress smoothly using animation frames
 	function updateDisplayProgress() {
-		const now = Date.now();
-		const timeSinceLastUpdate = now - lastUpdateTime;
-
 		// Calculate the difference between target and current
 		const diff = progress - displayProgress;
 
 		// If we're very close to the target, just snap to it
-		if (Math.abs(diff) < 0.1) {
+		if (Math.abs(diff) < 0.2) {
 			displayProgress = progress;
 		} else {
-			// Smooth catch-up to the real progress
-			displayProgress += diff * 0.15;
-		}
-
-		// Add subtle continuous progress when waiting for updates (simulate work)
-		// Only if we haven't received an update in a while and we're not at 100%
-		if (timeSinceLastUpdate > 800 && displayProgress < progress - 0.5 && progress < 100) {
-			// Very slow creep forward to show activity
-			const creepAmount = 0.02; // Very small increment
-			if (displayProgress < progress - 2) {
-				displayProgress += creepAmount;
-			}
+			// Otherwise move a percentage of the remaining distance
+			// Smaller value = smoother but slower animation
+			displayProgress += diff * 0.1;
 		}
 
 		// Only log when progress changes significantly (avoid console spam)
@@ -45,42 +32,31 @@
 			console.log('Progress updated:', Math.round(displayProgress), '–', message);
 		}
 
-		// Continue animation if we're visible and haven't reached 100%
-		if (isVisible && displayProgress < 99.9) {
-			animationFrame = requestAnimationFrame(updateDisplayProgress);
-		} else {
-			animationFrame = null;
-		}
-	}
-
-	// Start/restart animation when progress changes or visibility changes
-	$: if (isVisible && progress >= 0) {
-		// Update the timestamp whenever progress changes
-		lastUpdateTime = Date.now();
-
-		// Start animation loop if not already running
-		if (animationFrame === null && displayProgress < 99.9) {
+		// Continue animation if we haven't reached the target
+		if (displayProgress !== progress) {
 			animationFrame = requestAnimationFrame(updateDisplayProgress);
 		}
 	}
 
-	// Stop animation when not visible
-	$: if (!isVisible && animationFrame !== null) {
-		cancelAnimationFrame(animationFrame);
-		animationFrame = null;
+	// Watch for changes in progress and start animation
+	$: if (progress !== displayProgress) {
+		// Cancel any existing animation
+		if (animationFrame) {
+			cancelAnimationFrame(animationFrame);
+		}
+		// Start new animation
+		animationFrame = requestAnimationFrame(updateDisplayProgress);
 	}
 
 	onMount(() => {
 		// Initialize display progress
 		displayProgress = progress;
-		lastUpdateTime = Date.now();
 	});
 
 	onDestroy(() => {
 		// Clean up any pending animation frames
-		if (animationFrame !== null) {
+		if (animationFrame) {
 			cancelAnimationFrame(animationFrame);
-			animationFrame = null;
 		}
 	});
 </script>
@@ -147,12 +123,6 @@
 		color: #888;
 	}
 
-	.file-details {
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-	}
-
 	.file-name {
 		font-weight: 600;
 		color: #333;
@@ -176,7 +146,8 @@
 	.progress {
 		height: 100%;
 		background-color: var(--primary-green);
-		transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+		transition: width 0.3s ease;
+		border-radius: 6px;
 		background-image: linear-gradient(
 			90deg,
 			rgba(255, 255, 255, 0) 0%,
@@ -186,7 +157,6 @@
 		background-size: 200% 100%;
 		background-position: 0% 0%;
 		animation: shimmer 2s infinite;
-		will-change: width;
 	}
 
 	@keyframes shimmer {
