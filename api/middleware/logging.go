@@ -56,7 +56,7 @@ func Logger(database *db.DB) gin.HandlerFunc {
 		if isFileOperation(path) {
 			tx = &types.TransactionLog{
 				Timestamp: start,
-				Action:    getActionType(path, requestMethod),
+				Action:    getActionType(path),
 				IP:        hashedIP,
 				Method:    requestMethod,
 			}
@@ -140,7 +140,7 @@ func getMethodType(c *gin.Context) string {
 	return strings.ToLower(c.Request.Method)
 }
 
-func getActionType(path string, method string) string {
+func getActionType(path string) string {
 	switch {
 	case strings.HasPrefix(path, "/api/upload") || strings.HasPrefix(path, "/api/ws/upload"):
 		return "upload"
