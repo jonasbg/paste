@@ -1,3 +1,12 @@
+@font-face {
+	font-family: 'Manrope';
+	src:
+		url('/fonts/Manrope-Regular.woff2') format('woff2');
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+}
+
 :root {
 	--primary-green: #40b87b;
 	--dark-text: #1a2634;
@@ -12,6 +21,7 @@
 	--success-text: #166534;
 	--success-icon: #16a34a;
 	font-family:
+		'Manrope',
 		system-ui,
 		-apple-system,
 		BlinkMacSystemFont,
@@ -28,6 +38,7 @@
 	margin: 0;
 	padding: 0;
 	max-height: 100vh;
+	font-family: inherit;
 }
 
 .container {
