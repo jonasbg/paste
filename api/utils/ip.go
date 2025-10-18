@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"bytes"
 	"net"
 	"os"
 	"strings"

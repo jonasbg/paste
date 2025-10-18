@@ -40,14 +40,14 @@ func Logger(database *db.DB) gin.HandlerFunc {
 		start := time.Now()
 		path := c.Request.URL.Path
 		requestMethod := getMethodType(c)
+		realIP := utils.GetRealIP(c)
+		hashedIP := utils.HashIP(realIP)
 
 		// Initialize request log
 		requestLog := &types.RequestLog{
 			Timestamp:   start,
-			IP:          utils.GetRealIP(c),
+			IP:          hashedIP,
 			Method:      requestMethod,
-			Path:        path,
-			UserAgent:   c.Request.UserAgent(),
 			QueryParams: c.Request.URL.RawQuery,
 		}
 
@@ -57,8 +57,7 @@ func Logger(database *db.DB) gin.HandlerFunc {
 			tx = &types.TransactionLog{
 				Timestamp: start,
 				Action:    getActionType(path, requestMethod),
-				IP:        requestLog.IP,
-				UserAgent: requestLog.UserAgent,
+				IP:        hashedIP,
 				Method:    requestMethod,
 			}
 
@@ -120,7 +119,7 @@ func Logger(database *db.DB) gin.HandlerFunc {
 
 		// Add common log info to context
 		c.Set("requestDuration", duration)
-		c.Set("clientIP", requestLog.IP)
+		c.Set("clientIP", hashedIP)
 		c.Set("requestBodySize", bodySize)
 		c.Set("method", requestMethod)
 	}

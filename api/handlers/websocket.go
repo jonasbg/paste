@@ -37,6 +37,8 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 		defer ws.Close()
 
+		hashedIP := utils.HashIP(utils.GetRealIP(c))
+
 		// Get initial request with fileId and token
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
@@ -229,8 +231,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				Timestamp:  start,
 				Action:     "download",
 				Method:     "websocket",
-				IP:         utils.GetRealIP(c),
-				UserAgent:  c.Request.UserAgent(),
+				IP:         hashedIP,
 				FileID:     request.FileId,
 				Duration:   duration.Milliseconds(),
 				Size:       totalSent,
@@ -247,8 +248,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				Timestamp:  start,
 				Action:     "download_incomplete",
 				Method:     "websocket",
-				IP:         utils.GetRealIP(c),
-				UserAgent:  c.Request.UserAgent(),
+				IP:         hashedIP,
 				FileID:     request.FileId,
 				Duration:   duration.Milliseconds(),
 				Size:       totalSent,
@@ -272,6 +272,8 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 		defer ws.Close()
+
+		hashedIP := utils.HashIP(utils.GetRealIP(c))
 
 		// 1. Initial Message: Size Check
 		_, msg, err := ws.ReadMessage()
@@ -480,8 +482,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			Timestamp:  start,
 			Action:     "upload",
 			Method:     "websocket",
-			IP:         utils.GetRealIP(c),
-			UserAgent:  c.Request.UserAgent(),
+			IP:         hashedIP,
 			FileID:     id,
 			Duration:   duration.Milliseconds(),
 			Size:       totalBytes,

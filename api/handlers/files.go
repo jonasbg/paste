@@ -205,6 +205,10 @@ func HandleDownload(uploadDir string) gin.HandlerFunc {
 }
 
 func validateToken(token string) bool {
+	if len(token) < GlobalConfig.TokenMinLength {
+		return false
+	}
+
 	// Ensure token only contains safe filename characters
 	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 	for _, char := range token {

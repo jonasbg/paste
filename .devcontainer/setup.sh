@@ -11,6 +11,7 @@ cd /workspaces/paste/web && npm install && cd ..
 
 # Build Go WASM module
 echo "Compiling Go WASM module..."
-GOOS=js GOARCH=wasm go build -o /workspaces/paste/web/static/encryption.wasm /workspaces/paste/wasm/wasm.go
+cd /workspaces/paste/wasm
+GOOS=js GOARCH=wasm go build -o /workspaces/paste/web/static/encryption.wasm wasm.go
 
 echo "Setup complete."

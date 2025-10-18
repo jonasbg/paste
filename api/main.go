@@ -56,7 +56,7 @@ func main() {
 	r.SetTrustedProxies(utils.GetTrustedProxies())
 	r.TrustedPlatform = "X-Forwarded-For"
 
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(middleware.PrivacyLogger(), gin.Recovery())
 
 	// Add compression middleware with custom options
 	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{".pdf", ".mp4", ".avi", ".mov"}),

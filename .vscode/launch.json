@@ -11,7 +11,8 @@
                 "MAX_FILE_SIZE": "10GB",
                 "ENV": "development",
                 "DEBUG": "true",
-                "CHUNK_SIZE": "10"
+                "CHUNK_SIZE": "10",
+                "KEY_SIZE": "128"
             }
         },
         {
