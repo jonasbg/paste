@@ -7,8 +7,7 @@ type TransactionLog struct {
 	Timestamp  time.Time `gorm:"index"`
 	Action     string    `gorm:"index"` // "upload", "download", "delete"
 	FileID     string    `gorm:"index"`
-	IP         string    `gorm:"index"`
-	UserAgent  string
+	IP         string    `gorm:"type:varchar(128);index"`
 	Size       int64
 	Success    bool   // Whether the operation succeeded
 	StatusCode int    // HTTP status code
