@@ -45,12 +45,42 @@ func NewDB(dbPath string) (*DB, error) {
 		return nil, err
 	}
 
+	if err := DropUnusedColumns(db, &types.RequestLog{}, &types.TransactionLog{}); err != nil {
+		return nil, err
+	}
+
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_txlog_timestamp ON transaction_logs (timestamp);")
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_txlog_action_success_ts ON transaction_logs (action, success, timestamp);")
 
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_reqlog_timestamp ON request_logs (timestamp);")
 
 	return &DB{db: db}, nil
+}
+
+func DropUnusedColumns(db *gorm.DB, dst ...any) error {
+
+	for _, d := range dst {
+		stmt := &gorm.Statement{DB: db}
+		stmt.Parse(d)
+		fields := stmt.Schema.Fields
+		columns, _ := db.Migrator().ColumnTypes(d)
+
+		for i := range columns {
+			found := false
+			for j := range fields {
+				if columns[i].Name() == fields[j].DBName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				if err := db.Migrator().DropColumn(d, columns[i].Name()); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (d *DB) GetSecurityMetrics(start, end time.Time) (types.SecurityMetrics, error) {
@@ -286,7 +316,6 @@ func (d *DB) BatchInsertRequestLogs(logs []*types.RequestLog) error {
 func (d *DB) GetRequestMetrics(start, end time.Time) (types.RequestMetrics, error) {
 	var metrics types.RequestMetrics
 	metrics.StatusDistribution = make(map[int]int64)
-	metrics.PathDistribution = make(map[string]int64)
 
 	// Get all request logs for the time period in a single query
 	var logs []types.RequestLog
@@ -296,7 +325,6 @@ func (d *DB) GetRequestMetrics(start, end time.Time) (types.RequestMetrics, erro
 
 	// Calculate metrics in memory
 	ipSet := make(map[string]struct{})
-	pathCounts := make(map[string]int64)
 	statusCounts := make(map[int]int64)
 	dailyRequests := make(map[string]int64)
 	ipStats := make(map[string]struct {
@@ -320,9 +348,6 @@ func (d *DB) GetRequestMetrics(start, end time.Time) (types.RequestMetrics, erro
 		// Count status codes
 		statusCounts[log.StatusCode]++
 
-		// Count paths
-		pathCounts[log.Path]++
-
 		// Track IP stats
 		stats := ipStats[log.IP]
 		stats.Requests++
@@ -344,26 +369,6 @@ func (d *DB) GetRequestMetrics(start, end time.Time) (types.RequestMetrics, erro
 
 	// Set status distribution
 	metrics.StatusDistribution = statusCounts
-
-	// Better approach for path distribution: sort all paths by count
-	type pathCount struct {
-		Path  string
-		Count int64
-	}
-	pathsList := make([]pathCount, 0, len(pathCounts))
-	for path, count := range pathCounts {
-		pathsList = append(pathsList, pathCount{Path: path, Count: count})
-	}
-
-	// Sort by count in descending order
-	sort.Slice(pathsList, func(i, j int) bool {
-		return pathsList[i].Count > pathsList[j].Count
-	})
-
-	// Take only top 10
-	for i := 0; i < len(pathsList) && i < 10; i++ {
-		metrics.PathDistribution[pathsList[i].Path] = pathsList[i].Count
-	}
 
 	// Set top IPs - pre-allocate a reasonable size for the slice
 	for ip, stats := range ipStats {

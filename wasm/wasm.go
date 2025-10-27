@@ -12,9 +12,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"syscall/js"
+
+	"golang.org/x/crypto/hkdf"
 )
 
 type Metadata struct {
@@ -40,8 +43,7 @@ func main() {
 		"decryptChunk":           js.FuncOf(decryptChunk),
 		"generateKey":            js.FuncOf(generateKey),
 		"decryptMetadata":        js.FuncOf(decryptMetadata),
-		"encrypt":                js.FuncOf(encrypt), // Keep the original encrypt
-		"decrypt":                js.FuncOf(decrypt), // Keep the original decrypt
+		"encrypt":                js.FuncOf(encrypt),
 		"generateHmacToken":      js.FuncOf(generateHmacToken),
 	})
 	<-c
@@ -55,24 +57,38 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 	fileId := args[0].String()
 	keyBase64 := args[1].String()
 
+	// Ensure proper padding before decoding the base64 key
+	if len(keyBase64)%4 != 0 {
+		keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
+	}
+
 	// Decode the base64 key
 	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
 		return handleError(err)
 	}
 
-	// Create HMAC
-	h := hmac.New(sha256.New, key)
+	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
+		return handleError(errors.New("invalid key length"))
+	}
+
+	hmacKey, err := deriveHMACKey(key, fileId)
+	if err != nil {
+		return handleError(err)
+	}
+
+	// Create HMAC with derived key
+	h := hmac.New(sha256.New, hmacKey)
 	h.Write([]byte(fileId))
 	signature := h.Sum(nil)
 
-	// Take first 12 bytes (will give us exactly 16 base64 chars)
-	token := base64.URLEncoding.EncodeToString(signature[:12])
-
-	// Do base64url transformations
-	token = strings.ReplaceAll(token, "+", "-")
-	token = strings.ReplaceAll(token, "/", "_")
-	token = strings.TrimRight(token, "=")
+	// Truncate signature to match key size in bytes (16, 24, or 32)
+	tokenLength := len(key)
+	if tokenLength > len(signature) {
+		tokenLength = len(signature)
+	}
+	tokenBytes := signature[:tokenLength]
+	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 
 	// Validate the token is filename safe
 	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
@@ -83,6 +99,17 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 	}
 
 	return js.ValueOf(token)
+}
+
+func deriveHMACKey(baseKey []byte, fileID string) ([]byte, error) {
+	info := []byte("paste:hmac-token")
+	reader := hkdf.New(sha256.New, baseKey, []byte(fileID), info)
+
+	derived := make([]byte, len(baseKey))
+	if _, err := io.ReadFull(reader, derived); err != nil {
+		return nil, err
+	}
+	return derived, nil
 }
 
 func encrypt(_ js.Value, args []js.Value) interface{} {
@@ -135,47 +162,6 @@ func encrypt(_ js.Value, args []js.Value) interface{} {
 
 	uint8Array := js.Global().Get("Uint8Array").New(len(result))
 	js.CopyBytesToJS(uint8Array, result)
-	return uint8Array
-}
-
-func decrypt(_ js.Value, args []js.Value) interface{} {
-	if len(args) != 2 {
-		return handleError(errors.New("invalid arguments"))
-	}
-
-	keyBase64 := args[0].String()
-	encrypted := make([]byte, args[1].Length())
-	js.CopyBytesToGo(encrypted, args[1])
-
-	if len(encrypted) < 12 {
-		return handleError(errors.New("invalid encrypted data: no IV"))
-	}
-
-	key, err := base64.URLEncoding.DecodeString(keyBase64)
-	if err != nil {
-		return handleError(err)
-	}
-
-	iv := encrypted[:12]
-	ciphertext := encrypted[12:]
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return handleError(err)
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return handleError(err)
-	}
-
-	decrypted, err := aead.Open(nil, iv, ciphertext, nil)
-	if err != nil {
-		return handleError(err)
-	}
-
-	uint8Array := js.Global().Get("Uint8Array").New(len(decrypted))
-	js.CopyBytesToJS(uint8Array, decrypted)
 	return uint8Array
 }
 

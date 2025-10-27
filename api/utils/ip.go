@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"bytes"
 	"net"
 	"os"
 	"strings"
@@ -84,25 +83,4 @@ func GetRealIP(c *gin.Context) string {
 
 	// If we get here, just return the immediate client IP
 	return clientIP
-}
-
-// isPrivateIP checks if an IP address is private
-func isPrivateIP(ip net.IP) bool {
-	// Check against private IP ranges
-	privateRanges := []struct {
-		start net.IP
-		end   net.IP
-	}{
-		{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},
-		{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},
-		{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")},
-		{net.ParseIP("127.0.0.0"), net.ParseIP("127.255.255.255")},
-	}
-
-	for _, r := range privateRanges {
-		if bytes.Compare(ip, r.start) >= 0 && bytes.Compare(ip, r.end) <= 0 {
-			return true
-		}
-	}
-	return false
 }

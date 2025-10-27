@@ -20,6 +20,7 @@ type Config struct {
 	IDSize           int    `json:"id_size"`
 	KeySize          int    `json:"key_size"`
 	ChunkSize        int    `json:"chunk_size"`
+	TokenMinLength   int    `json:"token_min_length"`
 }
 
 func InitConfig() error {
@@ -62,9 +63,27 @@ func InitConfig() error {
 		IDSize:           idSize,
 		KeySize:          keySize,
 		ChunkSize:        chunkSize,
+		TokenMinLength:   calculateTokenMinLength(keySize),
 	}
 
 	return nil
+}
+
+func calculateTokenMinLength(keyBits int) int {
+	keyBytes := keyBits / 8
+	if keyBytes == 0 {
+		return 0
+	}
+
+	fullGroups := keyBytes / 3
+	remainder := keyBytes % 3
+	length := fullGroups * 4
+
+	if remainder > 0 {
+		length += remainder + 1
+	}
+
+	return length
 }
 
 func parseFileSize(size string) (int64, error) {
