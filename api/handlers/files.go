@@ -19,8 +19,6 @@ import (
 const (
 	headerSize      = 16          // Size of metadata header
 	maxMetadataSize = 1024 * 1024 // 1MB max metadata size
-	expectedIVSize  = 12          // Size of GCM IV
-	bufferSize      = 32 * 1024   // 32KB buffer for copying
 )
 
 // generateID generates a cryptographically secure random ID with a specified bit length.
@@ -205,6 +203,10 @@ func HandleDownload(uploadDir string) gin.HandlerFunc {
 }
 
 func validateToken(token string) bool {
+	if len(token) < GlobalConfig.TokenMinLength {
+		return false
+	}
+
 	// Ensure token only contains safe filename characters
 	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 	for _, char := range token {

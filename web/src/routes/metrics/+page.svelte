@@ -25,14 +25,12 @@
 	let dateRange = data.range;
 	let timeSeriesChartElement: HTMLElement;
 	let statusChartElement: HTMLElement;
-	let pathDistributionElement: HTMLElement;
 	let latencyTimelineElement: HTMLElement;
 	let storageDistributionElement: HTMLElement;
 	let uploadHistoryChartElement: HTMLElement;
 
 	let timeSeriesChart: ApexCharts;
 	let statusChart: ApexCharts;
-	let pathDistributionChart: ApexCharts;
 	let latencyTimelineChart: ApexCharts;
 	let storageDistributionChart: ApexCharts;
 	let uploadHistoryChart: ApexCharts;
@@ -271,44 +269,6 @@
 				}
 			};
 
-			// Path Distribution Chart (Top 10 paths)
-			const pathDistributionOptions = {
-				chart: {
-					type: 'bar',
-					height: 280,
-					toolbar: {
-						show: false
-					},
-					background: 'transparent'
-				},
-				plotOptions: {
-					bar: {
-						horizontal: true,
-						borderRadius: 4,
-						barHeight: '70%'
-					}
-				},
-				colors: [primaryGreen, primaryGreen, primaryGreen],
-				series: [
-					{
-						name: 'Requests',
-						data: Object.entries(data.requests.path_distribution)
-							.sort((a, b) => b[1] - a[1])
-							.slice(0, 10)
-							.map(([path, count]) => count)
-					}
-				],
-				xaxis: {
-					categories: Object.entries(data.requests.path_distribution)
-						.sort((a, b) => b[1] - a[1])
-						.slice(0, 10)
-						.map(([path]) => path)
-				},
-				tooltip: {
-					theme: 'light'
-				}
-			};
-
 			// Storage Distribution Chart
 			const storageDistributionOptions = {
 				chart: {
@@ -442,7 +402,6 @@
 
 			timeSeriesChart = new ApexCharts(timeSeriesChartElement, timeSeriesOptions);
 			statusChart = new ApexCharts(statusChartElement, statusDistributionOptions);
-			pathDistributionChart = new ApexCharts(pathDistributionElement, pathDistributionOptions);
 			storageDistributionChart = new ApexCharts(
 				storageDistributionElement,
 				storageDistributionOptions
@@ -454,7 +413,6 @@
 
 			timeSeriesChart.render();
 			statusChart.render();
-			pathDistributionChart.render();
 			storageDistributionChart.render();
 			uploadHistoryChart.render();
 		}
@@ -462,7 +420,6 @@
 		return () => {
 			timeSeriesChart?.destroy();
 			statusChart?.destroy();
-			pathDistributionChart?.destroy();
 			storageDistributionChart?.destroy();
 			uploadHistoryChart?.destroy();
 		};
@@ -503,26 +460,6 @@
 		});
 		statusChart.updateSeries(Object.values(data.requests.status_distribution));
 	}
-
-	$: if (pathDistributionChart && data.requests?.path_distribution) {
-		const sortedPaths = Object.entries(data.requests.path_distribution)
-			.sort((a, b) => b[1] - a[1])
-			.slice(0, 10);
-
-		pathDistributionChart.updateSeries([
-			{
-				name: 'Requests',
-				data: sortedPaths.map(([_, count]) => count)
-			}
-		]);
-
-		pathDistributionChart.updateOptions({
-			xaxis: {
-				categories: sortedPaths.map(([path]) => path)
-			}
-		});
-	}
-
 	$: if (storageDistributionChart && data.storage?.file_size_distribution) {
 		storageDistributionChart.updateSeries(Object.values(data.storage.file_size_distribution));
 	}
@@ -698,15 +635,6 @@ Usage: {Math.round((data.storage?.used_size_bytes || 0) / (data.storage?.system_
 				</div>
 				<div class="chart-body">
 					<div bind:this={statusChartElement} class="chart"></div>
-				</div>
-			</div>
-
-			<div class="chart-card">
-				<div class="chart-header">
-					<h2>Top Requested Paths</h2>
-				</div>
-				<div class="chart-body">
-					<div bind:this={pathDistributionElement} class="chart"></div>
 				</div>
 			</div>
 

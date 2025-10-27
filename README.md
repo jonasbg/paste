@@ -179,6 +179,7 @@ Environment variables:
 | `CHUNK_SIZE` | `4` | Size of chunks in MB for transmission |
 | `METRICS_ALLOWED_IPS` | `127.0.0.1/8,::1/128` | IP addresses allowed to access metrics endpoints |
 | `TRUSTED_PROXIES` | `10.0.0.0/8` | IP ranges of trusted proxies for correct client IP detection |
+| `LOG_HASH_SALT` | (empty) | Optional per-instance salt used when hashing client IPs. Setting it changes stored hashes; keep it secret.
 
 ## Security Implementation
 
