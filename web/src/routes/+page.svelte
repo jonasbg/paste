@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { generateKey, uploadEncryptedFile } from '$lib/services/encryptionService';
@@ -128,6 +128,15 @@
 
 		const urlParams = new URLSearchParams(window.location.hash.slice(1));
 		encryptionKey = urlParams.get('key');
+
+		// Add paste event listener
+		window.addEventListener('paste', handlePaste);
+	});
+
+	onDestroy(() => {
+		if (browser) {
+			window.removeEventListener('paste', handlePaste);
+		}
 	});
 
 	let dragCounter = 0;
@@ -197,6 +206,98 @@
 
 		// Force a small delay to help with garbage collection
 		setTimeout(() => {}, 100);
+	}
+
+	async function handlePaste(event: ClipboardEvent) {
+		// Don't interfere if user is pasting in an input/textarea
+		const target = event.target as HTMLElement;
+		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+			return;
+		}
+
+		// Don't process paste if we're already uploading or have uploaded
+		if (isUploading || shareUrl) {
+			return;
+		}
+
+		const items = event.clipboardData?.items;
+		if (!items) return;
+
+		// Process clipboard items
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
+
+			// Handle images (screenshots, copied images)
+			if (item.type.startsWith('image/')) {
+				event.preventDefault();
+				const blob = item.getAsFile();
+				if (!blob) continue;
+
+				// Try to extract filename from clipboard if available
+				// Some browsers/OS provide filename metadata
+				let filename = 'screenshot.png';
+
+				// Check if the blob has a name property (Firefox on some systems)
+				if (blob.name && blob.name !== 'image.png') {
+					filename = blob.name;
+				} else {
+					// Generate filename with timestamp for screenshots
+					const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+					const extension = item.type.split('/')[1] || 'png';
+					filename = `screenshot-${timestamp}.${extension}`;
+				}
+
+				// Create a new File object with the correct filename
+				const file = new File([blob], filename, { type: item.type });
+				await processClipboardFile(file);
+				return;
+			}
+
+			// Handle files
+			if (item.kind === 'file' && !item.type.startsWith('image/')) {
+				event.preventDefault();
+				const file = item.getAsFile();
+				if (file) {
+					await processClipboardFile(file);
+					return;
+				}
+			}
+
+			// Handle text (convert to .txt file)
+			if (item.type === 'text/plain') {
+				event.preventDefault();
+				item.getAsString(async (text) => {
+					if (!text.trim()) return;
+
+					// Create a .txt file from the pasted text
+					const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+					const filename = `pasted-text-${timestamp}.txt`;
+					const blob = new Blob([text], { type: 'text/plain' });
+					const file = new File([blob], filename, { type: 'text/plain' });
+
+					await processClipboardFile(file);
+				});
+				return;
+			}
+		}
+	}
+
+	async function processClipboardFile(file: File) {
+		if (!$configStore.data) {
+			fileSizeError = 'Unable to validate file size: configuration not loaded';
+			return;
+		}
+
+		const fileProcessor = new FileProcessor();
+		const maxFileSize = fileProcessor.getMaxFileSize();
+
+		if (file.size > maxFileSize) {
+			fileSizeError = `Filen er for stor. Maksimal filstørrelse er ${FileProcessor.formatFileSize(maxFileSize)}.`;
+			return;
+		}
+
+		selectedFile = file;
+		fileSizeError = '';
 	}
 </script>
 
