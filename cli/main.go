@@ -1,11 +1,6 @@
 package main
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -20,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/gorilla/websocket"
-	"golang.org/x/crypto/hkdf"
+	"github.com/jonasbg/paste/crypto"
 )
 
 const (
@@ -214,8 +209,8 @@ func handleUpload(filePath, customName, serverURL string) error {
 	}
 
 	// Generate encryption key
-	key := make([]byte, config.KeySize/8)
-	if _, err := rand.Read(key); err != nil {
+	key, err := crypto.GenerateKey(config.KeySize / 8)
+	if err != nil {
 		return fmt.Errorf("failed to generate key: %w", err)
 	}
 	keyBase64 := base64.URLEncoding.EncodeToString(key)
@@ -338,7 +333,7 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 	}
 
 	// Step 2: Generate and send HMAC token
-	token, err := generateHMACToken(fileID, key)
+	token, err := crypto.GenerateHMACToken(fileID, key)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate token: %w", err)
 	}
@@ -364,21 +359,12 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 
-	metadataIV := make([]byte, 12)
-	if _, err := rand.Read(metadataIV); err != nil {
-		return "", err
+	encryptedMetadataHeader, err := crypto.EncryptMetadata(key, metadataJSON)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt metadata: %w", err)
 	}
 
-	block, _ := aes.NewCipher(key)
-	aead, _ := cipher.NewGCM(block)
-	encryptedMetadata := aead.Seal(nil, metadataIV, metadataJSON, nil)
-
-	metadataHeader := make([]byte, 16)
-	copy(metadataHeader[:12], metadataIV)
-	binary.LittleEndian.PutUint32(metadataHeader[12:16], uint32(len(encryptedMetadata)))
-	metadataHeader = append(metadataHeader, encryptedMetadata...)
-
-	if err := conn.WriteMessage(websocket.BinaryMessage, metadataHeader); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, encryptedMetadataHeader); err != nil {
 		return "", fmt.Errorf("failed to send metadata: %w", err)
 	}
 
@@ -387,20 +373,20 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 		return "", fmt.Errorf("failed to read metadata response: %w", err)
 	}
 
-	// Step 4: Send encryption IV
-	dataIV := make([]byte, 12)
-	if _, err := rand.Read(dataIV); err != nil {
-		return "", err
+	// Step 4: Create streaming cipher and send IV
+	streamCipher, err := crypto.NewStreamCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}
+	defer streamCipher.Clear()
 
-	if err := conn.WriteMessage(websocket.BinaryMessage, dataIV); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, streamCipher.IV()); err != nil {
 		return "", fmt.Errorf("failed to send IV: %w", err)
 	}
 
 	// Step 5: Stream encrypted chunks
 	chunkSize := chunkSizeMB * 1024 * 1024
 	buffer := make([]byte, chunkSize)
-	chunkNum := 0
 
 	for {
 		n, err := reader.Read(buffer)
@@ -412,11 +398,10 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 		}
 
 		// Encrypt chunk
-		nonce := make([]byte, 12)
-		copy(nonce, dataIV)
-		binary.LittleEndian.PutUint32(nonce[8:], uint32(chunkNum))
-
-		encryptedChunk := aead.Seal(nil, nonce, buffer[:n], nil)
+		encryptedChunk, err := streamCipher.EncryptChunk(buffer[:n])
+		if err != nil {
+			return "", fmt.Errorf("failed to encrypt chunk: %w", err)
+		}
 
 		if err := conn.WriteMessage(websocket.BinaryMessage, encryptedChunk); err != nil {
 			return "", fmt.Errorf("failed to send chunk: %w", err)
@@ -426,8 +411,6 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 		if err := conn.ReadJSON(&ackResp); err != nil {
 			return "", fmt.Errorf("failed to read ack: %w", err)
 		}
-
-		chunkNum++
 
 		if err == io.EOF {
 			break
@@ -481,7 +464,7 @@ func parseDownloadLink(link string) (fileID string, key []byte, error error) {
 }
 
 func fetchMetadata(serverURL, fileID string, key []byte) (*Metadata, error) {
-	token, err := generateHMACToken(fileID, key)
+	token, err := crypto.GenerateHMACToken(fileID, key)
 	if err != nil {
 		return nil, err
 	}
@@ -507,28 +490,7 @@ func fetchMetadata(serverURL, fileID string, key []byte) (*Metadata, error) {
 		return nil, err
 	}
 
-	if len(data) < 16 {
-		return nil, errors.New("invalid metadata format")
-	}
-
-	iv := data[:12]
-	metadataLen := binary.LittleEndian.Uint32(data[12:16])
-	if len(data) < 16+int(metadataLen) {
-		return nil, errors.New("incomplete metadata")
-	}
-	encryptedMetadata := data[16 : 16+metadataLen]
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	decrypted, err := aead.Open(nil, iv, encryptedMetadata, nil)
+	decrypted, err := crypto.DecryptMetadata(key, data)
 	if err != nil {
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
@@ -542,7 +504,7 @@ func fetchMetadata(serverURL, fileID string, key []byte) (*Metadata, error) {
 }
 
 func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) error {
-	token, err := generateHMACToken(fileID, key)
+	token, err := crypto.GenerateHMACToken(fileID, key)
 	if err != nil {
 		return err
 	}
@@ -583,25 +545,19 @@ func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) 
 	// Skip metadata header and encrypted metadata
 	offset := 16 + int(metadataLen)
 
-	// Read IV
-	iv := encryptedData[offset : offset+12]
-	offset += 12
+	// Read IV and create stream decryptor
+	iv := encryptedData[offset : offset+crypto.IVSize]
+	offset += crypto.IVSize
 
-	// Decrypt chunks
-	block, err := aes.NewCipher(key)
+	streamCipher, err := crypto.NewStreamDecryptor(key, iv)
 	if err != nil {
 		return err
 	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return err
-	}
+	defer streamCipher.Clear()
 
 	// The remaining data is encrypted chunks with GCM tags
 	// We need to try different chunk sizes since we don't know the exact size
 	remainingData := encryptedData[offset:]
-	chunkNum := 0
 
 	// Try to determine chunk size from first chunk
 	// Standard chunk sizes: 1MB, 2MB, 4MB, 8MB
@@ -615,18 +571,16 @@ func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) 
 	// Try to decrypt with different chunk sizes
 	var chunkSize int
 	for _, size := range possibleChunkSizes {
-		testSize := size + aead.Overhead()
+		testSize := size + crypto.GCMTagSize
 		if len(remainingData) >= testSize || len(remainingData) < size {
-			nonce := make([]byte, 12)
-			copy(nonce, iv)
-			binary.LittleEndian.PutUint32(nonce[8:], 0)
-
 			testLen := testSize
 			if len(remainingData) < testSize {
 				testLen = len(remainingData)
 			}
 
-			_, err := aead.Open(nil, nonce, remainingData[:testLen], nil)
+			// Create temporary cipher to test
+			testCipher, _ := crypto.NewStreamDecryptor(key, iv)
+			_, err := testCipher.DecryptChunk(remainingData[:testLen])
 			if err == nil {
 				chunkSize = size
 				break
@@ -636,11 +590,7 @@ func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) 
 
 	if chunkSize == 0 {
 		// If none of the standard sizes work, try treating it as a single chunk
-		nonce := make([]byte, 12)
-		copy(nonce, iv)
-		binary.LittleEndian.PutUint32(nonce[8:], 0)
-
-		decrypted, err := aead.Open(nil, nonce, remainingData, nil)
+		decrypted, err := streamCipher.DecryptChunk(remainingData)
 		if err != nil {
 			return fmt.Errorf("decryption failed: %w", err)
 		}
@@ -652,20 +602,16 @@ func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) 
 	pos := 0
 	for pos < len(remainingData) {
 		// Determine this chunk's size
-		thisChunkSize := chunkSize + aead.Overhead()
+		thisChunkSize := chunkSize + crypto.GCMTagSize
 		if pos+thisChunkSize > len(remainingData) {
 			thisChunkSize = len(remainingData) - pos
 		}
 
 		chunk := remainingData[pos : pos+thisChunkSize]
 
-		nonce := make([]byte, 12)
-		copy(nonce, iv)
-		binary.LittleEndian.PutUint32(nonce[8:], uint32(chunkNum))
-
-		decrypted, err := aead.Open(nil, nonce, chunk, nil)
+		decrypted, err := streamCipher.DecryptChunk(chunk)
 		if err != nil {
-			return fmt.Errorf("decryption failed at chunk %d (pos %d): %w", chunkNum, pos, err)
+			return fmt.Errorf("decryption failed at pos %d: %w", pos, err)
 		}
 
 		if _, err := writer.Write(decrypted); err != nil {
@@ -673,39 +619,7 @@ func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) 
 		}
 
 		pos += thisChunkSize
-		chunkNum++
 	}
 
 	return nil
-}
-
-func generateHMACToken(fileID string, key []byte) (string, error) {
-	hmacKey, err := deriveHMACKey(key, fileID)
-	if err != nil {
-		return "", err
-	}
-
-	h := hmac.New(sha256.New, hmacKey)
-	h.Write([]byte(fileID))
-	signature := h.Sum(nil)
-
-	tokenLength := len(key)
-	if tokenLength > len(signature) {
-		tokenLength = len(signature)
-	}
-	tokenBytes := signature[:tokenLength]
-	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-
-	return token, nil
-}
-
-func deriveHMACKey(baseKey []byte, fileID string) ([]byte, error) {
-	info := []byte("paste:hmac-token")
-	reader := hkdf.New(sha256.New, baseKey, []byte(fileID), info)
-
-	derived := make([]byte, len(baseKey))
-	if _, err := io.ReadFull(reader, derived); err != nil {
-		return nil, err
-	}
-	return derived, nil
 }
