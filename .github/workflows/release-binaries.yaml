@@ -30,23 +30,18 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            archive_extension: tar.gz
             artifact_suffix: linux-amd64
           - goos: linux
             goarch: arm64
-            archive_extension: tar.gz
             artifact_suffix: linux-arm64
           - goos: darwin
             goarch: amd64
-            archive_extension: tar.gz
             artifact_suffix: darwin-amd64
           - goos: darwin
             goarch: arm64
-            archive_extension: tar.gz
             artifact_suffix: darwin-arm64
           - goos: windows
             goarch: amd64
-            archive_extension: zip
             artifact_suffix: windows-amd64
 
     steps:
@@ -70,56 +65,33 @@ jobs:
           SUFFIX="${ARTIFACT_SUFFIX}"
           ROOT_DIR="$(pwd)"
           DIST_DIR="${ROOT_DIR}/dist"
-          STAGING_DIR="${DIST_DIR}/${APP_NAME}-${SUFFIX}"
-          BINARY_NAME="${APP_NAME}"
+          BINARY_NAME="${APP_NAME}-${SUFFIX}"
 
           if [ "${GOOS}" = "windows" ]; then
             BINARY_NAME="${BINARY_NAME}.exe"
           fi
 
-          mkdir -p "${STAGING_DIR}"
+          mkdir -p "${DIST_DIR}"
 
           VERSION="${VERSION:-dev}"
 
           cd cli/
 
           GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
-            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "${STAGING_DIR}/${BINARY_NAME}" ./cmd/paste
+            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "${DIST_DIR}/${BINARY_NAME}" ./cmd/paste
 
-          if [ "${GOOS}" = "windows" ]; then
-            ARCHIVE_PATH="${DIST_DIR}/${APP_NAME}-${SUFFIX}.zip"
-            (cd "${STAGING_DIR}" && zip -r "${ARCHIVE_PATH}" "${BINARY_NAME}")
-          else
-            ARCHIVE_PATH="${DIST_DIR}/${APP_NAME}-${SUFFIX}.tar.gz"
-            (cd "${STAGING_DIR}" && tar -czf "${ARCHIVE_PATH}" "${BINARY_NAME}")
-          fi
-
-          rm -rf "${STAGING_DIR}"
-
-      - name: Generate SHA256 checksum
-        run: |
-          cd dist
-          ARCHIVE_FILE="paste-${{ matrix.artifact_suffix }}.${{ matrix.archive_extension }}"
-          sha256sum "${ARCHIVE_FILE}" > "${ARCHIVE_FILE}.sha256"
-          echo "Generated checksum for ${ARCHIVE_FILE}:"
-          cat "${ARCHIVE_FILE}.sha256"
-
-      - name: Upload artifact with checksum
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: paste-${{ matrix.artifact_suffix }}.zip
-          path: |
-            dist/paste-${{ matrix.artifact_suffix }}.${{ matrix.archive_extension }}
-            dist/paste-${{ matrix.artifact_suffix }}.${{ matrix.archive_extension }}.sha256
+          name: paste-${{ matrix.artifact_suffix }}
+          path: dist/paste-${{ matrix.artifact_suffix }}*
           retention-days: 1
 
-      - name: Upload release assets
+      - name: Upload release binary
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            dist/paste-${{ matrix.artifact_suffix }}.${{ matrix.archive_extension }}
-            dist/paste-${{ matrix.artifact_suffix }}.${{ matrix.archive_extension }}.sha256
+          files: dist/paste-${{ matrix.artifact_suffix }}*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -130,14 +102,14 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
       - name: Create combined SHA256SUMS file
         run: |
           cd artifacts
-          find . -name "*.sha256" -exec cat {} \; | sort > ../SHA256SUMS
+          find . -type f -name "paste-*" -exec sha256sum {} \; | sed 's|^\([^ ]*\)  \./[^/]*/|\1  |' | sort -k2 > ../SHA256SUMS
           cat ../SHA256SUMS
 
       - name: Upload SHA256SUMS to release
