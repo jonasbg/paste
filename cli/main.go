@@ -223,7 +223,8 @@ func handleUpload(filePath, customName, serverURL string) error {
 
 	// Generate the shareable URL
 	shareURL := fmt.Sprintf("%s/%s#key=%s", serverURL, fileID, keyBase64)
-	fmt.Println(shareURL)
+	fmt.Printf("\n%s\n", shareURL)
+	fmt.Printf("\nDownload with: paste download -l \"%s\"\n", shareURL)
 
 	return nil
 }
