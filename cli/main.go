@@ -240,6 +240,12 @@ func handleDownload(link, outputPath, serverURL string) error {
 		serverURL = fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 	}
 
+	// Get server config for chunk size
+	config, err := getServerConfig(serverURL)
+	if err != nil {
+		return fmt.Errorf("failed to get server config: %w", err)
+	}
+
 	// Fetch metadata
 	metadata, err := fetchMetadata(serverURL, fileID, key)
 	if err != nil {
@@ -269,8 +275,8 @@ func handleDownload(link, outputPath, serverURL string) error {
 		writer = os.Stdout
 	}
 
-	// Download and decrypt
-	if err := downloadAndDecrypt(serverURL, fileID, key, writer); err != nil {
+	// Download and decrypt with streaming (memory-efficient)
+	if err := downloadAndDecryptStreaming(serverURL, fileID, key, config.ChunkSize, writer); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
@@ -503,7 +509,7 @@ func fetchMetadata(serverURL, fileID string, key []byte) (*Metadata, error) {
 	return &metadata, nil
 }
 
-func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) error {
+func downloadAndDecryptStreaming(serverURL, fileID string, key []byte, chunkSizeMB int, writer io.Writer) error {
 	token, err := crypto.GenerateHMACToken(fileID, key)
 	if err != nil {
 		return err
@@ -525,100 +531,78 @@ func downloadAndDecrypt(serverURL, fileID string, key []byte, writer io.Writer) 
 		return fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
-	// Read entire encrypted file into memory
-	// (The file format is: metadata_header + encrypted_metadata + iv + encrypted_chunks)
-	encryptedData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+	// Read metadata header (16 bytes)
+	metadataHeader := make([]byte, 16)
+	if _, err := io.ReadFull(resp.Body, metadataHeader); err != nil {
+		return fmt.Errorf("failed to read metadata header: %w", err)
 	}
 
-	if len(encryptedData) < 16 {
-		return errors.New("response too short")
+	// Parse metadata length
+	metadataLen := binary.LittleEndian.Uint32(metadataHeader[12:16])
+
+	// Skip encrypted metadata (we already fetched it separately)
+	if _, err := io.CopyN(io.Discard, resp.Body, int64(metadataLen)); err != nil {
+		return fmt.Errorf("failed to skip metadata: %w", err)
 	}
 
-	// Parse metadata header
-	metadataLen := binary.LittleEndian.Uint32(encryptedData[12:16])
-	if len(encryptedData) < 16+int(metadataLen)+12 {
-		return errors.New("incomplete file data")
+	// Read IV
+	iv := make([]byte, crypto.IVSize)
+	if _, err := io.ReadFull(resp.Body, iv); err != nil {
+		return fmt.Errorf("failed to read IV: %w", err)
 	}
 
-	// Skip metadata header and encrypted metadata
-	offset := 16 + int(metadataLen)
-
-	// Read IV and create stream decryptor
-	iv := encryptedData[offset : offset+crypto.IVSize]
-	offset += crypto.IVSize
-
+	// Create stream decryptor
 	streamCipher, err := crypto.NewStreamDecryptor(key, iv)
 	if err != nil {
 		return err
 	}
 	defer streamCipher.Clear()
 
-	// The remaining data is encrypted chunks with GCM tags
-	// We need to try different chunk sizes since we don't know the exact size
-	remainingData := encryptedData[offset:]
+	// Use the chunk size from server config (in MB)
+	chunkSize := chunkSizeMB * 1024 * 1024
+	buffer := make([]byte, chunkSize+crypto.GCMTagSize)
 
-	// Try to determine chunk size from first chunk
-	// Standard chunk sizes: 1MB, 2MB, 4MB, 8MB
-	possibleChunkSizes := []int{
-		1 * 1024 * 1024,
-		2 * 1024 * 1024,
-		4 * 1024 * 1024,
-		8 * 1024 * 1024,
-	}
+	// Read and decrypt chunks in a streaming fashion
+	// Memory usage: Only one chunk in memory at a time (~4MB by default)
+	for {
+		n, err := io.ReadFull(resp.Body, buffer)
 
-	// Try to decrypt with different chunk sizes
-	var chunkSize int
-	for _, size := range possibleChunkSizes {
-		testSize := size + crypto.GCMTagSize
-		if len(remainingData) >= testSize || len(remainingData) < size {
-			testLen := testSize
-			if len(remainingData) < testSize {
-				testLen = len(remainingData)
-			}
+		if err == io.EOF {
+			// No more data
+			break
+		}
 
-			// Create temporary cipher to test
-			testCipher, _ := crypto.NewStreamDecryptor(key, iv)
-			_, err := testCipher.DecryptChunk(remainingData[:testLen])
-			if err == nil {
-				chunkSize = size
+		if err == io.ErrUnexpectedEOF {
+			// Partial read - this is the last chunk (smaller than buffer)
+			if n == 0 {
 				break
 			}
-		}
-	}
 
-	if chunkSize == 0 {
-		// If none of the standard sizes work, try treating it as a single chunk
-		decrypted, err := streamCipher.DecryptChunk(remainingData)
+			decrypted, decryptErr := streamCipher.DecryptChunk(buffer[:n])
+			if decryptErr != nil {
+				return fmt.Errorf("decryption failed on final chunk: %w", decryptErr)
+			}
+
+			if _, err := writer.Write(decrypted); err != nil {
+				return err
+			}
+			break
+		}
+
 		if err != nil {
-			return fmt.Errorf("decryption failed: %w", err)
-		}
-		_, err = writer.Write(decrypted)
-		return err
-	}
-
-	// Decrypt all chunks
-	pos := 0
-	for pos < len(remainingData) {
-		// Determine this chunk's size
-		thisChunkSize := chunkSize + crypto.GCMTagSize
-		if pos+thisChunkSize > len(remainingData) {
-			thisChunkSize = len(remainingData) - pos
+			return fmt.Errorf("failed to read chunk: %w", err)
 		}
 
-		chunk := remainingData[pos : pos+thisChunkSize]
-
-		decrypted, err := streamCipher.DecryptChunk(chunk)
-		if err != nil {
-			return fmt.Errorf("decryption failed at pos %d: %w", pos, err)
+		// Decrypt the chunk
+		decrypted, decryptErr := streamCipher.DecryptChunk(buffer[:n])
+		if decryptErr != nil {
+			return fmt.Errorf("decryption failed: %w", decryptErr)
 		}
 
+		// Write decrypted data
 		if _, err := writer.Write(decrypted); err != nil {
 			return err
 		}
-
-		pos += thisChunkSize
 	}
 
 	return nil
