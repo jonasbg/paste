@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jonasbg/paste/cli/internal/client"
+	"github.com/jonasbg/paste/cli/internal/completion"
 	"github.com/jonasbg/paste/cli/internal/download"
 	"github.com/jonasbg/paste/cli/internal/upload"
 	"github.com/jonasbg/paste/crypto"
@@ -95,6 +96,14 @@ func (a *App) Run(args []string) error {
 		printUsage()
 		return nil
 
+	case "completion":
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Error: shell type required (bash, zsh, or fish)\n")
+			fmt.Fprintf(os.Stderr, "Usage: paste completion <shell>\n")
+			return errors.New("shell type required")
+		}
+		return completion.PrintCompletion(args[1])
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", args[0])
 		printUsage()
@@ -169,8 +178,9 @@ func printUsage() {
 
 Usage:
   paste [flags]                 Upload from stdin (when piped/redirected)
-  paste upload [flags]          Upload a file or stdin
+  paste upload [flags]          Upload a file, directory, or stdin
   paste download [flags]        Download a file
+  paste completion <shell>      Generate shell completion (bash, zsh, fish)
   paste version                 Show version
   paste help                    Show this help
 
@@ -180,17 +190,32 @@ Upload Examples:
   paste < myfile.txt
   echo "data" | paste -n "custom-name.txt"
   paste upload -f document.pdf
+  paste upload -f my-directory/          # Uploads as tar.gz archive
   cat image.png | paste upload -n "my-image.png"
   paste upload -f file.txt -url https://custom.paste.server
 
 Download Examples:
   paste download -l "https://paste.torden.tech/abc123#key=xyz..."
   paste download -l "https://paste.torden.tech/abc123#key=xyz..." -o output.txt
+  paste download -l "URL" -o archive.tar.gz  # Download directory archive
+
+Shell Completion:
+  # Bash
+  paste completion bash > /etc/bash_completion.d/paste
+  # Or for current user:
+  paste completion bash >> ~/.bashrc
+
+  # Zsh
+  paste completion zsh > "${fpath[1]}/_paste"
+
+  # Fish
+  paste completion fish > ~/.config/fish/completions/paste.fish
 
 Important Notes:
   - When using stdin (< file or |), the original filename is lost
   - Use -n flag to specify a custom filename for stdin uploads
   - Or use -f flag to preserve the original filename: paste upload -f file.mp4
+  - Directories are automatically compressed as tar.gz archives
   - Content type is auto-detected from file data when possible
 
 Environment Variables:

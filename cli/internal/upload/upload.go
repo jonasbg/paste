@@ -1,6 +1,9 @@
 package upload
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -220,28 +223,43 @@ func PrepareInput(filePath, customName string) (io.Reader, string, string, int64
 			}
 		}
 	} else {
-		// Read from file
-		file, err := os.Open(filePath)
+		// Check if it's a directory
+		stat, err := os.Stat(filePath)
 		if err != nil {
-			return nil, "", "", 0, fmt.Errorf("failed to open file: %w", err)
-		}
-
-		stat, err := file.Stat()
-		if err != nil {
-			file.Close()
 			return nil, "", "", 0, fmt.Errorf("failed to stat file: %w", err)
 		}
-		fileSize = stat.Size()
-		filename = filepath.Base(filePath)
 
-		// Detect content type from file data
-		buffer := make([]byte, 512)
-		n, _ := file.Read(buffer)
-		contentType = http.DetectContentType(buffer[:n])
+		if stat.IsDir() {
+			// Directory - create tar.gz archive
+			fmt.Fprintf(os.Stderr, "Compressing directory: %s\n", filePath)
+			archiveData, err := createTarGz(filePath)
+			if err != nil {
+				return nil, "", "", 0, fmt.Errorf("failed to create archive: %w", err)
+			}
 
-		// Reset file pointer to beginning
-		file.Seek(0, 0)
-		reader = file
+			fileSize = int64(len(archiveData))
+			filename = filepath.Base(filePath) + ".tar.gz"
+			contentType = "application/gzip"
+			reader = bytes.NewReader(archiveData)
+		} else {
+			// Regular file
+			file, err := os.Open(filePath)
+			if err != nil {
+				return nil, "", "", 0, fmt.Errorf("failed to open file: %w", err)
+			}
+
+			fileSize = stat.Size()
+			filename = filepath.Base(filePath)
+
+			// Detect content type from file data
+			buffer := make([]byte, 512)
+			n, _ := file.Read(buffer)
+			contentType = http.DetectContentType(buffer[:n])
+
+			// Reset file pointer to beginning
+			file.Seek(0, 0)
+			reader = file
+		}
 	}
 
 	// Override filename if provided
@@ -288,4 +306,67 @@ func getExtensionFromContentType(contentType string) string {
 		return ext
 	}
 	return ""
+}
+
+// createTarGz creates a tar.gz archive of a directory
+func createTarGz(dirPath string) ([]byte, error) {
+	var buf bytes.Buffer
+	gzWriter := gzip.NewWriter(&buf)
+	tarWriter := tar.NewWriter(gzWriter)
+
+	// Get the base directory name for the archive
+	baseDir := filepath.Base(dirPath)
+
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Create tar header
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+
+		// Update the name to be relative to the base directory
+		relPath, err := filepath.Rel(dirPath, path)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.Join(baseDir, relPath)
+
+		// Write header
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+
+		// If it's a file, write its contents
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			if _, err := io.Copy(tarWriter, file); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Close writers
+	if err := tarWriter.Close(); err != nil {
+		return nil, err
+	}
+	if err := gzWriter.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
