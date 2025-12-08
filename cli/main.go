@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/jonasbg/paste/crypto"
@@ -22,6 +23,91 @@ const (
 	DefaultURL  = "https://paste.torden.tech"
 	ChunkSizeMB = 4
 )
+
+// ProgressBar represents a simple terminal progress bar
+type ProgressBar struct {
+	total       int64
+	current     int64
+	width       int
+	description string
+	startTime   time.Time
+	lastUpdate  time.Time
+	spinnerIdx  int
+}
+
+var spinnerChars = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// NewProgressBar creates a new progress bar
+func NewProgressBar(total int64, description string) *ProgressBar {
+	return &ProgressBar{
+		total:       total,
+		current:     0,
+		width:       40,
+		description: description,
+		startTime:   time.Now(),
+		lastUpdate:  time.Now(),
+		spinnerIdx:  0,
+	}
+}
+
+// Update updates the progress bar
+func (pb *ProgressBar) Update(current int64) {
+	pb.current = current
+
+	// Throttle updates to every 100ms
+	now := time.Now()
+	if now.Sub(pb.lastUpdate) < 100*time.Millisecond && current < pb.total {
+		return
+	}
+	pb.lastUpdate = now
+	pb.spinnerIdx = (pb.spinnerIdx + 1) % len(spinnerChars)
+
+	pb.render()
+}
+
+// Finish completes the progress bar
+func (pb *ProgressBar) Finish() {
+	pb.current = pb.total
+	pb.render()
+	fmt.Fprint(os.Stderr, "\n")
+}
+
+func (pb *ProgressBar) render() {
+	percentage := float64(pb.current) / float64(pb.total) * 100
+	filled := int(float64(pb.width) * float64(pb.current) / float64(pb.total))
+
+	// Build progress bar
+	bar := "["
+	for i := 0; i < pb.width; i++ {
+		if i < filled {
+			bar += "="
+		} else if i == filled {
+			bar += ">"
+		} else {
+			bar += " "
+		}
+	}
+	bar += "]"
+
+	// Calculate speed
+	elapsed := time.Since(pb.startTime).Seconds()
+	var speed float64
+	if elapsed > 0 {
+		speed = float64(pb.current) / elapsed
+	}
+
+	// Format sizes
+	currentMB := float64(pb.current) / (1024 * 1024)
+	totalMB := float64(pb.total) / (1024 * 1024)
+	speedMB := speed / (1024 * 1024)
+
+	// Spinner
+	spinner := spinnerChars[pb.spinnerIdx]
+
+	// Print progress bar
+	fmt.Fprintf(os.Stderr, "\r%s %s %s %.1f%% (%.1f/%.1f MB, %.1f MB/s)   ",
+		spinner, pb.description, bar, percentage, currentMB, totalMB, speedMB)
+}
 
 var Version = "dev"
 
@@ -148,6 +234,12 @@ Download Examples:
   paste download -l "https://paste.torden.tech/abc123#key=xyz..."
   paste download -l "https://paste.torden.tech/abc123#key=xyz..." -o output.txt
 
+Important Notes:
+  - When using stdin (< file or |), the original filename is lost
+  - Use -n flag to specify a custom filename for stdin uploads
+  - Or use -f flag to preserve the original filename: paste upload -f file.mp4
+  - Content type is auto-detected from file data when possible
+
 Environment Variables:
   PASTE_URL    Default paste server URL (default: %s)
 
@@ -158,6 +250,7 @@ func handleUpload(filePath, customName, serverURL string) error {
 	var reader io.Reader
 	var fileSize int64
 	var filename string
+	var contentType string
 
 	// Determine input source
 	if filePath == "" {
@@ -176,6 +269,16 @@ func handleUpload(filePath, customName, serverURL string) error {
 		}
 		fileSize = int64(len(data))
 		reader = strings.NewReader(string(data))
+
+		// Detect content type from data
+		contentType = http.DetectContentType(data)
+
+		// If we detected a content type and no custom name, update filename extension
+		if contentType != "application/octet-stream" && customName == "" {
+			if ext := getExtensionFromContentType(contentType); ext != "" {
+				filename = "stdin" + ext
+			}
+		}
 	} else {
 		// Read from file
 		file, err := os.Open(filePath)
@@ -190,12 +293,25 @@ func handleUpload(filePath, customName, serverURL string) error {
 		}
 		fileSize = stat.Size()
 		filename = filepath.Base(filePath)
+
+		// Detect content type from file data
+		buffer := make([]byte, 512)
+		n, _ := file.Read(buffer)
+		contentType = http.DetectContentType(buffer[:n])
+
+		// Reset file pointer to beginning
+		file.Seek(0, 0)
 		reader = file
 	}
 
 	// Override filename if provided
 	if customName != "" {
 		filename = customName
+	}
+
+	// Default content type if not detected
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
 
 	// Get server config
@@ -216,7 +332,7 @@ func handleUpload(filePath, customName, serverURL string) error {
 	keyBase64 := base64.URLEncoding.EncodeToString(key)
 
 	// Upload the file
-	fileID, err := uploadFile(serverURL, reader, filename, fileSize, key, config.ChunkSize)
+	fileID, err := uploadFile(serverURL, reader, filename, contentType, fileSize, key, config.ChunkSize)
 	if err != nil {
 		return err
 	}
@@ -288,6 +404,40 @@ func handleDownload(link, outputPath, serverURL string) error {
 	return nil
 }
 
+func getExtensionFromContentType(contentType string) string {
+	// Map common content types to file extensions
+	contentTypeMap := map[string]string{
+		"image/jpeg":      ".jpg",
+		"image/jpg":       ".jpg",
+		"image/png":       ".png",
+		"image/gif":       ".gif",
+		"image/webp":      ".webp",
+		"image/svg+xml":   ".svg",
+		"video/mp4":       ".mp4",
+		"video/mpeg":      ".mpeg",
+		"video/webm":      ".webm",
+		"video/quicktime": ".mov",
+		"audio/mpeg":      ".mp3",
+		"audio/wav":       ".wav",
+		"audio/ogg":       ".ogg",
+		"application/pdf": ".pdf",
+		"application/zip": ".zip",
+		"application/x-gzip": ".gz",
+		"application/x-tar":  ".tar",
+		"text/plain":      ".txt",
+		"text/html":       ".html",
+		"text/css":        ".css",
+		"text/javascript": ".js",
+		"application/json": ".json",
+		"application/xml":  ".xml",
+	}
+
+	if ext, ok := contentTypeMap[contentType]; ok {
+		return ext
+	}
+	return ""
+}
+
 func getServerConfig(serverURL string) (*Config, error) {
 	resp, err := http.Get(serverURL + "/api/config")
 	if err != nil {
@@ -307,7 +457,7 @@ func getServerConfig(serverURL string) (*Config, error) {
 	return &config, nil
 }
 
-func uploadFile(serverURL string, reader io.Reader, filename string, fileSize int64, key []byte, chunkSizeMB int) (string, error) {
+func uploadFile(serverURL string, reader io.Reader, filename string, contentType string, fileSize int64, key []byte, chunkSizeMB int) (string, error) {
 	// Convert HTTP URL to WebSocket URL
 	wsURL := strings.Replace(serverURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
@@ -361,7 +511,7 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 	// Step 3: Encrypt and send metadata
 	metadata := Metadata{
 		Filename:    filename,
-		ContentType: "application/octet-stream",
+		ContentType: contentType,
 		Size:        fileSize,
 	}
 	metadataJSON, _ := json.Marshal(metadata)
@@ -395,6 +545,10 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 	chunkSize := chunkSizeMB * 1024 * 1024
 	buffer := make([]byte, chunkSize)
 
+	// Create progress bar
+	bar := NewProgressBar(fileSize, "Uploading")
+
+	var totalRead int64
 	for {
 		n, err := reader.Read(buffer)
 		if err != nil && err != io.EOF {
@@ -403,6 +557,8 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 		if n == 0 {
 			break
 		}
+
+		totalRead += int64(n)
 
 		// Encrypt chunk
 		encryptedChunk, err := streamCipher.EncryptChunk(buffer[:n])
@@ -419,10 +575,14 @@ func uploadFile(serverURL string, reader io.Reader, filename string, fileSize in
 			return "", fmt.Errorf("failed to read ack: %w", err)
 		}
 
+		// Update progress bar
+		bar.Update(totalRead)
+
 		if err == io.EOF {
 			break
 		}
 	}
+	bar.Finish()
 
 	// Step 6: Send end-of-upload marker
 	if err := conn.WriteMessage(websocket.BinaryMessage, []byte{0x00}); err != nil {
@@ -559,9 +719,20 @@ func downloadAndDecryptStreaming(serverURL, fileID string, key []byte, chunkSize
 	}
 	defer streamCipher.Clear()
 
+	// Get content length for progress bar
+	contentLength := resp.ContentLength
+
 	// Use the chunk size from server config (in MB)
 	chunkSize := chunkSizeMB * 1024 * 1024
 	buffer := make([]byte, chunkSize+crypto.GCMTagSize)
+
+	// Create progress bar
+	var bar *ProgressBar
+	if contentLength > 0 {
+		bar = NewProgressBar(contentLength, "Downloading")
+	}
+
+	var totalRead int64
 
 	// Read and decrypt chunks in a streaming fashion
 	// Memory usage: Only one chunk in memory at a time (~4MB by default)
@@ -579,6 +750,11 @@ func downloadAndDecryptStreaming(serverURL, fileID string, key []byte, chunkSize
 				break
 			}
 
+			totalRead += int64(n)
+			if bar != nil {
+				bar.Update(totalRead)
+			}
+
 			decrypted, decryptErr := streamCipher.DecryptChunk(buffer[:n])
 			if decryptErr != nil {
 				return fmt.Errorf("decryption failed on final chunk: %w", decryptErr)
@@ -594,6 +770,11 @@ func downloadAndDecryptStreaming(serverURL, fileID string, key []byte, chunkSize
 			return fmt.Errorf("failed to read chunk: %w", err)
 		}
 
+		totalRead += int64(n)
+		if bar != nil {
+			bar.Update(totalRead)
+		}
+
 		// Decrypt the chunk
 		decrypted, decryptErr := streamCipher.DecryptChunk(buffer[:n])
 		if decryptErr != nil {
@@ -604,6 +785,10 @@ func downloadAndDecryptStreaming(serverURL, fileID string, key []byte, chunkSize
 		if _, err := writer.Write(decrypted); err != nil {
 			return err
 		}
+	}
+
+	if bar != nil {
+		bar.Finish()
 	}
 
 	return nil
