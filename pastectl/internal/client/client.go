@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/jonasbg/paste/cli/internal/types"
+	"github.com/jonasbg/paste/pastectl/internal/types"
 	"github.com/jonasbg/paste/crypto"
 )
 

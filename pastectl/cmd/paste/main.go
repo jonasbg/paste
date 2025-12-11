@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/jonasbg/paste/cli/internal/cli"
+	"github.com/jonasbg/paste/pastectl/internal/cli"
 )
 
 func main() {

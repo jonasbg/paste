@@ -15,8 +15,8 @@ import (
 	"strings"
 
 	"github.com/gorilla/websocket"
-	"github.com/jonasbg/paste/cli/internal/types"
-	"github.com/jonasbg/paste/cli/internal/ui"
+	"github.com/jonasbg/paste/pastectl/internal/types"
+	"github.com/jonasbg/paste/pastectl/internal/ui"
 	"github.com/jonasbg/paste/crypto"
 )
 

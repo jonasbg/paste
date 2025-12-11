@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jonasbg/paste/cli/internal/client"
-	"github.com/jonasbg/paste/cli/internal/completion"
-	"github.com/jonasbg/paste/cli/internal/download"
-	"github.com/jonasbg/paste/cli/internal/upload"
+	"github.com/jonasbg/paste/pastectl/internal/client"
+	"github.com/jonasbg/paste/pastectl/internal/completion"
+	"github.com/jonasbg/paste/pastectl/internal/download"
+	"github.com/jonasbg/paste/pastectl/internal/upload"
 	"github.com/jonasbg/paste/crypto"
 )
 

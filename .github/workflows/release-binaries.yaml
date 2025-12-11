@@ -7,7 +7,7 @@ on:
     tags:
       - 'v*'
     paths:
-      - 'cli/**'
+      - 'pastectl/**'
       - '.github/workflows/release-binaries.yaml'
   workflow_dispatch:
 
@@ -61,37 +61,48 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP_NAME="paste"
+          APP_NAME="pastectl"
           SUFFIX="${ARTIFACT_SUFFIX}"
           ROOT_DIR="$(pwd)"
           DIST_DIR="${ROOT_DIR}/dist"
-          BINARY_NAME="${APP_NAME}-${SUFFIX}"
-
-          if [ "${GOOS}" = "windows" ]; then
-            BINARY_NAME="${BINARY_NAME}.exe"
-          fi
-
-          mkdir -p "${DIST_DIR}"
+          BUILD_DIR="${ROOT_DIR}/build"
+          
+          mkdir -p "${DIST_DIR}" "${BUILD_DIR}"
 
           VERSION="${VERSION:-dev}"
 
-          cd cli/
+          # Build binary with simple name
+          BINARY_NAME="${APP_NAME}"
+          if [ "${GOOS}" = "windows" ]; then
+            BINARY_NAME="${APP_NAME}.exe"
+          fi
+
+          cd pastectl/
 
           GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
-            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "${DIST_DIR}/${BINARY_NAME}" ./cmd/paste
+            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "${BUILD_DIR}/${BINARY_NAME}" ./cmd/paste
+
+          cd "${BUILD_DIR}"
+
+          # Create archive
+          if [ "${GOOS}" = "windows" ]; then
+            zip "${DIST_DIR}/${APP_NAME}-${SUFFIX}.zip" "${BINARY_NAME}"
+          else
+            tar czf "${DIST_DIR}/${APP_NAME}-${SUFFIX}.tar.gz" "${BINARY_NAME}"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: paste-${{ matrix.artifact_suffix }}
-          path: dist/paste-${{ matrix.artifact_suffix }}*
+          name: pastectl-${{ matrix.artifact_suffix }}
+          path: dist/*
           retention-days: 1
 
       - name: Upload release binary
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/paste-${{ matrix.artifact_suffix }}*
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -109,7 +120,7 @@ jobs:
       - name: Create combined SHA256SUMS file
         run: |
           cd artifacts
-          find . -type f -name "paste-*" -exec sha256sum {} \; | sed 's|^\([^ ]*\)  \./[^/]*/|\1  |' | sort -k2 > ../SHA256SUMS
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; | sed 's|^\([^ ]*\)  \./[^/]*/|\1  |' | sort -k2 > ../SHA256SUMS
           cat ../SHA256SUMS
 
       - name: Upload SHA256SUMS to release

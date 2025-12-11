@@ -1,6 +1,6 @@
-# Paste CLI
+# Pastectl
 
-A command-line tool for uploading and downloading files to/from paste.torden.tech with end-to-end encryption.
+A command-line tool for uploading and downloading files to/from paste.torden.tech with end-to-end encryption. Named `pastectl` to avoid conflicts with the Unix `paste` command.
 
 ## Features
 
@@ -16,17 +16,19 @@ A command-line tool for uploading and downloading files to/from paste.torden.tec
 
 Download the latest release for your platform from the [releases page](https://github.com/jonasbg/paste/releases).
 
+Archives are named `pastectl-{platform}.tar.gz` (or `.zip` for Windows), and contain a binary named `pastectl` (or `pastectl.exe`).
+
 ### From Source
 
 ```bash
-cd cli
-go build -ldflags "-s -w" -o paste .
+cd pastectl
+go build -ldflags "-s -w" -o pastectl ./cmd/paste
 ```
 
 ### Using Go Install
 
 ```bash
-go install github.com/jonasbg/paste/cli@latest
+go install github.com/jonasbg/paste/pastectl/cmd/paste@latest
 ```
 
 ## Usage
@@ -35,59 +37,59 @@ go install github.com/jonasbg/paste/cli@latest
 
 Upload from stdin (no command needed when piping):
 ```bash
-echo "Hello World" | paste
-cat file.txt | paste
-paste < myfile.txt
+echo "Hello World" | pastectl
+cat file.txt | pastectl
+pastectl < myfile.txt
 ```
 
 Upload a file:
 ```bash
-paste upload -f document.pdf
+pastectl upload -f document.pdf
 ```
 
 Upload from stdin with explicit command:
 ```bash
-echo "Hello World" | paste upload
+echo "Hello World" | pastectl upload
 ```
 
 Upload with custom filename:
 ```bash
-echo "data" | paste upload -n "my-file.txt"
-cat file.txt | paste -n "custom-name.txt"
+echo "data" | pastectl upload -n "my-file.txt"
+cat file.txt | pastectl -n "custom-name.txt"
 ```
 
 Upload to custom server:
 ```bash
-paste upload -f file.txt -url https://custom.paste.server
+pastectl upload -f file.txt -url https://custom.paste.server
 ```
 
 ### Download
 
 Download a file:
 ```bash
-paste download -l "https://paste.torden.tech/abc123#key=xyz..."
+pastectl download -l "https://paste.torden.tech/abc123#key=xyz..."
 ```
 
 Download to specific file:
 ```bash
-paste download -l "https://paste.torden.tech/abc123#key=xyz..." -o output.txt
+pastectl download -l "https://paste.torden.tech/abc123#key=xyz..." -o output.txt
 ```
 
 Download to stdout:
 ```bash
-paste download -l "https://paste.torden.tech/abc123#key=xyz..." | grep pattern
+pastectl download -l "https://paste.torden.tech/abc123#key=xyz..." | grep pattern
 ```
 
 ### Other Commands
 
 Show version:
 ```bash
-paste version
+pastectl version
 ```
 
 Show help:
 ```bash
-paste help
+pastectl help
 ```
 
 ## Configuration
@@ -97,55 +99,55 @@ paste help
 Set the default server URL:
 ```bash
 export PASTE_URL=https://custom.paste.server
-paste upload -f file.txt
+pastectl upload -f file.txt
 ```
 
 ### Build-Time Configuration
 
 Override the default URL at build time:
 ```bash
-go build -ldflags "-s -w -X main.pasteURL=https://custom.paste.server" -o paste .
+go build -ldflags "-s -w -X main.pasteURL=https://custom.paste.server" -o pastectl .
 ```
 
 ### Runtime Flag
 
 Override via command-line flag:
 ```bash
-paste upload -f file.txt -url https://custom.paste.server
+pastectl upload -f file.txt -url https://custom.paste.server
 ```
 
 ## Examples
 
 ### Quick Text Upload
 ```bash
-echo "Quick note" | paste
+echo "Quick note" | pastectl
 # Output: https://paste.torden.tech/abc123#key=xyz...
 ```
 
 ### Secure File Sharing
 ```bash
-paste upload -f sensitive-data.txt
+pastectl upload -f sensitive-data.txt
 # Share the URL with someone
 # They can download with:
-paste download -l "https://paste.torden.tech/abc123#key=xyz..."
+pastectl download -l "https://paste.torden.tech/abc123#key=xyz..."
 ```
 
 ### Pipeline Integration
 ```bash
 # Compress and upload
-tar czf - directory/ | paste -n "backup.tar.gz"
+tar czf - directory/ | pastectl -n "backup.tar.gz"
 
 # Download and extract
-paste download -l "URL" | tar xzf -
+pastectl download -l "URL" | tar xzf -
 ```
 
 ### Screenshot Sharing
 ```bash
 # Take screenshot and upload (Linux/X11)
-import png:- | paste -n "screenshot.png"
+import png:- | pastectl -n "screenshot.png"
 
 # macOS
-screencapture -c && pbpaste | paste -n "screenshot.png"
+screencapture -c && pbpaste | pastectl -n "screenshot.png"
 ```
 
 ## Security
