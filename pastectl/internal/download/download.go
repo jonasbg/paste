@@ -11,9 +11,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jonasbg/paste/cli/internal/client"
-	"github.com/jonasbg/paste/cli/internal/types"
-	"github.com/jonasbg/paste/cli/internal/ui"
+	"github.com/jonasbg/paste/pastectl/internal/client"
+	"github.com/jonasbg/paste/pastectl/internal/types"
+	"github.com/jonasbg/paste/pastectl/internal/ui"
 	"github.com/jonasbg/paste/crypto"
 )
 

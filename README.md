@@ -57,6 +57,7 @@ Server only sees: Encrypted blobs + File IDs + HMAC tokens
 - **Automatic cleanup**: Files deleted after configurable retention period
 - **Performance optimized**: Batched ACKs, early acknowledgments, and optimized buffers
 - **Single binary deployment**: Go server with embedded SvelteKit UI
+- **CLI tool (pastectl)**: Command-line interface for uploading and downloading files (named to avoid conflicts with Unix `paste` command)
 
 ## Quick Start
 

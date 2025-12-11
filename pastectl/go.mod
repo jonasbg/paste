@@ -1,4 +1,4 @@
-module github.com/jonasbg/paste/cli
+module github.com/jonasbg/paste/pastectl
 
 go 1.25.0
 
