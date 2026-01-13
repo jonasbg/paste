@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, goto } from 'svelte';
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { generateKey, uploadEncryptedFile } from '$lib/services/encryptionService';
@@ -311,7 +311,7 @@
 >
 	<div class="container">
 		<div class="upload-section">
-			<h1>Vi <span>deler</span> filer sikkert</h1>
+			<h1>Vi <span on:click={() => goto('/')}>deler</span> filer sikkert</h1>
 			<p class="description">
 				Del filer sikkert med ende-til-ende-kryptering. Filene krypteres i nettleseren din før de
 				lastes opp, og dekrypteres først når mottakeren laster dem ned.
@@ -422,6 +422,7 @@
 
 	h1 span {
 		color: var(--primary-green);
+		cursor: pointer;
 	}
 
 	.description {
