@@ -239,6 +239,7 @@ export async function streamDownloadAndDecrypt(
   let receivedLength = 0;
   let headerProcessed = false;
   let decryptionInitialized = false;
+  let cipherId: number | null = null; // Track cipher ID
   let bufferedData = new Uint8Array(0);
 
   // For smooth progress updates - throttle progress updates
@@ -304,8 +305,8 @@ export async function streamDownloadAndDecrypt(
       if (!decryptionInitialized && bufferedData.length >= 12) {
         // Initialize decryption with IV
         const iv = bufferedData.slice(0, 12);
-        const success = wasmInstance.createDecryptionStream(key, iv);
-        if (!success) {
+        cipherId = wasmInstance.createDecryptionStream(key, iv);
+        if (typeof cipherId !== 'number') {
           controller.error(new Error('Failed to initialize decryption stream'));
           return;
         }
@@ -314,14 +315,14 @@ export async function streamDownloadAndDecrypt(
         bufferedData = bufferedData.slice(12);
       }
 
-      if (decryptionInitialized && bufferedData.length > 0) {
+      if (decryptionInitialized && bufferedData.length > 0 && cipherId !== null) {
         // Process buffered data in chunks
         const chunkSize =  config.chunkSize*1024 * 1024 + 16; // 1MB + GCM tag
         while (bufferedData.length >= chunkSize) {
           const dataChunk = bufferedData.slice(0, chunkSize);
           const isLastChunk = false; // We don't know yet
 
-          const decrypted = wasmInstance.decryptChunk(dataChunk, isLastChunk);
+          const decrypted = wasmInstance.decryptChunk(cipherId, dataChunk, isLastChunk);
           if (!decrypted) {
             controller.error(new Error('Failed to decrypt chunk'));
             return;
@@ -338,13 +339,18 @@ export async function streamDownloadAndDecrypt(
       await onProgress(100, 'Download complete');
       
       // Process any remaining data
-      if (bufferedData.length > 0 && decryptionInitialized) {
-        const decrypted = wasmInstance.decryptChunk(bufferedData, true);
+      if (bufferedData.length > 0 && decryptionInitialized && cipherId !== null) {
+        const decrypted = wasmInstance.decryptChunk(cipherId, bufferedData, true);
         if (!decrypted) {
           controller.error(new Error('Failed to decrypt final chunk'));
           return;
         }
         controller.enqueue(decrypted);
+      }
+      
+      // Cleanup cipher
+      if (cipherId !== null && wasmInstance.disposeCipher) {
+        wasmInstance.disposeCipher(cipherId);
       }
     }
   });

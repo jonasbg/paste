@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount, onDestroy, goto } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
+
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { generateKey, uploadEncryptedFile } from '$lib/services/encryptionService';

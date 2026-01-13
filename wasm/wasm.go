@@ -15,6 +15,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall/js"
 
 	"golang.org/x/crypto/hkdf"
@@ -32,7 +33,16 @@ type StreamingCipher struct {
 	chunk int
 }
 
-var activeCipher *StreamingCipher
+type CipherRegistry struct {
+	mu      sync.Mutex
+	ciphers map[int]*StreamingCipher
+	nextID  int
+}
+
+var registry = &CipherRegistry{
+	ciphers: make(map[int]*StreamingCipher),
+	nextID:  1,
+}
 
 func main() {
 	c := make(chan struct{}, 0)
@@ -41,6 +51,7 @@ func main() {
 		"createDecryptionStream": js.FuncOf(createDecryptionStream),
 		"encryptChunk":           js.FuncOf(encryptChunk),
 		"decryptChunk":           js.FuncOf(decryptChunk),
+		"disposeCipher":          js.FuncOf(disposeCipher),
 		"generateKey":            js.FuncOf(generateKey),
 		"decryptMetadata":        js.FuncOf(decryptMetadata),
 		"encrypt":                js.FuncOf(encrypt),
@@ -170,16 +181,6 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	// Clean up any existing cipher before creating a new one
-	if activeCipher != nil {
-		// Clear the IV for security
-		for i := range activeCipher.iv {
-			activeCipher.iv[i] = 0
-		}
-		// Set to nil to help Go's GC
-		activeCipher = nil
-	}
-
 	keyBase64 := args[0].String()
 	key, err := base64.URLEncoding.DecodeString(keyBase64)
 	if err != nil {
@@ -201,30 +202,32 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(err)
 	}
 
-	activeCipher = &StreamingCipher{
+	cipher := &StreamingCipher{
 		gcm:   aead,
 		iv:    iv,
 		chunk: 0,
 	}
 
+	// Register cipher and get ID
+	registry.mu.Lock()
+	cipherID := registry.nextID
+	registry.nextID++
+	registry.ciphers[cipherID] = cipher
+	registry.mu.Unlock()
+
+	// Return both cipher ID and IV
 	uint8Array := js.Global().Get("Uint8Array").New(len(iv))
 	js.CopyBytesToJS(uint8Array, iv)
-	return uint8Array
+
+	return js.ValueOf(map[string]interface{}{
+		"id": cipherID,
+		"iv": uint8Array,
+	})
 }
 
 func createDecryptionStream(_ js.Value, args []js.Value) interface{} {
 	if len(args) != 2 {
 		return handleError(errors.New("invalid arguments"))
-	}
-
-	// Clean up any existing cipher before creating a new one
-	if activeCipher != nil {
-		// Clear the IV for security
-		for i := range activeCipher.iv {
-			activeCipher.iv[i] = 0
-		}
-		// Set to nil to help Go's GC
-		activeCipher = nil
 	}
 
 	keyBase64 := args[0].String()
@@ -246,90 +249,137 @@ func createDecryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(err)
 	}
 
-	activeCipher = &StreamingCipher{
+	cipher := &StreamingCipher{
 		gcm:   aead,
 		iv:    iv,
 		chunk: 0,
 	}
 
-	return js.ValueOf(true)
+	// Register cipher and get ID
+	registry.mu.Lock()
+	cipherID := registry.nextID
+	registry.nextID++
+	registry.ciphers[cipherID] = cipher
+	registry.mu.Unlock()
+
+	return js.ValueOf(cipherID)
 }
 
 func encryptChunk(_ js.Value, args []js.Value) interface{} {
-	if len(args) != 2 {
+	if len(args) != 3 {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	if activeCipher == nil {
-		return handleError(errors.New("no active encryption stream"))
+	cipherID := args[0].Int()
+	data := make([]byte, args[1].Length())
+	js.CopyBytesToGo(data, args[1])
+	isLastChunk := args[2].Bool()
+
+	// Get cipher from registry
+	registry.mu.Lock()
+	cipher, exists := registry.ciphers[cipherID]
+	registry.mu.Unlock()
+
+	if !exists {
+		return handleError(errors.New("invalid cipher ID"))
 	}
 
-	data := make([]byte, args[0].Length())
-	js.CopyBytesToGo(data, args[0])
-	isLastChunk := args[1].Bool()
-
 	nonce := make([]byte, 12)
-	copy(nonce, activeCipher.iv)
-	binary.LittleEndian.PutUint32(nonce[8:], uint32(activeCipher.chunk))
-	activeCipher.chunk++
+	copy(nonce, cipher.iv)
+	binary.LittleEndian.PutUint32(nonce[8:], uint32(cipher.chunk))
+	cipher.chunk++
 
-	encrypted := activeCipher.gcm.Seal(nil, nonce, data, nil)
+	encrypted := cipher.gcm.Seal(nil, nonce, data, nil)
 
 	uint8Array := js.Global().Get("Uint8Array").New(len(encrypted))
 	js.CopyBytesToJS(uint8Array, encrypted)
 
-	// If this is the last chunk, fully clean up the cipher
+	// If this is the last chunk, clean up the cipher
 	if isLastChunk {
-		// Clear the IV for security
-		for i := range activeCipher.iv {
-			activeCipher.iv[i] = 0
+		registry.mu.Lock()
+		if c, exists := registry.ciphers[cipherID]; exists {
+			// Clear the IV for security
+			for i := range c.iv {
+				c.iv[i] = 0
+			}
+			delete(registry.ciphers, cipherID)
 		}
-		// Set to nil to help Go's GC
-		activeCipher = nil
+		registry.mu.Unlock()
 	}
 
 	return uint8Array
 }
 
 func decryptChunk(_ js.Value, args []js.Value) interface{} {
-	if len(args) != 2 {
+	if len(args) != 3 {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	if activeCipher == nil {
-		return handleError(errors.New("no active decryption stream"))
+	cipherID := args[0].Int()
+	data := make([]byte, args[1].Length())
+	js.CopyBytesToGo(data, args[1])
+	isLastChunk := args[2].Bool()
+
+	// Get cipher from registry
+	registry.mu.Lock()
+	cipher, exists := registry.ciphers[cipherID]
+	registry.mu.Unlock()
+
+	if !exists {
+		return handleError(errors.New("invalid cipher ID"))
 	}
 
-	data := make([]byte, args[0].Length())
-	js.CopyBytesToGo(data, args[0])
-	isLastChunk := args[1].Bool()
-
 	nonce := make([]byte, 12)
-	copy(nonce, activeCipher.iv)
-	binary.LittleEndian.PutUint32(nonce[8:], uint32(activeCipher.chunk))
+	copy(nonce, cipher.iv)
+	binary.LittleEndian.PutUint32(nonce[8:], uint32(cipher.chunk))
 
-	decrypted, err := activeCipher.gcm.Open(nil, nonce, data, nil)
+	decrypted, err := cipher.gcm.Open(nil, nonce, data, nil)
 	if err != nil {
 		fmt.Printf("Decryption error: %v\n", err)
 		return handleError(err)
 	}
 
-	activeCipher.chunk++
+	cipher.chunk++
 
 	uint8Array := js.Global().Get("Uint8Array").New(len(decrypted))
 	js.CopyBytesToJS(uint8Array, decrypted)
 
-	// If this is the last chunk, fully clean up the cipher
+	// If this is the last chunk, clean up the cipher
 	if isLastChunk {
-		// Clear the IV for security
-		for i := range activeCipher.iv {
-			activeCipher.iv[i] = 0
+		registry.mu.Lock()
+		if c, exists := registry.ciphers[cipherID]; exists {
+			// Clear the IV for security
+			for i := range c.iv {
+				c.iv[i] = 0
+			}
+			delete(registry.ciphers, cipherID)
 		}
-		// Set to nil to help Go's GC
-		activeCipher = nil
+		registry.mu.Unlock()
 	}
 
 	return uint8Array
+}
+
+// disposeCipher manually cleans up a cipher when no longer needed
+func disposeCipher(_ js.Value, args []js.Value) interface{} {
+	if len(args) != 1 {
+		return handleError(errors.New("invalid arguments"))
+	}
+
+	cipherID := args[0].Int()
+
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+
+	if cipher, exists := registry.ciphers[cipherID]; exists {
+		// Clear the IV for security
+		for i := range cipher.iv {
+			cipher.iv[i] = 0
+		}
+		delete(registry.ciphers, cipherID)
+	}
+
+	return js.ValueOf(true)
 }
 
 // generateKey generates a cryptographically secure random key of a specified size (in bits).
