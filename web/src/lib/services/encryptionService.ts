@@ -60,8 +60,17 @@ export async function uploadEncryptedFile(
         let currentFileId: string | null = null;
         let cachedToken: string | null = null;
         let lastProgress = 0;
+        let cipherId: number | null = null; // Track cipher ID
 
         ws.binaryType = 'arraybuffer';
+
+        // Cleanup function
+        const cleanup = () => {
+            if (cipherId !== null && wasmInstance.disposeCipher) {
+                wasmInstance.disposeCipher(cipherId);
+                cipherId = null;
+            }
+        };
 
         ws.onopen = async () => {
             ws.send(JSON.stringify({ type: 'init', size: file.size }));
@@ -73,6 +82,7 @@ export async function uploadEncryptedFile(
                 console.log('WebSocket response:', response);
 
                 if (response.error) {
+                    cleanup();
                     reject(new Error(response.error));
                     ws.close();
                     return;
@@ -100,8 +110,9 @@ export async function uploadEncryptedFile(
                 }
 
                 if (response.ready) {
-                    const iv = wasmInstance.createEncryptionStream(key);
-                    ws.send(iv);
+                    const streamResult = wasmInstance.createEncryptionStream(key);
+                    cipherId = streamResult.id; // Store cipher ID
+                    ws.send(streamResult.iv);
                     await sendNextChunk();
                 }
 
@@ -116,22 +127,33 @@ export async function uploadEncryptedFile(
                 }
 
                 if (response.complete && currentFileId) {
+                    cleanup();
                     resolve({ fileId: currentFileId, token: cachedToken! });
                     ws.close();
                 }
             }
         };
 
-        ws.onerror = () => reject(new Error('Nettverksfeil under opplasting'));
+        ws.onerror = () => {
+            cleanup();
+            reject(new Error('Nettverksfeil under opplasting'));
+        };
         ws.onclose = (event) => {
+            cleanup();
             if (!event.wasClean) reject(new Error('Tilkoblingen ble uventet avbrutt'));
         };
 
         async function sendNextChunk() {
+            if (cipherId === null) {
+                reject(new Error('Cipher not initialized'));
+                ws.close();
+                return;
+            }
+
             if (fileOffset < file.size) {
                 const chunk = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
                 const isLastChunk = fileOffset + chunkSize >= file.size;
-                const encryptedChunk = wasmInstance.encryptChunk(new Uint8Array(chunk), isLastChunk);
+                const encryptedChunk = wasmInstance.encryptChunk(cipherId, new Uint8Array(chunk), isLastChunk);
                 ws.send(encryptedChunk);
                 fileOffset += chunk.byteLength;
             }

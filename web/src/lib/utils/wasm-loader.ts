@@ -2,10 +2,17 @@ import { browser } from '$app/environment';
 
 // Type definitions
 interface GoEncryption {
-	// Add your encryption methods here
-	// Example:
-	encrypt?: (data: string) => string;
-	decrypt?: (data: string) => string;
+	// Cipher management
+	createEncryptionStream?: (key: string) => { id: number; iv: Uint8Array };
+	createDecryptionStream?: (key: string, iv: Uint8Array) => number;
+	encryptChunk?: (cipherId: number, data: Uint8Array, isLastChunk: boolean) => Uint8Array;
+	decryptChunk?: (cipherId: number, data: Uint8Array, isLastChunk: boolean) => Uint8Array;
+	disposeCipher?: (cipherId: number) => boolean;
+	// Standalone operations
+	encrypt?: (key: string, data: Uint8Array) => Uint8Array;
+	decryptMetadata?: (key: string, data: Uint8Array) => any;
+	generateKey?: (keySize: number) => string;
+	generateHmacToken?: (fileId: string, key: string) => string;
 }
 
 declare global {
@@ -20,7 +27,7 @@ const WASM_CACHE_NAME = 'paste-wasm-cache-v1';
 const WASM_PATH = '/encryption.wasm';
 const WASM_VERSION_KEY = 'wasm-version';
 // Update this when your WASM file changes
-const CURRENT_WASM_VERSION = '1.0.2';
+const CURRENT_WASM_VERSION = '1.1.0-cipher-handles';
 
 let wasmInstance: GoEncryption | null = null;
 let wasmInitPromise: Promise<GoEncryption> | null = null;

@@ -73,16 +73,18 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Validate token
+		// Validate token format
 		if !validateToken(request.Token) {
-			sendError(ws, "Invalid token")
+			sendError(ws, "Invalid token format")
 			return
 		}
 
-		// Locate and open the file
+		// Locate file with the exact token - this is the security check
+		// The file name MUST match fileId.token exactly
 		filePath := filepath.Join(uploadDir, request.FileId+"."+request.Token)
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			sendError(ws, "File not found")
+			// Return generic error to prevent token enumeration
+			sendError(ws, "Access denied")
 			return
 		}
 
