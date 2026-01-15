@@ -233,7 +233,7 @@
 
 <div class="container">
 	<div class="download-container">
-		<h1><span>Sikker</span> fildeling</h1>
+		<h1><a href="/"><span>Sikker</span></a> fildeling</h1>
 		<p class="intro-text">
 			Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt
 			delt med deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig
@@ -336,8 +336,18 @@
 		margin-bottom: 1.5rem;
 	}
 
+	h1 a {
+		text-decoration: none;
+		color: inherit;
+	}
+
 	h1 span {
 		color: var(--primary-green);
+		cursor: pointer;
+	}
+
+	h1 a:hover span {
+		text-decoration: underline;
 	}
 
 	.key-prompt {
