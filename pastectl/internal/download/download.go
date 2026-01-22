@@ -11,10 +11,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jonasbg/paste/crypto"
 	"github.com/jonasbg/paste/pastectl/internal/client"
 	"github.com/jonasbg/paste/pastectl/internal/types"
 	"github.com/jonasbg/paste/pastectl/internal/ui"
-	"github.com/jonasbg/paste/crypto"
 )
 
 // Handler handles file downloads
@@ -34,7 +34,7 @@ func NewHandler(c *client.Client, config *types.Config) *Handler {
 // Download downloads and decrypts a file
 func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 	// Fetch metadata
-	metadata, err := h.client.FetchMetadata(fileID, key)
+	metadata,token, err := h.client.FetchMetadata(fileID, key)
 	if err != nil {
 		return fmt.Errorf("failed to fetch metadata: %w", err)
 	}
@@ -63,7 +63,7 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 	}
 
 	// Download and decrypt with streaming
-	if err := h.downloadAndDecryptStreaming(fileID, key, writer); err != nil {
+	if err := h.downloadAndDecryptStreaming(fileID, token, key, writer); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
@@ -71,15 +71,14 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 		fmt.Fprintf(os.Stderr, "Download complete: %s\n", outputPath)
 	}
 
+	if err := h.client.DeleteFile(fileID, token); err != nil {
+		return fmt.Errorf("failed to delete file after download: %w", err)
+	}
+
 	return nil
 }
 
-func (h *Handler) downloadAndDecryptStreaming(fileID string, key []byte, writer io.Writer) error {
-	token, err := crypto.GenerateHMACToken(fileID, key)
-	if err != nil {
-		return err
-	}
-
+func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key []byte, writer io.Writer) error {
 	// Get base URL from client
 	baseURL := h.client.BaseURL()
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/download/%s", baseURL, fileID), nil)
