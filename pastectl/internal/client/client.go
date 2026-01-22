@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/jonasbg/paste/pastectl/internal/types"
 	"github.com/jonasbg/paste/crypto"
+	"github.com/jonasbg/paste/pastectl/internal/types"
 )
 
 // Client represents a paste API client
@@ -48,42 +48,63 @@ func (c *Client) GetConfig() (*types.Config, error) {
 }
 
 // FetchMetadata retrieves and decrypts file metadata
-func (c *Client) FetchMetadata(fileID string, key []byte) (*types.Metadata, error) {
+func (c *Client) FetchMetadata(fileID string, key []byte) (*types.Metadata, string, error) {
 	token, err := crypto.GenerateHMACToken(fileID, key)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	req, err := http.NewRequest("GET", c.baseURL+"/api/metadata/"+fileID, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("X-HMAC-Token", token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	decrypted, err := crypto.DecryptMetadata(key, data)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
+		return nil, "", fmt.Errorf("decryption failed: %w", err)
 	}
 
 	var metadata types.Metadata
 	if err := json.Unmarshal(decrypted, &metadata); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	return &metadata, nil
+	return &metadata, token, nil
+}
+
+// DeleteFile removes a file from the server after download completes
+func (c *Client) DeleteFile(fileID string, token string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/api/delete/%s", c.baseURL, fileID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-HMAC-Token", token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	return nil
 }

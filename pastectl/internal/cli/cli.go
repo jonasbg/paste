@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jonasbg/paste/crypto"
 	"github.com/jonasbg/paste/pastectl/internal/client"
 	"github.com/jonasbg/paste/pastectl/internal/completion"
 	"github.com/jonasbg/paste/pastectl/internal/download"
 	"github.com/jonasbg/paste/pastectl/internal/upload"
-	"github.com/jonasbg/paste/crypto"
 )
 
 const (
@@ -47,11 +47,15 @@ func (a *App) Run(args []string) error {
 
 	uploadCmd := flag.NewFlagSet("upload", flag.ExitOnError)
 	downloadCmd := flag.NewFlagSet("download", flag.ExitOnError)
+	sendCmd := flag.NewFlagSet("send", flag.ExitOnError)
 
 	// Upload flags
 	uploadFile := uploadCmd.String("f", "", "File to upload (omit to read from stdin)")
 	uploadName := uploadCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	uploadURL := uploadCmd.String("url", a.pasteURL, "Paste server URL")
+	sendFile := sendCmd.String("f", "", "File to send (omit to read from stdin)")
+	sendName := sendCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
+	sendURL := sendCmd.String("url", a.pasteURL, "Paste server URL")
 
 	// Download flags
 	downloadLink := downloadCmd.String("l", "", "Download link (format: https://paste.torden.tech/{id}#key={key})")
@@ -79,6 +83,15 @@ func (a *App) Run(args []string) error {
 		uploadCmd.Parse(args[1:])
 		return a.handleUpload(*uploadFile, *uploadName, *uploadURL)
 
+	case "send":
+		sendCmd.Parse(args[1:])
+		if *sendFile == "" {
+			if extraArgs := sendCmd.Args(); len(extraArgs) > 0 {
+				*sendFile = extraArgs[len(extraArgs)-1]
+			}
+		}
+		return a.handleUpload(*sendFile, *sendName, *sendURL)
+
 	case "download":
 		downloadCmd.Parse(args[1:])
 		if *downloadLink == "" {
@@ -89,7 +102,7 @@ func (a *App) Run(args []string) error {
 		return a.handleDownload(*downloadLink, *downloadOutput, *downloadURL)
 
 	case "version", "-v", "--version":
-		fmt.Printf("paste v%s\n", Version)
+		fmt.Printf("pastectl v%s\n", Version)
 		return nil
 
 	case "help", "-h", "--help":
@@ -99,7 +112,7 @@ func (a *App) Run(args []string) error {
 	case "completion":
 		if len(args) < 2 {
 			fmt.Fprintf(os.Stderr, "Error: shell type required (bash, zsh, or fish)\n")
-			fmt.Fprintf(os.Stderr, "Usage: paste completion <shell>\n")
+			fmt.Fprintf(os.Stderr, "Usage: pastectl completion <shell>\n")
 			return errors.New("shell type required")
 		}
 		return completion.PrintCompletion(args[1])
@@ -144,7 +157,7 @@ func (a *App) handleUpload(filePath, customName, serverURL string) error {
 
 	// Print result
 	fmt.Printf("\n%s\n", shareURL)
-	fmt.Printf("\nDownload with: paste download -l \"%s\"\n", shareURL)
+	fmt.Printf("\nDownload with: pastectl download -l \"%s\"\n", shareURL)
 
 	return nil
 }
@@ -174,52 +187,54 @@ func (a *App) handleDownload(link, outputPath, serverURL string) error {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `paste v%s - Upload and download files to paste.torden.tech
+	fmt.Fprintf(os.Stderr, `pastectl v%s - Upload and download files to paste.torden.tech
 
 Usage:
-  paste [flags]                 Upload from stdin (when piped/redirected)
-  paste upload [flags]          Upload a file, directory, or stdin
-  paste download [flags]        Download a file
-  paste completion <shell>      Generate shell completion (bash, zsh, fish)
-  paste version                 Show version
-  paste help                    Show this help
+	pastectl [flags]               Upload from stdin (when piped/redirected)
+	pastectl upload [flags]        Upload a file, directory, or stdin
+	pastectl send [flags]          Send a file, directory, or stdin
+	pastectl download [flags]      Download a file
+	pastectl completion <shell>    Generate shell completion (bash, zsh, fish)
+	pastectl version               Show version
+	pastectl help                  Show this help
 
 Upload Examples:
-  echo "Hello World" | paste
-  cat file.txt | paste
-  paste < myfile.txt
-  echo "data" | paste -n "custom-name.txt"
-  paste upload -f document.pdf
-  paste upload -f my-directory/          # Uploads as tar.gz archive
-  cat image.png | paste upload -n "my-image.png"
-  paste upload -f file.txt -url https://custom.paste.server
+	echo "Hello World" | pastectl
+	cat file.txt | pastectl
+	pastectl < myfile.txt
+	echo "data" | pastectl -n "custom-name.txt"
+	pastectl upload -f document.pdf
+	pastectl upload -f my-directory/          # Uploads as tar.gz archive
+	cat image.png | pastectl upload -n "my-image.png"
+	pastectl upload -f file.txt -url https://custom.paste.server
+	pastectl send file.txt
 
 Download Examples:
-  paste download -l "https://paste.torden.tech/abc123#key=xyz..."
-  paste download -l "https://paste.torden.tech/abc123#key=xyz..." -o output.txt
-  paste download -l "URL" -o archive.tar.gz  # Download directory archive
+	pastectl download -l "https://paste.torden.tech/abc123#key=xyz..."
+	pastectl download -l "https://paste.torden.tech/abc123#key=xyz..." -o output.txt
+	pastectl download -l "URL" -o archive.tar.gz  # Download directory archive
 
 Shell Completion:
-  # Bash
-  paste completion bash > /etc/bash_completion.d/paste
-  # Or for current user:
-  paste completion bash >> ~/.bashrc
+	# Bash
+	pastectl completion bash > /etc/bash_completion.d/pastectl
+	# Or for current user:
+	pastectl completion bash >> ~/.bashrc
 
-  # Zsh
-  paste completion zsh > "${fpath[1]}/_paste"
+	# Zsh
+	pastectl completion zsh > "${fpath[1]}/_pastectl"
 
-  # Fish
-  paste completion fish > ~/.config/fish/completions/paste.fish
+	# Fish
+	pastectl completion fish > ~/.config/fish/completions/pastectl.fish
 
 Important Notes:
-  - When using stdin (< file or |), the original filename is lost
-  - Use -n flag to specify a custom filename for stdin uploads
-  - Or use -f flag to preserve the original filename: paste upload -f file.mp4
-  - Directories are automatically compressed as tar.gz archives
-  - Content type is auto-detected from file data when possible
+	- When using stdin (< file or |), the original filename is lost
+	- Use -n flag to specify a custom filename for stdin uploads
+	- Or use -f flag to preserve the original filename: pastectl upload -f file.mp4
+	- Directories are automatically compressed as tar.gz archives
+	- Content type is auto-detected from file data when possible
 
 Environment Variables:
-  PASTE_URL    Default paste server URL (default: %s)
+	PASTE_URL    Default paste server URL (default: %s)
 
 `, Version, DefaultURL)
 }
