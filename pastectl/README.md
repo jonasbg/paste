@@ -47,6 +47,11 @@ Upload a file:
 pastectl upload -f document.pdf
 ```
 
+Send a file (alias for upload, accepts positional path):
+```bash
+pastectl send document.pdf
+```
+
 Upload from stdin with explicit command:
 ```bash
 echo "Hello World" | pastectl upload
@@ -69,6 +74,8 @@ Download a file:
 ```bash
 pastectl download -l "https://paste.torden.tech/abc123#key=xyz..."
 ```
+
+The remote file is deleted after a successful download.
 
 Download to specific file:
 ```bash
