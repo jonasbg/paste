@@ -105,7 +105,7 @@ func IsPassphrase(input string) bool {
 
 	// Check if it matches passphrase pattern
 	parts := strings.Split(input, "-")
-	if len(parts) < 4 || len(parts) > 9 { // 3-8 words + 1 suffix
+	if len(parts) < 5 || len(parts) > 9 { // 4-8 words + 1 suffix
 		return false
 	}
 

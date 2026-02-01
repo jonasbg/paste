@@ -53,15 +53,15 @@ func (a *App) Run(args []string) error {
 	uploadFile := uploadCmd.String("f", "", "File to upload (omit to read from stdin)")
 	uploadName := uploadCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	uploadURL := uploadCmd.String("url", a.pasteURL, "Paste server URL")
-	uploadPassphrase := uploadCmd.Int("p", 4, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
-	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
+	uploadPassphrase := uploadCmd.Int("p", 4, "Number of words in passphrase (4-8, default: 4)")
+	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (4-8, default: 4)")
 	uploadURLMode := uploadCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
 
 	sendFile := sendCmd.String("f", "", "File to send (omit to read from stdin)")
 	sendName := sendCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	sendURL := sendCmd.String("url", a.pasteURL, "Paste server URL")
-	sendPassphrase := sendCmd.Int("p", 4, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
-	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
+	sendPassphrase := sendCmd.Int("p", 4, "Number of words in passphrase (4-8, default: 4)")
+	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (4-8, default: 4)")
 	sendURLMode := sendCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
 
 	// Download flags
@@ -201,8 +201,8 @@ func (a *App) handleUpload(filePath, customName, serverURL string, passphraseWor
 	// Check if passphrase mode is enabled
 	if passphraseWords > 0 {
 		// Validate word count
-		if passphraseWords < 3 || passphraseWords > 8 {
-			return fmt.Errorf("passphrase word count must be between 3 and 8, got %d", passphraseWords)
+		if passphraseWords < 4 || passphraseWords > 8 {
+			return fmt.Errorf("passphrase word count must be between 4 and 8, got %d", passphraseWords)
 		}
 
 		// Upload with passphrase
