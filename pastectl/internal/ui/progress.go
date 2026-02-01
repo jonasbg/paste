@@ -58,18 +58,15 @@ func (pb *ProgressBar) render() {
 	percentage := float64(pb.current) / float64(pb.total) * 100
 	filled := int(float64(pb.width) * float64(pb.current) / float64(pb.total))
 
-	// Build progress bar
-	bar := "["
+	// Build progress bar with fancy block characters
+	bar := ""
 	for i := 0; i < pb.width; i++ {
 		if i < filled {
-			bar += "="
-		} else if i == filled {
-			bar += ">"
+			bar += "█"
 		} else {
-			bar += " "
+			bar += "░"
 		}
 	}
-	bar += "]"
 
 	// Calculate speed
 	elapsed := time.Since(pb.startTime).Seconds()
@@ -78,15 +75,56 @@ func (pb *ProgressBar) render() {
 		speed = float64(pb.current) / elapsed
 	}
 
-	// Format sizes
-	currentMB := float64(pb.current) / (1024 * 1024)
-	totalMB := float64(pb.total) / (1024 * 1024)
-	speedMB := speed / (1024 * 1024)
+	// Calculate ETA
+	var etaStr string
+	if speed > 0 && pb.current < pb.total {
+		remaining := pb.total - pb.current
+		etaSeconds := float64(remaining) / speed
+		if etaSeconds < 60 {
+			etaStr = fmt.Sprintf("%.0fs", etaSeconds)
+		} else {
+			etaStr = fmt.Sprintf("%.0fm%.0fs", etaSeconds/60, float64(int(etaSeconds)%60))
+		}
+	}
 
-	// Spinner
-	spinner := spinnerChars[pb.spinnerIdx]
+	// Format sizes and speed based on file size
+	if pb.total < 1024*1024 {
+		// Use KB for files smaller than 1 MB
+		currentKB := float64(pb.current) / 1024
+		totalKB := float64(pb.total) / 1024
+		speedKB := speed / 1024
 
-	// Print progress bar
-	fmt.Fprintf(os.Stderr, "\r%s %s %s %.1f%% (%.1f/%.1f MB, %.1f MB/s)   ",
-		spinner, pb.description, bar, percentage, currentMB, totalMB, speedMB)
+		// If speed is >= 1 MB/s, display in MB/s for readability
+		if speedKB >= 1024 {
+			speedMB := speed / (1024 * 1024)
+			if etaStr != "" {
+				fmt.Fprintf(os.Stderr, "\r%.2f KB / %.2f KB %s %6.2f%% %.2f MB/s %s   ",
+					currentKB, totalKB, bar, percentage, speedMB, etaStr)
+			} else {
+				fmt.Fprintf(os.Stderr, "\r%.2f KB / %.2f KB %s %6.2f%% %.2f MB/s   ",
+					currentKB, totalKB, bar, percentage, speedMB)
+			}
+		} else {
+			if etaStr != "" {
+				fmt.Fprintf(os.Stderr, "\r%.2f KB / %.2f KB %s %6.2f%% %.2f KB/s %s   ",
+					currentKB, totalKB, bar, percentage, speedKB, etaStr)
+			} else {
+				fmt.Fprintf(os.Stderr, "\r%.2f KB / %.2f KB %s %6.2f%% %.2f KB/s   ",
+					currentKB, totalKB, bar, percentage, speedKB)
+			}
+		}
+	} else {
+		// Use MB for files 1 MB or larger
+		currentMB := float64(pb.current) / (1024 * 1024)
+		totalMB := float64(pb.total) / (1024 * 1024)
+		speedMB := speed / (1024 * 1024)
+
+		if etaStr != "" {
+			fmt.Fprintf(os.Stderr, "\r%.2f MB / %.2f MB %s %6.2f%% %.2f MB/s %s   ",
+				currentMB, totalMB, bar, percentage, speedMB, etaStr)
+		} else {
+			fmt.Fprintf(os.Stderr, "\r%.2f MB / %.2f MB %s %6.2f%% %.2f MB/s   ",
+				currentMB, totalMB, bar, percentage, speedMB)
+		}
+	}
 }

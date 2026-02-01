@@ -34,7 +34,7 @@ func NewHandler(c *client.Client, config *types.Config) *Handler {
 // Download downloads and decrypts a file
 func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 	// Fetch metadata
-	metadata,token, err := h.client.FetchMetadata(fileID, key)
+	metadata, token, err := h.client.FetchMetadata(fileID, key)
 	if err != nil {
 		return fmt.Errorf("failed to fetch metadata: %w", err)
 	}
@@ -51,13 +51,31 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 	}
 
 	if outputPath != "" {
+		// Check if file exists and prompt for overwrite
+		if _, err := os.Stat(outputPath); err == nil {
+			fmt.Fprintf(os.Stderr, "File '%s' already exists. Overwrite? [y/N]: ", outputPath)
+			var response string
+			fmt.Scanln(&response)
+			if response != "y" && response != "Y" && response != "yes" {
+				return fmt.Errorf("download cancelled")
+			}
+		}
+
 		file, err := os.Create(outputPath)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
 		defer file.Close()
 		writer = file
-		fmt.Fprintf(os.Stderr, "Downloading to: %s\n", outputPath)
+
+		// Show receiving message with file size
+		fileSizeMB := float64(metadata.Size) / (1024 * 1024)
+		if fileSizeMB >= 0.1 {
+			fmt.Fprintf(os.Stderr, "Receiving file (%.1f MB) into: %s\n", fileSizeMB, outputPath)
+		} else {
+			fileSizeKB := float64(metadata.Size) / 1024
+			fmt.Fprintf(os.Stderr, "Receiving file (%.1f KB) into: %s\n", fileSizeKB, outputPath)
+		}
 	} else {
 		writer = os.Stdout
 	}
@@ -68,7 +86,7 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 	}
 
 	if outputPath != "" {
-		fmt.Fprintf(os.Stderr, "Download complete: %s\n", outputPath)
+		fmt.Fprintf(os.Stderr, "\n")
 	}
 
 	if err := h.client.DeleteFile(fileID, token); err != nil {

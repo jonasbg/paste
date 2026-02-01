@@ -212,9 +212,9 @@ func (a *App) handleUpload(filePath, customName, serverURL string, passphraseWor
 		}
 
 		// Print result
-		fmt.Printf("\n✓ Upload complete!\n")
-		fmt.Printf("\nShare code: %s\n", passphrase)
-		fmt.Printf("\nDownload with: pastectl download %s\n", passphrase)
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Printf("On the other computer, please run:\n")
+		fmt.Printf("  pastectl download %s\n", passphrase)
 	} else {
 		// Traditional URL-based mode
 		key, err := crypto.GenerateKey(config.KeySize / 8)
@@ -228,8 +228,9 @@ func (a *App) handleUpload(filePath, customName, serverURL string, passphraseWor
 		}
 
 		// Print result
-		fmt.Printf("\n%s\n", shareURL)
-		fmt.Printf("\nDownload with: pastectl download -l \"%s\"\n", shareURL)
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Printf("On the other computer, please run:\n")
+		fmt.Printf("  pastectl download -l \"%s\"\n", shareURL)
 	}
 	return nil
 }
