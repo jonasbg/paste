@@ -1,0 +1,1 @@
+- [] create a github static page generator using markdown documents only to document

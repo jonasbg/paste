@@ -292,3 +292,41 @@ func DecryptMetadata(key []byte, data []byte) ([]byte, error) {
 
 	return decrypted, nil
 }
+
+// DeriveFromPassphrase derives both a file ID and encryption key from a passphrase
+// Returns: fileID (hex string), encryption key (bytes), error
+func DeriveFromPassphrase(passphrase string, keySize int) (string, []byte, error) {
+	if keySize != 16 && keySize != 24 && keySize != 32 {
+		return "", nil, errors.New("invalid key size: must be 16, 24, or 32 bytes")
+	}
+
+	// Use passphrase as the input key material
+	ikm := []byte(passphrase)
+	
+	// No salt for deterministic derivation (same passphrase always gives same ID+key)
+	salt := []byte{}
+
+	// Derive file ID (16 bytes = 32 hex chars)
+	fileIDInfo := []byte("paste-v1-file-id")
+	fileIDReader := hkdf.New(sha256.New, ikm, salt, fileIDInfo)
+	fileIDBytes := make([]byte, 16)
+	if _, err := io.ReadFull(fileIDReader, fileIDBytes); err != nil {
+		return "", nil, err
+	}
+
+	// Derive encryption key
+	keyInfo := []byte("paste-v1-encryption-key")
+	keyReader := hkdf.New(sha256.New, ikm, salt, keyInfo)
+	key := make([]byte, keySize)
+	if _, err := io.ReadFull(keyReader, key); err != nil {
+		return "", nil, err
+	}
+
+	// Convert fileID to hex string
+	fileID := ""
+	for _, b := range fileIDBytes {
+		fileID += string("0123456789abcdef"[b>>4]) + string("0123456789abcdef"[b&0x0f])
+	}
+
+	return fileID, key, nil
+}
