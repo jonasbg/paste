@@ -123,7 +123,7 @@ export async function uploadEncryptedFile(
                     cipherId = streamResult.id;
                     ws.send(streamResult.iv);
                     await sendNextChunk();
-                } if (response.ack) {
+                } else if (response.ack) {
                     uploadedBytes += response.ack;
                     const progress = Math.round((uploadedBytes / file.size) * 100);
                     if (progress >= lastProgress + 5 || uploadedBytes === file.size) {

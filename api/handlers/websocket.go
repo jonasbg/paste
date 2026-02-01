@@ -317,6 +317,18 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 				sendError(ws, "Invalid custom file ID format")
 				return
 			}
+
+			// Check for collision: reject if any file with this ID already exists
+			matches, err := filepath.Glob(filepath.Join(uploadDir, init.FileID+".*"))
+			if err != nil {
+				sendError(ws, "Failed to check for existing files")
+				return
+			}
+			if len(matches) > 0 {
+				sendError(ws, "Share code already in use, please try again with a different passphrase")
+				return
+			}
+
 			id = init.FileID
 		} else {
 			// Generate random ID as usual

@@ -7,8 +7,9 @@ import (
 	"strings"
 )
 
-// Wordlist contains 512 memorable words for passphrase generation
+// Wordlist contains ~600 memorable words for passphrase generation
 // Chosen to be short (3-8 chars), memorable, and phonetically distinct
+// With 5 words + 4-char suffix: ~67 bits of entropy (log2(600^5 * 36^4))
 var Wordlist = []string{
 	"able", "acid", "aged", "also", "area", "army", "away", "baby",
 	"back", "ball", "band", "bank", "base", "bath", "bear", "beat",
@@ -65,7 +66,7 @@ var Wordlist = []string{
 	"room", "root", "rope", "rose", "ruby", "rule", "rush", "rust",
 	"safe", "sage", "said", "sake", "sale", "salt", "same", "sand",
 	"save", "says", "scan", "seat", "sect", "seed", "seek", "seem",
-	"seen", "self", "sell", "send", "sens", "sent", "sept", "ship",
+	"seen", "self", "sell", "send", "sent", "sept", "ship",
 	"shop", "shot", "show", "shut", "sick", "side", "sign", "silk",
 	"sing", "sink", "site", "size", "skin", "skip", "slim", "slip",
 	"slot", "slow", "snow", "soft", "soil", "sold", "sole", "some",
@@ -83,19 +84,22 @@ var Wordlist = []string{
 	"went", "were", "west", "what", "when", "whom", "wide", "wife",
 	"wild", "will", "wind", "wine", "wing", "wire", "wise", "wish",
 	"with", "wood", "word", "wore", "work", "worn", "wrap", "yard",
-	"yeah", "year", "your", "zero", "zone",
+	"yeah", "year", "your", "zero", "zone", "acre", "aide", "aims",
+	"ajar", "ally", "amid", "aqua", "arch", "atom", "aunt", "axis",
 }
 
 // GeneratePassphrase generates a random passphrase with the specified number of words
+// plus a 4-character alphanumeric suffix for uniqueness.
+// Format: word-word-word-word-word-x7k3
 func GeneratePassphrase(numWords int) (string, error) {
-	if numWords < 2 || numWords > 10 {
-		return "", fmt.Errorf("number of words must be between 2 and 10")
+	if numWords < 3 || numWords > 8 {
+		return "", fmt.Errorf("number of words must be between 3 and 8")
 	}
 
 	words := make([]string, numWords)
 	max := big.NewInt(int64(len(Wordlist)))
 
-	for i := 0; i < numWords; i++ {
+	for i := range numWords {
 		n, err := rand.Int(rand.Reader, max)
 		if err != nil {
 			return "", fmt.Errorf("failed to generate random number: %w", err)
@@ -103,15 +107,74 @@ func GeneratePassphrase(numWords int) (string, error) {
 		words[i] = Wordlist[n.Int64()]
 	}
 
-	return strings.Join(words, "-"), nil
+	// Generate 4-char alphanumeric suffix (must contain at least one digit)
+	suffix, err := generateSuffix(4)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate suffix: %w", err)
+	}
+
+	return strings.Join(words, "-") + "-" + suffix, nil
 }
 
-// ValidatePassphrase validates that a passphrase consists of valid words
-func ValidatePassphrase(passphrase string) error {
-	words := strings.Split(passphrase, "-")
-	if len(words) < 2 || len(words) > 10 {
-		return fmt.Errorf("passphrase must contain 2-10 words")
+// generateSuffix generates a random alphanumeric suffix with at least one digit
+func generateSuffix(length int) (string, error) {
+	const alphanumeric = "abcdefghijklmnopqrstuvwxyz0123456789"
+	const digits = "0123456789"
+
+	result := make([]byte, length)
+	max := big.NewInt(int64(len(alphanumeric)))
+
+	for i := range length {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		result[i] = alphanumeric[n.Int64()]
 	}
+
+	// Ensure at least one digit by replacing a random position
+	hasDigit := false
+	for _, c := range result {
+		if c >= '0' && c <= '9' {
+			hasDigit = true
+			break
+		}
+	}
+
+	if !hasDigit {
+		pos, err := rand.Int(rand.Reader, big.NewInt(int64(length)))
+		if err != nil {
+			return "", err
+		}
+		digitIdx, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
+		if err != nil {
+			return "", err
+		}
+		result[pos.Int64()] = digits[digitIdx.Int64()]
+	}
+
+	return string(result), nil
+}
+
+// ValidatePassphrase validates that a passphrase consists of valid words plus a suffix.
+// Format: word-word-word-...-suffix (where suffix is 4 alphanumeric chars with at least one digit)
+func ValidatePassphrase(passphrase string) error {
+	parts := strings.Split(passphrase, "-")
+	if len(parts) < 4 { // minimum: 3 words + 1 suffix
+		return fmt.Errorf("passphrase must contain at least 3 words plus a suffix")
+	}
+	if len(parts) > 9 { // maximum: 8 words + 1 suffix
+		return fmt.Errorf("passphrase must contain at most 8 words plus a suffix")
+	}
+
+	// Last part should be the suffix (4 chars, alphanumeric, with at least one digit)
+	suffix := parts[len(parts)-1]
+	if !isValidSuffix(suffix) {
+		return fmt.Errorf("invalid suffix format: must be 4 alphanumeric characters with at least one digit")
+	}
+
+	// Remaining parts should be valid words
+	words := parts[:len(parts)-1]
 
 	// Build wordlist lookup map
 	validWords := make(map[string]bool, len(Wordlist))
@@ -128,16 +191,21 @@ func ValidatePassphrase(passphrase string) error {
 	return nil
 }
 
-// GetWordCompletions returns possible completions for a partial word
-func GetWordCompletions(prefix string) []string {
-	var completions []string
-	prefix = strings.ToLower(prefix)
+// isValidSuffix checks if a string is a valid passphrase suffix
+func isValidSuffix(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
 
-	for _, word := range Wordlist {
-		if strings.HasPrefix(word, prefix) {
-			completions = append(completions, word)
+	hasDigit := false
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			hasDigit = true
+		} else if c < 'a' || c > 'z' {
+			return false // must be lowercase alphanumeric
 		}
 	}
 
-	return completions
+	return hasDigit
 }
+
