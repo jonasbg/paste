@@ -121,16 +121,36 @@ func (a *App) Run(args []string) error {
 		return a.handleUpload(*sendFile, *sendName, *sendURL, passphraseWords)
 
 	case "download":
-		downloadCmd.Parse(args[1:])
-		// Allow passphrase/link as positional argument if -l not provided
-		if *downloadLink == "" {
-			if extraArgs := downloadCmd.Args(); len(extraArgs) > 0 {
-				*downloadLink = extraArgs[0]
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: download link or passphrase is required\n")
-				downloadCmd.PrintDefaults()
-				return errors.New("download link or passphrase is required")
+		// Find passphrase/link in any position (non-flag argument)
+		var foundLink string
+		var filteredArgs []string
+		for i := 1; i < len(args); i++ {
+			arg := args[i]
+			// Skip flags and their values
+			if strings.HasPrefix(arg, "-") {
+				filteredArgs = append(filteredArgs, arg)
+				// If it's a flag that takes a value, include the next arg too
+				if (arg == "-l" || arg == "-o" || arg == "--url") && i+1 < len(args) {
+					i++
+					filteredArgs = append(filteredArgs, args[i])
+				}
+			} else if foundLink == "" {
+				// First non-flag argument is the passphrase/link
+				foundLink = arg
 			}
+		}
+
+		downloadCmd.Parse(filteredArgs)
+
+		// Use found passphrase or fall back to -l flag
+		if foundLink != "" {
+			*downloadLink = foundLink
+		}
+
+		if *downloadLink == "" {
+			fmt.Fprintf(os.Stderr, "Error: download link or passphrase is required\n")
+			downloadCmd.PrintDefaults()
+			return errors.New("download link or passphrase is required")
 		}
 		return a.handleDownload(*downloadLink, *downloadOutput, *downloadURL)
 
