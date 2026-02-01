@@ -53,15 +53,15 @@ func (a *App) Run(args []string) error {
 	uploadFile := uploadCmd.String("f", "", "File to upload (omit to read from stdin)")
 	uploadName := uploadCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	uploadURL := uploadCmd.String("url", a.pasteURL, "Paste server URL")
-	uploadPassphrase := uploadCmd.Int("p", 3, "Number of words in passphrase (3-6, default: 3, use --url-mode for legacy URLs)")
-	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (3-6, default: 3, use --url-mode for legacy URLs)")
+	uploadPassphrase := uploadCmd.Int("p", 4, "Number of words in passphrase (3-6, default: 4, use --url-mode for legacy URLs)")
+	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (3-6, default: 4, use --url-mode for legacy URLs)")
 	uploadURLMode := uploadCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
-	
+
 	sendFile := sendCmd.String("f", "", "File to send (omit to read from stdin)")
 	sendName := sendCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	sendURL := sendCmd.String("url", a.pasteURL, "Paste server URL")
-	sendPassphrase := sendCmd.Int("p", 3, "Number of words in passphrase (3-6, default: 3, use --url-mode for legacy URLs)")
-	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (3-6, default: 3, use --url-mode for legacy URLs)")
+	sendPassphrase := sendCmd.Int("p", 4, "Number of words in passphrase (3-6, default: 4, use --url-mode for legacy URLs)")
+	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (3-6, default: 4, use --url-mode for legacy URLs)")
 	sendURLMode := sendCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
 
 	// Download flags
@@ -73,7 +73,7 @@ func (a *App) Run(args []string) error {
 	if len(args) < 1 {
 		if stdinIsPiped {
 			// Default to upload from stdin with passphrase
-			return a.handleUpload("", "", a.pasteURL, 3)
+			return a.handleUpload("", "", a.pasteURL, 4)
 		}
 		printUsage()
 		return errors.New("no command provided")
@@ -266,26 +266,26 @@ Usage:
 
 Upload Examples (Passphrase Mode - Default):
 	echo "Hello World" | pastectl
-	  → Share code: happy-ocean-mountain
+	  → Share code: happy-ocean-mountain-crystal
 	
 	pastectl upload -f document.pdf
-	  → Share code: calm-river-sunset
+	  → Share code: calm-river-sunset-forest
 	
-	pastectl send presentation.pdf -p 4
-	  → Share code: calm-river-sunset-crystal (4 words)
+	pastectl send presentation.pdf -p 3
+	  → Share code: calm-river-sunset (3 words)
 	
 	pastectl upload -f file.txt --url-mode
 	  → https://... (legacy URL mode)
 
 Download Examples:
-	pastectl download happy-ocean-mountain
-	pastectl download happy-ocean-mountain -o output.txt
+	pastectl download happy-ocean-mountain-crystal
+	pastectl download happy-ocean-mountain-crystal -o output.txt
 	pastectl download -l "https://paste.torden.tech/abc123#key=xyz..."  # Legacy URLs still work
 
 Upload Flags:
 	-f <file>          File to upload (omit to read from stdin)
 	-n <name>          Override filename
-	-p <N>             Number of words in passphrase (3-6, default: 3)
+	-p <N>             Number of words in passphrase (3-6, default: 4)
 	--passphrase <N>   Same as -p
 	--url-mode         Use legacy URL mode instead of passphrase
 	--url <url>        Custom server URL
@@ -306,8 +306,9 @@ Shell Completion:
 	pastectl completion fish > ~/.config/fish/completions/pastectl.fish
 
 Important Notes:
-	- Default mode uses 3-word passphrases for easy sharing
-	- More words = more secure: use -p 5 or -p 6 for sensitive files
+	- Default mode uses 4-word passphrases (good security + usability)
+	- Fewer words: use -p 3 for easier sharing (less secure)
+	- More words: use -p 5 or -p 6 for sensitive files (more secure)
 	- Legacy URL mode still available with --url-mode flag
 	- Passphrases: lowercase words separated by hyphens
 	- Directories are automatically compressed as tar.gz archives
