@@ -53,15 +53,15 @@ func (a *App) Run(args []string) error {
 	uploadFile := uploadCmd.String("f", "", "File to upload (omit to read from stdin)")
 	uploadName := uploadCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	uploadURL := uploadCmd.String("url", a.pasteURL, "Paste server URL")
-	uploadPassphrase := uploadCmd.Int("p", 5, "Number of words in passphrase (3-8, default: 5, use --url-mode for legacy URLs)")
-	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (3-8, default: 5, use --url-mode for legacy URLs)")
+	uploadPassphrase := uploadCmd.Int("p", 4, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
+	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
 	uploadURLMode := uploadCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
 
 	sendFile := sendCmd.String("f", "", "File to send (omit to read from stdin)")
 	sendName := sendCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	sendURL := sendCmd.String("url", a.pasteURL, "Paste server URL")
-	sendPassphrase := sendCmd.Int("p", 5, "Number of words in passphrase (3-8, default: 5, use --url-mode for legacy URLs)")
-	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (3-8, default: 5, use --url-mode for legacy URLs)")
+	sendPassphrase := sendCmd.Int("p", 4, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
+	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (3-8, default: 4, use --url-mode for legacy URLs)")
 	sendURLMode := sendCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
 
 	// Download flags
@@ -73,7 +73,7 @@ func (a *App) Run(args []string) error {
 	if len(args) < 1 {
 		if stdinIsPiped {
 			// Default to upload from stdin with passphrase
-			return a.handleUpload("", "", a.pasteURL, 5)
+			return a.handleUpload("", "", a.pasteURL, 4)
 		}
 		printUsage()
 		return errors.New("no command provided")
@@ -286,10 +286,10 @@ Usage:
 
 Upload Examples (Passphrase Mode - Default):
 	echo "Hello World" | pastectl
-	  → Share code: happy-ocean-mountain-forest-river-x7k3
+	  → Share code: happy-ocean-forest-moon-x7k3
 
 	pastectl upload -f document.pdf
-	  → Share code: calm-river-sunset-moon-peak-a2b9
+	  → Share code: calm-river-sunset-peak-a2b9
 
 	pastectl send presentation.pdf -p 3
 	  → Share code: calm-river-sunset-f4m2 (3 words + suffix)
@@ -298,14 +298,14 @@ Upload Examples (Passphrase Mode - Default):
 	  → https://... (legacy URL mode)
 
 Download Examples:
-	pastectl download happy-ocean-forest-moon-river-x7k3
-	pastectl download happy-ocean-forest-moon-river-x7k3 -o output.txt
+	pastectl download happy-ocean-forest-moon-x7k3
+	pastectl download happy-ocean-forest-moon-x7k3 -o output.txt
 	pastectl download -l "https://paste.torden.tech/abc123#key=xyz..."  # Legacy URLs still work
 
 Upload Flags:
 	-f <file>          File to upload (omit to read from stdin)
 	-n <name>          Override filename
-	-p <N>             Number of words in passphrase (3-8, default: 5)
+	-p <N>             Number of words in passphrase (3-8, default: 4)
 	--passphrase <N>   Same as -p
 	--url-mode         Use legacy URL mode instead of passphrase
 	--url <url>        Custom server URL
@@ -326,10 +326,10 @@ Shell Completion:
 	pastectl completion fish > ~/.config/fish/completions/pastectl.fish
 
 Important Notes:
-	- Default mode uses 5-word passphrases + random suffix (~60 bits entropy)
-	- Format: word-word-word-word-word-x7k3 (words + 4-char suffix)
+	- Default mode uses 4-word passphrases + random suffix (~57 bits entropy)
+	- Format: word-word-word-word-x7k3 (words + 4-char suffix)
 	- Fewer words: use -p 3 for easier sharing (less entropy)
-	- More words: use -p 7 or -p 8 for sensitive files (more entropy)
+	- More words: use -p 6 or -p 8 for sensitive files (more entropy)
 	- Legacy URL mode still available with --url-mode flag
 	- Directories are automatically compressed as tar.gz archives
 

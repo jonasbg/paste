@@ -9,7 +9,7 @@ import (
 
 // Wordlist contains ~600 memorable words for passphrase generation
 // Chosen to be short (3-8 chars), memorable, and phonetically distinct
-// With 5 words + 4-char suffix: ~67 bits of entropy (log2(600^5 * 36^4))
+// With 4 words + 4-char suffix: ~57 bits of entropy (log2(600^4 * 36^4))
 var Wordlist = []string{
 	"able", "acid", "aged", "also", "area", "army", "away", "baby",
 	"back", "ball", "band", "bank", "base", "bath", "bear", "beat",
