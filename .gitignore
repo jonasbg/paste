@@ -3,3 +3,7 @@
 **/wasm_exec.js
 **/encryption.wasm
 api/__debug_**
+
+# Compiled binaries
+pastectl/pastectl
+wasm/main.wasm

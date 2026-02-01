@@ -68,15 +68,17 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 	fileId := args[0].String()
 	keyBase64 := args[1].String()
 
-	// Ensure proper padding before decoding the base64 key
-	if len(keyBase64)%4 != 0 {
-		keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
-	}
-
-	// Decode the base64 key
-	key, err := base64.URLEncoding.DecodeString(keyBase64)
+	// Try decoding without padding first (new format)
+	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
 	if err != nil {
-		return handleError(err)
+		// Fallback: try with padding (old format)
+		if len(keyBase64)%4 != 0 {
+			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
+		}
+		key, err = base64.URLEncoding.DecodeString(keyBase64)
+		if err != nil {
+			return handleError(err)
+		}
 	}
 
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
@@ -128,18 +130,20 @@ func encrypt(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	// Decode the key using base64 URL-safe encoding
+	// Decode the key using base64 URL-safe encoding (raw, without padding)
 	keyBase64 := args[0].String()
 
-	// Handle base64 padding (add '=' if it's missing)
-	if len(keyBase64)%4 != 0 {
-		keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
-	}
-
-	// Decode the base64 encoded key (using URL-safe base64)
-	key, err := base64.URLEncoding.DecodeString(keyBase64)
+	// Try decoding without padding first (new format)
+	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
 	if err != nil {
-		return handleError(err)
+		// Fallback: try with padding (old format)
+		if len(keyBase64)%4 != 0 {
+			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
+		}
+		key, err = base64.URLEncoding.DecodeString(keyBase64)
+		if err != nil {
+			return handleError(err)
+		}
 	}
 
 	// Validate key length (must be 16, 24, or 32 bytes)
@@ -182,9 +186,18 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 	}
 
 	keyBase64 := args[0].String()
-	key, err := base64.URLEncoding.DecodeString(keyBase64)
+
+	// Try decoding without padding first (new format)
+	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
 	if err != nil {
-		return handleError(err)
+		// Fallback: try with padding (old format for backward compatibility)
+		if len(keyBase64)%4 != 0 {
+			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
+		}
+		key, err = base64.URLEncoding.DecodeString(keyBase64)
+		if err != nil {
+			return handleError(err)
+		}
 	}
 
 	block, err := aes.NewCipher(key)
@@ -234,9 +247,17 @@ func createDecryptionStream(_ js.Value, args []js.Value) interface{} {
 	iv := make([]byte, args[1].Length())
 	js.CopyBytesToGo(iv, args[1])
 
-	key, err := base64.URLEncoding.DecodeString(keyBase64)
+	// Try decoding without padding first (new format)
+	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
 	if err != nil {
-		return handleError(err)
+		// Fallback: try with padding (old format)
+		if len(keyBase64)%4 != 0 {
+			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
+		}
+		key, err = base64.URLEncoding.DecodeString(keyBase64)
+		if err != nil {
+			return handleError(err)
+		}
 	}
 
 	block, err := aes.NewCipher(key)
@@ -437,7 +458,7 @@ func generateKey(_ js.Value, args []js.Value) interface{} {
 	if _, err := rand.Read(key); err != nil {
 		return handleError(err) // Assuming handleError is defined elsewhere
 	}
-	return base64.URLEncoding.EncodeToString(key)
+	return base64.RawURLEncoding.EncodeToString(key)
 }
 
 func decryptMetadata(_ js.Value, args []js.Value) interface{} {
@@ -460,9 +481,17 @@ func decryptMetadata(_ js.Value, args []js.Value) interface{} {
 	}
 	encryptedMetadata := data[16 : 16+metadataLen]
 
-	key, err := base64.URLEncoding.DecodeString(keyBase64)
+	// Try decoding without padding first (new format)
+	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
 	if err != nil {
-		return handleError(err)
+		// Fallback: try with padding (old format)
+		if len(keyBase64)%4 != 0 {
+			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
+		}
+		key, err = base64.URLEncoding.DecodeString(keyBase64)
+		if err != nil {
+			return handleError(err)
+		}
 	}
 
 	block, err := aes.NewCipher(key)

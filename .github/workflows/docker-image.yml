@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - "*"
+  workflow_dispatch:
 
 jobs:
   helm-and-docker:
@@ -42,9 +43,9 @@ jobs:
         with:
           images: ${{ vars.REGISTRY }}/${{ github.repository }}
           tags: |
-              type=ref,event=branch
-              type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
-              type=raw,value=dev,enable=${{ github.ref != format('refs/heads/{0}', 'main') }}
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=dev,enable=${{ github.ref != format('refs/heads/{0}', 'main') }}
 
       # Login to GitHub Container Registry
       - name: Login to GitHub Container Registry
