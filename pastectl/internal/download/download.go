@@ -95,20 +95,20 @@ func (h *Handler) DownloadWithPassphrase(passphrase string, outputPath string) e
 	return h.Download(fileID, key, outputPath)
 }
 
-// IsPassphrase checks if the input looks like a passphrase (word-word-word)
+// IsPassphrase checks if the input looks like a passphrase (word-word-word-...-suffix)
+// New format: 3-8 words followed by a 4-char alphanumeric suffix with at least one digit
 func IsPassphrase(input string) bool {
-	// Passphrases are lowercase words separated by hyphens
 	// URLs contain :// or start with http/https
 	if strings.Contains(input, "://") || strings.HasPrefix(input, "http") {
 		return false
 	}
-	
+
 	// Check if it matches passphrase pattern
 	parts := strings.Split(input, "-")
-	if len(parts) < 2 || len(parts) > 10 {
+	if len(parts) < 4 || len(parts) > 9 { // 3-8 words + 1 suffix
 		return false
 	}
-	
+
 	// All parts should be lowercase alphanumeric
 	for _, part := range parts {
 		if part == "" {
@@ -120,7 +120,23 @@ func IsPassphrase(input string) bool {
 			}
 		}
 	}
-	
+
+	// Last part should be a valid suffix (4 chars with at least one digit)
+	suffix := parts[len(parts)-1]
+	if len(suffix) != 4 {
+		return false
+	}
+	hasDigit := false
+	for _, c := range suffix {
+		if c >= '0' && c <= '9' {
+			hasDigit = true
+			break
+		}
+	}
+	if !hasDigit {
+		return false
+	}
+
 	return true
 }
 
