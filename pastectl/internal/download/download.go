@@ -78,6 +78,52 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 	return nil
 }
 
+// DownloadWithPassphrase downloads a file using a passphrase
+func (h *Handler) DownloadWithPassphrase(passphrase string, outputPath string) error {
+	// Validate passphrase
+	if err := crypto.ValidatePassphrase(passphrase); err != nil {
+		return fmt.Errorf("invalid passphrase: %w", err)
+	}
+
+	// Derive fileID and key from passphrase
+	fileID, key, err := crypto.DeriveFromPassphrase(passphrase, h.config.KeySize/8)
+	if err != nil {
+		return fmt.Errorf("failed to derive key from passphrase: %w", err)
+	}
+
+	// Download using derived credentials
+	return h.Download(fileID, key, outputPath)
+}
+
+// IsPassphrase checks if the input looks like a passphrase (word-word-word)
+func IsPassphrase(input string) bool {
+	// Passphrases are lowercase words separated by hyphens
+	// URLs contain :// or start with http/https
+	if strings.Contains(input, "://") || strings.HasPrefix(input, "http") {
+		return false
+	}
+	
+	// Check if it matches passphrase pattern
+	parts := strings.Split(input, "-")
+	if len(parts) < 2 || len(parts) > 10 {
+		return false
+	}
+	
+	// All parts should be lowercase alphanumeric
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, c := range part {
+			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+				return false
+			}
+		}
+	}
+	
+	return true
+}
+
 func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key []byte, writer io.Writer) error {
 	// Get base URL from client
 	baseURL := h.client.BaseURL()
