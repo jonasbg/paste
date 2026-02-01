@@ -30,7 +30,6 @@ RUN NODE_ENV=production npm run build
 
 # Stage 3: Build the Go backend
 FROM golang:1.25-alpine AS backend-builder
-RUN apk add --update gcc musl-dev sqlite-dev --no-cache
 
 WORKDIR /app/backend
 
@@ -43,9 +42,9 @@ RUN go mod download && go mod verify
 # Copy the source from the current directory to the working Directory inside the container
 COPY api .
 
-# Build with security flags and optimizations
-RUN CGO_ENABLED=1 GOOS=linux go build -a \
-    -ldflags='-w -s -linkmode external -extldflags "-static"' \
+# Build with security flags and optimizations (pure Go, no CGo)
+RUN CGO_ENABLED=0 GOOS=linux go build -a \
+    -ldflags='-w -s' \
     -o paste .
 
 # Stage 4: Final stage
