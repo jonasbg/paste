@@ -55,14 +55,14 @@ func (a *App) Run(args []string) error {
 	uploadURL := uploadCmd.String("url", a.pasteURL, "Paste server URL")
 	uploadPassphrase := uploadCmd.Int("p", 4, "Number of words in passphrase (4-8, default: 4)")
 	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (4-8, default: 4)")
-	uploadURLMode := uploadCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
+	uploadURLMode := uploadCmd.Bool("url-mode", false, "Use URL mode instead of passphrase")
 
 	sendFile := sendCmd.String("f", "", "File to send (omit to read from stdin)")
 	sendName := sendCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
 	sendURL := sendCmd.String("url", a.pasteURL, "Paste server URL")
 	sendPassphrase := sendCmd.Int("p", 4, "Number of words in passphrase (4-8, default: 4)")
 	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (4-8, default: 4)")
-	sendURLMode := sendCmd.Bool("url-mode", false, "Use legacy URL mode instead of passphrase")
+	sendURLMode := sendCmd.Bool("url-mode", false, "Use URL mode instead of passphrase")
 
 	// Download flags
 	downloadLink := downloadCmd.String("l", "", "Download link (format: https://paste.torden.tech/{id}#key={key})")
@@ -273,68 +273,67 @@ func (a *App) handleDownload(link, outputPath, serverURL string) error {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `pastectl v%s - Upload and download files with simple passphrases
+	fmt.Fprintf(os.Stderr, `pastectl v%s - Zero-trust encrypted file sharing with memorable passphrases
 
 Usage:
-	pastectl [flags]               Upload from stdin (when piped/redirected)
-	pastectl upload [flags]        Upload a file, directory, or stdin
-	pastectl send [flags]          Send a file, directory, or stdin
-	pastectl download <passphrase|url> [flags]  Download a file
-	pastectl completion <shell>    Generate shell completion (bash, zsh, fish)
-	pastectl version               Show version
-	pastectl help                  Show this help
+	pastectl [flags]                          Upload from stdin (when piped)
+	pastectl upload [flags]                   Upload a file or directory
+	pastectl send [flags] [file]              Alias for upload
+	pastectl download <passphrase> [flags]    Download using share code
+	pastectl download -l <url> [flags]        Download using URL
+	pastectl completion <shell>               Generate shell completion
+	pastectl version                          Show version
+	pastectl help                             Show this help
 
-Upload Examples (Passphrase Mode - Default):
+PASSPHRASE MODE (Default):
+	Files are encrypted client-side. The passphrase generates both the file
+	identifier and encryption key - the server never sees either.
+
 	echo "Hello World" | pastectl
 	  → Share code: happy-ocean-forest-moon-x7k3
 
 	pastectl upload -f document.pdf
 	  → Share code: calm-river-sunset-peak-a2b9
 
-	pastectl send presentation.pdf -p 3
-	  → Share code: calm-river-sunset-f4m2 (3 words + suffix)
+	pastectl send secret.zip -p 6
+	  → Share code: calm-river-sunset-peak-moon-tree-b4k9 (6 words, more secure)
 
-	pastectl upload -f file.txt --url-mode
-	  → https://... (legacy URL mode)
-
-Download Examples:
 	pastectl download happy-ocean-forest-moon-x7k3
-	pastectl download happy-ocean-forest-moon-x7k3 -o output.txt
-	pastectl download -l "https://paste.torden.tech/abc123#key=xyz..."  # Legacy URLs still work
+	pastectl download calm-river-sunset-peak-a2b9 -o mydoc.pdf
+
+URL MODE (Maximum Security):
+	Use --url-mode for maximum security. Generates a random 128-bit key
+	embedded in the URL fragment (never sent to server). Ideal when you
+	can share clickable links securely.
+
+	pastectl upload -f secret.pdf --url-mode
+	  → https://paste.torden.tech/a1b2c3...#key=Xk9fB2mPqR...
+
+	pastectl download -l "https://paste.torden.tech/a1b2c3...#key=Xk9fB2mPqR..."
 
 Upload Flags:
-	-f <file>          File to upload (omit to read from stdin)
+	-f <file>          File or directory to upload (omit for stdin)
 	-n <name>          Override filename
-	-p <N>             Number of words in passphrase (3-8, default: 4)
-	--passphrase <N>   Same as -p
-	--url-mode         Use legacy URL mode instead of passphrase
+	-p <N>             Number of words in passphrase (4-8, default: 4)
+	--url-mode         Use URL mode with random 128-bit key (max security)
 	--url <url>        Custom server URL
 
 Download Flags:
-	-l <passphrase|url>  Passphrase or legacy URL (can also be positional)
-	-o <file>            Output file (default: original filename or stdout)
-	--url <url>          Custom server URL
+	-l <url>           URL with embedded key (from --url-mode uploads)
+	-o <file>          Output file (default: original filename)
+	--url <url>        Custom server URL
 
-Shell Completion:
-	# Bash
-	pastectl completion bash > /etc/bash_completion.d/pastectl
+Security:
+	- All encryption happens client-side (AES-256-GCM)
+	- Server stores only encrypted blobs - cannot read your files
+	- Passphrase mode: ~57 bits entropy (4 words) to ~78 bits (8 words)
+	- URL mode: 128 bits entropy (cryptographically random)
+	- Files are deleted after first download
 
-	# Zsh
-	pastectl completion zsh > "${fpath[1]}/_pastectl"
-
-	# Fish
-	pastectl completion fish > ~/.config/fish/completions/pastectl.fish
-
-Important Notes:
-	- Default mode uses 4-word passphrases + random suffix (~57 bits entropy)
-	- Format: word-word-word-word-x7k3 (words + 4-char suffix)
-	- Fewer words: use -p 3 for easier sharing (less entropy)
-	- More words: use -p 6 or -p 8 for sensitive files (more entropy)
-	- Legacy URL mode still available with --url-mode flag
-	- Directories are automatically compressed as tar.gz archives
+	See: https://github.com/jonasbg/paste/blob/main/.github/docs/security.md
 
 Environment Variables:
-	PASTE_URL    Default paste server URL (default: %s)
+	PASTE_URL    Default server URL (default: %s)
 
 `, Version, DefaultURL)
 }
