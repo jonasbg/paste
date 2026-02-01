@@ -285,8 +285,9 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		var init struct {
-			Type string `json:"type"`
-			Size int64  `json:"size"`
+			Type   string `json:"type"`
+			Size   int64  `json:"size"`
+			FileID string `json:"fileId,omitempty"` // Optional: for passphrase-based uploads
 		}
 		if err := json.Unmarshal(msg, &init); err != nil {
 			sendError(ws, "Invalid initial message format")
@@ -303,11 +304,39 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 2. Generate ID and Send
-		id, err := generateID(GlobalConfig.IDSize) // Your existing ID generation
-		if err != nil {
-			sendError(ws, "Failed to generate ID")
-			return
+		// 2. Generate or Use Provided ID
+		var id string
+		if init.FileID != "" {
+			// Client provided a custom fileID (passphrase mode)
+			// Validate format
+			if len(init.FileID) != 16 && len(init.FileID) != 24 && len(init.FileID) != 32 {
+				sendError(ws, "Invalid custom file ID length")
+				return
+			}
+			if !validateID(init.FileID) {
+				sendError(ws, "Invalid custom file ID format")
+				return
+			}
+
+			// Check for collision: reject if any file with this ID already exists
+			matches, err := filepath.Glob(filepath.Join(uploadDir, init.FileID+".*"))
+			if err != nil {
+				sendError(ws, "Failed to check for existing files")
+				return
+			}
+			if len(matches) > 0 {
+				sendError(ws, "Share code already in use, please try again with a different passphrase")
+				return
+			}
+
+			id = init.FileID
+		} else {
+			// Generate random ID as usual
+			id, err = generateID(GlobalConfig.IDSize)
+			if err != nil {
+				sendError(ws, "Failed to generate ID")
+				return
+			}
 		}
 
 		if err := ws.WriteJSON(gin.H{"id": id}); err != nil {

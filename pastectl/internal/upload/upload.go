@@ -48,7 +48,40 @@ func (h *Handler) Upload(reader io.Reader, filename string, contentType string, 
 	return shareURL, nil
 }
 
+// UploadWithPassphrase uploads a file using passphrase-based key derivation
+func (h *Handler) UploadWithPassphrase(reader io.Reader, filename string, contentType string, fileSize int64, numWords int) (string, error) {
+	// Generate passphrase
+	passphrase, err := crypto.GeneratePassphrase(numWords)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate passphrase: %w", err)
+	}
+
+	// Derive fileID and encryption key from passphrase
+	fileID, key, err := crypto.DeriveFromPassphrase(passphrase, h.config.KeySize/8)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive key from passphrase: %w", err)
+	}
+
+	// Upload file with derived fileID and key
+	actualFileID, err := h.uploadFileWithID(reader, filename, contentType, fileSize, key, fileID)
+	if err != nil {
+		return "", err
+	}
+
+	// Verify the derived fileID matches what server accepted
+	if actualFileID != fileID {
+		return "", fmt.Errorf("server rejected custom fileID (got %s, expected %s)", actualFileID, fileID)
+	}
+
+	return passphrase, nil
+}
+
 func (h *Handler) uploadFile(reader io.Reader, filename string, contentType string, fileSize int64, key []byte) (string, error) {
+	return h.uploadFileWithID(reader, filename, contentType, fileSize, key, "")
+}
+
+// uploadFileWithID uploads a file with an optional custom fileID
+func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentType string, fileSize int64, key []byte, customFileID string) (string, error) {
 	// Convert HTTP URL to WebSocket URL
 	wsURL := strings.Replace(h.serverURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
@@ -61,10 +94,13 @@ func (h *Handler) uploadFile(reader io.Reader, filename string, contentType stri
 	}
 	defer conn.Close()
 
-	// Step 1: Initialize upload
+	// Step 1: Initialize upload with optional custom fileID
 	initMsg := map[string]interface{}{
 		"type": "init",
 		"size": fileSize,
+	}
+	if customFileID != "" {
+		initMsg["fileId"] = customFileID
 	}
 	if err := conn.WriteJSON(initMsg); err != nil {
 		return "", fmt.Errorf("failed to send init: %w", err)

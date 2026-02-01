@@ -79,7 +79,6 @@ export async function uploadEncryptedFile(
         ws.onmessage = async (event) => {
             if (typeof event.data === 'string') {
                 const response = JSON.parse(event.data);
-                console.log('WebSocket response:', response);
 
                 if (response.error) {
                     cleanup();
@@ -111,12 +110,20 @@ export async function uploadEncryptedFile(
 
                 if (response.ready) {
                     const streamResult = wasmInstance.createEncryptionStream(key);
-                    cipherId = streamResult.id; // Store cipher ID
+
+                    // Check if streamResult is an error or invalid
+                    if (!streamResult || typeof streamResult.id !== 'number' || !streamResult.iv) {
+                        cleanup();
+                        const errorMsg = streamResult instanceof Error ? streamResult.message : 'Invalid result';
+                        reject(new Error('Failed to initialize encryption stream: ' + errorMsg));
+                        ws.close();
+                        return;
+                    }
+
+                    cipherId = streamResult.id;
                     ws.send(streamResult.iv);
                     await sendNextChunk();
-                }
-
-                if (response.ack) {
+                } else if (response.ack) {
                     uploadedBytes += response.ack;
                     const progress = Math.round((uploadedBytes / file.size) * 100);
                     if (progress >= lastProgress + 5 || uploadedBytes === file.size) {
