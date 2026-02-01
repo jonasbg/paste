@@ -42,9 +42,17 @@ RUN go mod download && go mod verify
 # Copy the source from the current directory to the working Directory inside the container
 COPY api .
 
-# Build with security flags and optimizations (pure Go, no CGo)
-RUN CGO_ENABLED=0 GOOS=linux go build -a \
-    -ldflags='-w -s' \
+# Use the target architecture from Docker build context
+ARG TARGETARCH
+
+# Build minimal binary with aggressive optimizations
+# -trimpath: remove file system paths from binary
+# -ldflags '-w -s': strip debug info and symbol table
+# -tags netgo,osusergo: pure Go implementations of net and os/user
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a \
+    -trimpath \
+    -ldflags='-w -s -extldflags "-static"' \
+    -tags netgo,osusergo \
     -o paste .
 
 # Stage 4: Final stage
