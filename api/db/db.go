@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"sort"
 	"time"
 
@@ -23,8 +24,15 @@ func NewDB(dbPath string) (*DB, error) {
 		},
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPath), config)
+	// Explicitly use modernc.org/sqlite driver
+	sqlDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
+		return nil, err
+	}
+
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, config)
+	if err != nil {
+		sqlDB.Close()
 		return nil, err
 	}
 
@@ -34,10 +42,7 @@ func NewDB(dbPath string) (*DB, error) {
 	db.Exec("PRAGMA temp_store = MEMORY")
 	db.Exec("PRAGMA mmap_size = 30000000000")
 
-	sqlDB, err := db.DB()
-	if err != nil {
-		return nil, err
-	}
+	// Configure connection pool (sqlDB already opened above)
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 
