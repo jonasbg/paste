@@ -92,8 +92,8 @@ var Wordlist = []string{
 // plus a 4-character alphanumeric suffix for uniqueness.
 // Format: word-word-word-word-word-x7k3
 func GeneratePassphrase(numWords int) (string, error) {
-	if numWords < 3 || numWords > 8 {
-		return "", fmt.Errorf("number of words must be between 3 and 8")
+	if numWords < 4 || numWords > 8 {
+		return "", fmt.Errorf("number of words must be between 4 and 8")
 	}
 
 	words := make([]string, numWords)
@@ -160,8 +160,8 @@ func generateSuffix(length int) (string, error) {
 // Format: word-word-word-...-suffix (where suffix is 4 alphanumeric chars with at least one digit)
 func ValidatePassphrase(passphrase string) error {
 	parts := strings.Split(passphrase, "-")
-	if len(parts) < 4 { // minimum: 3 words + 1 suffix
-		return fmt.Errorf("passphrase must contain at least 3 words plus a suffix")
+	if len(parts) < 5 { // minimum: 4 words + 1 suffix
+		return fmt.Errorf("passphrase must contain at least 4 words plus a suffix")
 	}
 	if len(parts) > 9 { // maximum: 8 words + 1 suffix
 		return fmt.Errorf("passphrase must contain at most 8 words plus a suffix")
