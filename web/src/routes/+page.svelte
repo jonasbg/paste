@@ -321,9 +321,6 @@
 				history.replaceState(null, '', window.location.pathname);
 				passphraseInput = passphrase;
 				await handlePassphraseDownload();
-				if (passphraseFileMetadata && !passphraseFileMetadata.error) {
-					await initiatePassphraseDownload();
-				}
 				return;
 			}
 		}

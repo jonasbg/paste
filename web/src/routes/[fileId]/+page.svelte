@@ -361,6 +361,10 @@
 					</div>
 				</div>
 
+				{#if isDownloadComplete}
+					<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>Filen er slettet fra serveren.</p>
+				{/if}
+
 				{#if deletionError}
 					<ErrorMessage message={deletionError} />
 				{/if}
@@ -455,10 +459,10 @@
 		align-items: center;
 		gap: 1rem;
 		background: #fff;
-		border: 1px solid #e5e7eb;
+		/* border: 1px solid #e5e7eb; */
 		border-radius: 10px;
 		padding: 1rem 1.25rem;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+		/* box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); */
 	}
 
 	.col-icon {
@@ -672,6 +676,13 @@
 		cursor: not-allowed;
 		transform: none;
 		box-shadow: none;
+	}
+
+	.deleted-notice {
+		font-size: 0.8125rem;
+		color: #6b7280;
+		margin: 0.625rem 0 0 0;
+		text-align: center;
 	}
 
 	/* ── Mobile ── */
