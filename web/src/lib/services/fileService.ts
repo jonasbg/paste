@@ -265,12 +265,7 @@ export async function streamDownloadAndDecrypt(
       lastProgressUpdate = currentTime;
       lastProgressValue = progressValue;
       
-      // Use requestAnimationFrame for smoother UI updates
-      await new Promise<void>(resolve => {
-        requestAnimationFrame(() => {
-          onProgress(progressValue, `Laster ned... ${progressValue}%`).then(() => resolve());
-        });
-      });
+      await onProgress(progressValue, `Laster ned...`);
     }
   };
 

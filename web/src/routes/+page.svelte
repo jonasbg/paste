@@ -78,7 +78,7 @@
 			passphraseEta = '';
 		}
 
-		if (passphraseDisplayProgress !== passphraseDownloadProgress) {
+		if (passphraseDisplayProgress !== passphraseDownloadProgress || isPassphraseDownloading) {
 			passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
 		}
 	}

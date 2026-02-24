@@ -42,7 +42,7 @@
 			eta = '';
 		}
 
-		if (displayProgress !== progress) {
+		if (displayProgress !== progress || (isVisible && !isComplete)) {
 			animationFrame = requestAnimationFrame(updateDisplayProgress);
 		}
 	}

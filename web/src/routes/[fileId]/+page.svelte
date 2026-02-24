@@ -55,7 +55,7 @@
 			eta = '';
 		}
 
-		if (displayProgress !== downloadProgress) {
+		if (displayProgress !== downloadProgress || isDownloading) {
 			animationFrame = requestAnimationFrame(animateProgress);
 		}
 	}

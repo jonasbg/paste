@@ -60,13 +60,27 @@ export async function uploadEncryptedFile(
         let uploadedBytes = 0;
         let currentFileId: string | null = null;
         let cachedToken: string | null = null;
-        let lastProgress = 0;
-        let cipherId: number | null = null; // Track cipher ID
+        let cipherId: number | null = null;
+
+        // Smooth intra-chunk progress interpolation
+        let lastChunkDuration = 0; // ms it took to upload+ack the previous chunk
+        let chunkSendTime = 0;     // when we sent the current chunk
+        let chunkStartBytes = 0;   // uploadedBytes value at chunk send time
+        let chunkByteSize = 0;     // plain bytes in the current chunk
+        let progressTimer: ReturnType<typeof setInterval> | null = null;
 
         ws.binaryType = 'arraybuffer';
 
+        const stopProgressTimer = () => {
+            if (progressTimer !== null) {
+                clearInterval(progressTimer);
+                progressTimer = null;
+            }
+        };
+
         // Cleanup function
         const cleanup = () => {
+            stopProgressTimer();
             if (cipherId !== null && wasmInstance.disposeCipher) {
                 wasmInstance.disposeCipher(cipherId);
                 cipherId = null;
@@ -127,12 +141,13 @@ export async function uploadEncryptedFile(
                     ws.send(streamResult.iv);
                     await sendNextChunk();
                 } else if (response.ack) {
+                    stopProgressTimer();
+                    if (chunkSendTime > 0) {
+                        lastChunkDuration = Date.now() - chunkSendTime;
+                    }
                     uploadedBytes += response.ack;
                     const progress = Math.round((uploadedBytes / file.size) * 100);
-                    if (progress >= lastProgress + 5 || uploadedBytes === file.size) {
-                        await onProgress(progress, `Laster opp...`);
-                        lastProgress = progress;
-                    }
+                    await onProgress(progress, `Laster opp...`);
                     await sendNextChunk();
                 }
 
@@ -164,10 +179,25 @@ export async function uploadEncryptedFile(
                 const chunk = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
                 const isLastChunk = fileOffset + chunkSize >= file.size;
                 const encryptedChunk = wasmInstance.encryptChunk(cipherId, new Uint8Array(chunk), isLastChunk);
-                ws.send(encryptedChunk);
+
+                chunkSendTime = Date.now();
+                chunkStartBytes = uploadedBytes;
+                chunkByteSize = chunk.byteLength;
                 fileOffset += chunk.byteLength;
-            }
-            else if (fileOffset >= file.size) {
+
+                ws.send(encryptedChunk);
+
+                // Interpolate progress within this chunk every 100ms using the previous chunk's speed
+                if (!isLastChunk && lastChunkDuration > 0) {
+                    progressTimer = setInterval(async () => {
+                        const elapsed = Date.now() - chunkSendTime;
+                        const fraction = Math.min(elapsed / lastChunkDuration, 0.95);
+                        const estimatedBytes = chunkStartBytes + chunkByteSize * fraction;
+                        const progress = Math.min(Math.round((estimatedBytes / file.size) * 100), 99);
+                        await onProgress(progress, `Laster opp...`);
+                    }, 100);
+                }
+            } else {
                 ws.send(new Uint8Array([0]));
             }
         }
