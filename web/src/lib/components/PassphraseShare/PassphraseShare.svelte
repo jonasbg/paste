@@ -99,6 +99,8 @@
 			</div>
 		</div>
 
+		<hr class="field-divider" />
+
 		<div class="field-row">
 			<label class="field-label">Nettadresse</label>
 			<div class="input-group">
@@ -150,20 +152,23 @@
 	.badge {
 		font-size: 0.7rem;
 		font-weight: 600;
-		padding: 0.15rem 0.5rem;
+		padding: 0.2rem 0.6rem;
 		border-radius: 99px;
-		letter-spacing: 0.02em;
+		letter-spacing: 0.03em;
 		text-transform: uppercase;
+		border: 1px solid transparent;
 	}
 
 	.badge-easy {
-		background: rgba(var(--primary-green-rgb), 0.12);
-		color: var(--primary-green);
+		background: #bbf7d0;
+		color: #065f46;
+		border-color: #6ee7b7;
 	}
 
 	.badge-secure {
-		background: rgba(37, 99, 235, 0.1);
-		color: #2563eb;
+		background: #bfdbfe;
+		color: #1e40af;
+		border-color: #93c5fd;
 	}
 
 	.hint {
@@ -173,8 +178,14 @@
 		line-height: 1.4;
 	}
 
+	.field-divider {
+		border: none;
+		border-top: 1px solid #e0e0e0;
+		margin: 1.25rem 0;
+	}
+
 	.field-row {
-		margin-bottom: 0.5rem;
+		margin-bottom: 0.95rem;
 	}
 
 	.field-row:last-child {
