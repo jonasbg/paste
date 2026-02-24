@@ -354,22 +354,8 @@
 								class="download-btn"
 								on:click={initiateDownload}
 								disabled={!canDownload}
-								title="Last ned"
 							>
-								<svg
-									width="18"
-									height="18"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="2.5"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-								>
-									<polyline points="8 17 12 21 16 17" />
-									<line x1="12" y1="12" x2="12" y2="21" />
-									<path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29" />
-								</svg>
+								Last ned
 							</button>
 						{/if}
 					</div>
@@ -465,7 +451,7 @@
 	/* ── Unified 3-column file row ── */
 	.file-row {
 		display: grid;
-		grid-template-columns: 52px 1fr 44px;
+		grid-template-columns: 52px 1fr auto;
 		align-items: center;
 		gap: 1rem;
 		background: #fff;
@@ -586,31 +572,26 @@
 	}
 
 	.download-btn {
-		width: 36px;
-		height: 36px;
-		border-radius: 50%;
-		border: 1px solid #e5e7eb;
-		background: #fff;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+		background-color: var(--primary-green);
+		color: white;
+		border: none;
+		border-radius: 8px;
+		padding: 0.625rem 1.25rem;
+		font-size: 0.9375rem;
+		font-weight: 500;
+		font-family: inherit;
 		cursor: pointer;
-		color: var(--primary-green);
-		transition: all 0.15s ease;
-		padding: 0;
-		flex-shrink: 0;
+		white-space: nowrap;
+		transition: all 0.2s ease;
 	}
 
 	.download-btn:hover {
-		background: var(--primary-green);
-		border-color: var(--primary-green);
-		color: #fff;
-		box-shadow: 0 2px 8px rgba(64, 184, 123, 0.35);
-		transform: scale(1.05);
+		transform: translateY(-1px);
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 	}
 
 	.download-btn:disabled {
-		opacity: 0.4;
+		opacity: 0.6;
 		cursor: not-allowed;
 		transform: none;
 		box-shadow: none;
