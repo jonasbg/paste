@@ -5,12 +5,10 @@
 	import { initWasm } from '$lib/utils/wasm-loader';
 	import { streamDownloadAndDecrypt, fetchMetadata } from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
-	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
-	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
+	import { fly } from 'svelte/transition';
 
 	let encryptionKey: string = '';
 	let manualKeyInput: string = '';
@@ -25,10 +23,58 @@
 	let isLoading = true;
 	let deletionError: string | null = null;
 
-	// Function to validate and extract key from input
+	// Smooth progress animation
+	let displayProgress = 0;
+	let animationFrame: number;
+	let downloadStartTime = 0;
+	let eta = '';
+
+	function formatEta(seconds: number): string {
+		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
+		if (seconds < 60) return `${Math.ceil(seconds)}s igjen`;
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.ceil(seconds % 60);
+		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} igjen`;
+	}
+
+	function animateProgress() {
+		const diff = downloadProgress - displayProgress;
+		if (Math.abs(diff) < 0.2) {
+			displayProgress = downloadProgress;
+		} else {
+			displayProgress += diff * 0.1;
+		}
+
+		if (displayProgress > 2 && displayProgress < 99 && downloadStartTime > 0) {
+			const elapsed = (Date.now() - downloadStartTime) / 1000;
+			if (elapsed > 0.5) {
+				const rate = displayProgress / elapsed;
+				eta = formatEta((100 - displayProgress) / rate);
+			}
+		} else if (displayProgress >= 99) {
+			eta = '';
+		}
+
+		if (displayProgress !== downloadProgress) {
+			animationFrame = requestAnimationFrame(animateProgress);
+		}
+	}
+
+	$: if (downloadProgress !== displayProgress) {
+		if (downloadStartTime === 0 && downloadProgress > 0) {
+			downloadStartTime = Date.now();
+		}
+		if (animationFrame) cancelAnimationFrame(animationFrame);
+		animationFrame = requestAnimationFrame(animateProgress);
+	}
+
+	$: if (isDownloadComplete) {
+		displayProgress = 100;
+		eta = '';
+	}
+
 	function validateAndExtractKey(input: string): string | null {
 		input = input.trim();
-
 		if (input.includes('://')) {
 			try {
 				const url = new URL(input);
@@ -38,21 +84,15 @@
 				return null;
 			}
 		}
-
 		const base64Regex = /^[A-Za-z0-9+/=_-]+$/;
-		if (base64Regex.test(input)) {
-			return input;
-		}
-
+		if (base64Regex.test(input)) return input;
 		return null;
 	}
 
 	async function getMetadata() {
 		try {
 			const fileId = $page.params.fileId;
-			// Generate token from encryption key
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
-
 			const metadataResponse = await fetchMetadata(fileId, encryptionKey, hmacToken);
 			metadata = metadataResponse.metadata;
 			fileSize = metadataResponse.size?.toString();
@@ -69,29 +109,24 @@
 		}
 	}
 
-	// Function to safely handle encryption key without exposing it in URL
 	function setEncryptionKey(key: string) {
 		encryptionKey = key;
-		// Clear any sensitive data from URL without adding to history
-		if (browser) {
-			replaceState('', window.location.pathname);
-		}
+		if (browser) replaceState('', window.location.pathname);
 	}
 
 	async function handleManualKeySubmit() {
 		if (!manualKeyInput.trim()) return;
-
 		const key = validateAndExtractKey(manualKeyInput.trim());
 		if (key) {
 			setEncryptionKey(key);
 			await getMetadata();
 		} else {
-			keyError = 'Invalid key or URL';
+			keyError = 'Ugyldig nøkkel eller URL';
 		}
 	}
 
 	async function initiateDownload() {
-		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
+		if (!encryptionKey || isDownloading || !metadata || metadata.error) return;
 		isDownloading = true;
 		downloadError = null;
 
@@ -99,7 +134,6 @@
 			const fileId = $page.params.fileId;
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-			// Use streamDownloadAndDecrypt instead of downloadAndDecryptFile
 			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
 				fileId,
 				encryptionKey,
@@ -110,7 +144,6 @@
 				}
 			);
 
-			// Read the stream and collect chunks
 			const reader = stream.getReader();
 			const chunks = [];
 			let receivedLength = 0;
@@ -124,22 +157,18 @@
 				}
 			}
 
-			// Check if any data was received
 			if (receivedLength === 0) {
 				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
 			}
 
-			// Create a Blob from the collected chunks
 			const blob = new Blob(chunks, {
 				type: fileMetadata.contentType || 'application/octet-stream'
 			});
 
-			// Verify the Blob has content
 			if (blob.size === 0) {
 				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
 			}
 
-			// Create and trigger the download
 			const url = window.URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
@@ -149,7 +178,6 @@
 			document.body.removeChild(a);
 			window.URL.revokeObjectURL(url);
 
-			// Attempt to delete the file from the server
 			try {
 				const deleteResponse = await fetch(`/api/delete/${fileId}`, {
 					method: 'DELETE',
@@ -159,28 +187,21 @@
 					}
 				});
 
-				// Clear sensitive data
 				encryptionKey = '';
 				manualKeyInput = '';
 
-				// Check if deletion was successful
 				if (deleteResponse.ok) {
 					isDownloadComplete = true;
 					deletionError = null;
 				} else {
 					deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
-					console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
 				}
 			} catch (err) {
-				console.error('Error deleting file:', err);
 				deletionError =
 					'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
 			}
 
-			// Clean the URL in the browser
-			if (browser) {
-				window.history.replaceState({}, '', '/');
-			}
+			if (browser) window.history.replaceState({}, '', '/');
 		} catch (error) {
 			console.error('Download error:', error);
 			downloadError = (error as Error).message;
@@ -195,12 +216,10 @@
 		if (!browser) return;
 
 		try {
-			// const { initWasm } = await import('$lib/utils/wasm-loader');
 			await initWasm();
 
 			const fileId = $page.params.fileId;
 
-			// Check sessionStorage for pre-stored key (from passphrase flow)
 			const storedKey = sessionStorage.getItem('paste_key_' + fileId);
 			if (storedKey) {
 				sessionStorage.removeItem('paste_key_' + fileId);
@@ -210,16 +229,15 @@
 			}
 
 			if (window.location.hash) {
-				// Check if a hash exists
 				const urlParams = new URLSearchParams(window.location.hash.slice(1));
 				const key = urlParams.get('key');
 				if (key) {
 					const validatedKey = validateAndExtractKey(key);
 					if (validatedKey) {
 						setEncryptionKey(validatedKey);
-						await getMetadata(); // Get metadata on mount as well
+						await getMetadata();
 					} else {
-						keyError = 'Ugyldig nøkkel eller URL'; // More generic
+						keyError = 'Ugyldig nøkkel eller URL';
 					}
 				}
 			}
@@ -233,110 +251,185 @@
 
 	$: canDownload = !!(
 		metadata &&
-		!metadata.error && // Ensure metadata is available and has no errors
+		!metadata.error &&
 		!isDownloading &&
 		!isDownloadComplete &&
 		encryptionKey
 	);
 
-	// Reset keyError whenever manualKeyInput changes
 	$: manualKeyInput, (keyError = null);
 </script>
 
-<div class="container">
-	<div class="download-container">
-		<h1><a href="/"><span>Sikker</span></a> fildeling</h1>
-		<p class="intro-text">
-			Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt
-			delt med deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig
-			dekrypteringsnøkkel kan få tilgang til innholdet. Etter vellykket nedlasting blir filen
-			automatisk slettet fra våre servere.
-		</p>
+<div class="page-container">
+	<div class="container">
+		<div class="download-section">
+			<h1><a href="/"><span>Sikker</span></a> fildeling</h1>
+			<p class="description">
+				Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt
+				delt med deg. Alle filer er ende-til-ende-kryptert. Etter vellykket nedlasting blir filen
+				automatisk slettet fra våre servere.
+			</p>
 
-		{#if isLoading}
-			<LoadingSpinner message="" />
-		{/if}
+			{#if isLoading}
+				<LoadingSpinner message="" />
+			{/if}
 
-		{#if downloadError}
-			<ErrorMessage message={downloadError} />
-		{:else if metadata?.error}
-			<ErrorMessage message={metadata.error} />
-		{:else}
-			{#if metadata?.filename && !isDownloadComplete && !isDownloading}
-				<FileInfo fileName={metadata.filename} {fileSize} />
-			{/if}
-			{#if metadata?.filename && !isDownloadComplete}
-				{#if !isDownloading}
-					<button class="button" on:click={initiateDownload} disabled={!canDownload}>
-						{isDownloading ? 'Laster ned...' : 'Last ned'}
-					</button>
-				{/if}
-			{/if}
-			{#if isDownloading || isDownloadComplete}
-				<ProgressBar
-					progress={downloadProgress}
-					message={downloadMessage}
-					isVisible={isDownloading}
-					fileName={metadata?.filename || ''}
-					{fileSize}
-				/>
-			{/if}
-			{#if isDownloadComplete}
+			{#if downloadError}
+				<ErrorMessage message={downloadError} />
+			{:else if metadata?.error}
+				<ErrorMessage message={metadata.error} />
+			{:else if metadata?.filename}
+				<!-- Unified 3-column file row -->
+				<div class="file-row" in:fly={{ y: 16, duration: 280 }}>
+					<!-- Left: file icon -->
+					<div class="col-icon">
+						<svg
+							width="32"
+							height="32"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+							<polyline points="13 2 13 9 20 9" />
+						</svg>
+					</div>
+
+					<!-- Middle: name · size · eta · progress -->
+					<div class="col-info">
+						<div class="file-name">{metadata.filename}</div>
+						<div class="file-meta">
+							<div class="meta-left">
+								{#if fileSize}
+									<span class="size">{fileSize}</span>
+								{/if}
+								{#if eta && isDownloading}
+									<span class="dot">·</span>
+									<span class="eta">{eta}</span>
+								{/if}
+							</div>
+							{#if isDownloading || isDownloadComplete}
+								<span class="pct">{Math.round(displayProgress)}%</span>
+							{/if}
+						</div>
+						{#if isDownloading || isDownloadComplete}
+							<div class="progress-track">
+								<div
+									class="progress-fill"
+									class:complete={isDownloadComplete}
+									style="width: {displayProgress}%"
+								/>
+							</div>
+						{/if}
+					</div>
+
+					<!-- Right: download button → spinner → checkmark -->
+					<div class="col-action">
+						{#if isDownloadComplete}
+							<div class="checkmark" title="Nedlasting fullført">
+								<svg
+									fill="currentColor"
+									width="28"
+									height="28"
+									viewBox="-2.4 -2.4 28.80 28.80"
+									xmlns="http://www.w3.org/2000/svg"
+								>
+									<g data-name="Layer 2">
+										<g data-name="checkmark-circle-2">
+											<rect width="24" height="24" opacity="0"></rect>
+											<path
+												d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm4.3 7.61l-4.57 6a1 1 0 0 1-.79.39 1 1 0 0 1-.79-.38l-2.44-3.11a1 1 0 0 1 1.58-1.23l1.63 2.08 3.78-5a1 1 0 1 1 1.6 1.22z"
+											></path>
+										</g>
+									</g>
+								</svg>
+							</div>
+						{:else if isDownloading}
+							<div class="spinner" aria-label="Laster ned..."></div>
+						{:else}
+							<button
+								class="download-btn"
+								on:click={initiateDownload}
+								disabled={!canDownload}
+								title="Last ned"
+							>
+								<svg
+									width="18"
+									height="18"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<polyline points="8 17 12 21 16 17" />
+									<line x1="12" y1="12" x2="12" y2="21" />
+									<path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29" />
+								</svg>
+							</button>
+						{/if}
+					</div>
+				</div>
+
 				{#if deletionError}
 					<ErrorMessage message={deletionError} />
-				{:else}
-					<SuccessMessage
-						message="Filen er lastet ned og sikkert slettet fra serveren vår. Takk for at du bruker vår sikre fildelingstjeneste!"
-					/>
 				{/if}
 			{/if}
-		{/if}
 
-		{#if !encryptionKey && !isDownloadComplete && !isLoading}
-			<form class="key-prompt" on:submit|preventDefault={handleManualKeySubmit}>
-				<h2>Dekrypteringsnøkkel kreves</h2>
-				<p>
-					Du trenger en dekrypteringsnøkkel for å få tilgang til denne filen. Vennligst lim inn hele
-					lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut. Alternativt kan du lime
-					inn dekrypteringsnøkkelen direkte under.
-				</p>
-				<div class="input-group">
-					<input
-						type="text"
-						class="key-input"
-						placeholder="Lim inn dekrypteringsnøkkel eller hele URL-en"
-						bind:value={manualKeyInput}
-						disabled={isDownloading}
-					/>
-					<button
-						type="submit"
-						class="decrypt-button"
-						disabled={!manualKeyInput.trim() || isDownloading}
-					>
-						Dekrypter
-					</button>
-				</div>
-				{#if keyError}
-					<div class="error-message">
-						{keyError}
+			{#if !encryptionKey && !isDownloadComplete && !isLoading}
+				<form class="key-prompt" on:submit|preventDefault={handleManualKeySubmit}>
+					<h3>Dekrypteringsnøkkel kreves</h3>
+					<p class="hint">
+						Lim inn hele lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut.
+						Alternativt kan du lime inn dekrypteringsnøkkelen direkte.
+					</p>
+					<div class="input-group">
+						<input
+							type="text"
+							class="key-input"
+							placeholder="Lim inn dekrypteringsnøkkel eller hele URL-en"
+							bind:value={manualKeyInput}
+							disabled={isDownloading}
+						/>
+						<button
+							type="submit"
+							class="button"
+							disabled={!manualKeyInput.trim() || isDownloading}
+						>
+							Dekrypter
+						</button>
 					</div>
-				{/if}
-			</form>
-		{/if}
+					{#if keyError}
+						<p class="key-error">{keyError}</p>
+					{/if}
+				</form>
+			{/if}
+		</div>
 	</div>
 </div>
 
 <style>
+	.page-container {
+		min-height: 90vh;
+		display: flex;
+		margin: 0;
+		padding: 0;
+	}
+
 	.container {
 		flex: 1;
-		max-width: 1200px;
+		max-width: 860px;
 		margin: 0 auto;
 		padding: 2rem;
 		display: flex;
 		flex-direction: column;
 	}
 
-	.download-container {
+	.download-section {
 		flex: 1;
 		display: flex;
 		flex-direction: column;
@@ -345,7 +438,7 @@
 	h1 {
 		font-size: 2.5rem;
 		font-weight: 500;
-		margin-bottom: 1.5rem;
+		margin-bottom: 0.75rem;
 	}
 
 	h1 a {
@@ -362,38 +455,187 @@
 		text-decoration: underline;
 	}
 
+	.description {
+		font-size: 1rem;
+		line-height: 1.6;
+		color: #555;
+		margin-bottom: 1.5rem;
+	}
+
+	/* ── Unified 3-column file row ── */
+	.file-row {
+		display: grid;
+		grid-template-columns: 52px 1fr 44px;
+		align-items: center;
+		gap: 1rem;
+		background: #fff;
+		border: 1px solid #e5e7eb;
+		border-radius: 10px;
+		padding: 1rem 1.25rem;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	}
+
+	.col-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: #9ca3af;
+	}
+
+	.col-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+	}
+
+	.file-name {
+		font-weight: 600;
+		font-size: 0.9375rem;
+		color: #111827;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.file-meta {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.8125rem;
+		color: #6b7280;
+	}
+
+	.meta-left {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+	}
+
+	.dot {
+		color: #d1d5db;
+	}
+
+	.pct {
+		font-variant-numeric: tabular-nums;
+		font-weight: 500;
+		color: #374151;
+	}
+
+	.progress-track {
+		width: 100%;
+		height: 5px;
+		background: #e5e7eb;
+		border-radius: 99px;
+		overflow: hidden;
+		margin-top: 0.1rem;
+	}
+
+	.progress-fill {
+		height: 100%;
+		background: var(--primary-green);
+		border-radius: 99px;
+		transition: width 0.15s ease;
+		background-image: linear-gradient(
+			90deg,
+			rgba(255, 255, 255, 0) 0%,
+			rgba(255, 255, 255, 0.22) 50%,
+			rgba(255, 255, 255, 0) 100%
+		);
+		background-size: 200% 100%;
+		animation: shimmer 1.5s linear infinite;
+	}
+
+	.progress-fill.complete {
+		animation: none;
+	}
+
+	@keyframes shimmer {
+		to {
+			background-position: 200% 0;
+		}
+	}
+
+	.col-action {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.checkmark {
+		color: var(--primary-green, #22c55e);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.spinner {
+		width: 28px;
+		height: 28px;
+		border: 3px solid #e5e7eb;
+		border-top-color: var(--primary-green);
+		border-radius: 50%;
+		animation: spin 0.75s linear infinite;
+		flex-shrink: 0;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.download-btn {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		border: 1px solid #e5e7eb;
+		background: #fff;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		color: var(--primary-green);
+		transition: all 0.15s ease;
+		padding: 0;
+		flex-shrink: 0;
+	}
+
+	.download-btn:hover {
+		background: var(--primary-green);
+		border-color: var(--primary-green);
+		color: #fff;
+		box-shadow: 0 2px 8px rgba(64, 184, 123, 0.35);
+		transform: scale(1.05);
+	}
+
+	.download-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+		transform: none;
+		box-shadow: none;
+	}
+
+	/* ── Key prompt ── */
 	.key-prompt {
 		background: #fff;
-		padding: 1rem;
-		border-radius: var(--border-radius);
-		border: 1px solid #e0e0e0;
-		margin-bottom: 1rem;
+		padding: 1.25rem;
+		border-radius: 10px;
+		border: 1px solid #e5e7eb;
+		margin-top: 1.5rem;
 	}
 
-	.key-prompt h2 {
-		font-size: 1.25rem;
-		margin: 0 0 1rem 0;
-		font-weight: 500;
+	.key-prompt h3 {
+		font-size: 0.9375rem;
+		margin: 0 0 0.375rem 0;
+		font-weight: 600;
+		color: #111827;
 	}
 
-	.key-prompt p {
-		margin-bottom: 1rem;
-		color: #666;
-	}
-
-	.key-input {
-		width: 100%;
-		padding: 0.75rem;
-		border: 1px solid #e0e0e0;
-		border-radius: var(--border-radius);
-		font-family: inherit;
-		background: #f5f5f5;
-	}
-
-	.key-input:focus {
-		outline: none;
-		border-color: var(--primary-green);
-		box-shadow: 0 0 0 2px rgba(64, 184, 123, 0.2);
+	.hint {
+		font-size: 0.8125rem;
+		color: #6b7280;
+		margin-bottom: 0.875rem;
 	}
 
 	.input-group {
@@ -401,44 +643,42 @@
 		gap: 0.5rem;
 	}
 
-	.decrypt-button {
-		white-space: nowrap;
-		padding: 0.75rem 1.5rem;
-		background-color: var(--primary-green);
-		color: white;
-		border: none;
-		border-radius: var(--border-radius);
-		cursor: pointer;
-		font-weight: 500;
+	.key-input {
+		flex: 1;
+		padding: 0.625rem 0.875rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		font-family: inherit;
+		font-size: 0.9375rem;
+		background: #f9fafb;
+		min-width: 0;
+		color: #111827;
 	}
 
-	.decrypt-button:disabled {
-		background-color: #ccc;
-		cursor: not-allowed;
+	.key-input:focus {
+		outline: none;
+		border-color: var(--primary-green);
+		box-shadow: 0 0 0 3px rgba(64, 184, 123, 0.15);
+		background: #fff;
 	}
 
-	.error-message {
+	.key-error {
+		font-size: 0.8125rem;
 		color: var(--error-red, #dc3545);
-		margin-top: 0.5rem;
-		font-size: 0.875rem;
-	}
-	.intro-text {
-		color: #666;
-		margin: 1rem 0 2rem 0;
-		line-height: 1.5;
-		max-width: 800px;
+		margin: 0.5rem 0 0 0;
 	}
 
 	.button {
 		background-color: var(--primary-green);
 		color: white;
 		border: none;
-		border-radius: 6px;
-		padding: 0.75rem 1.5rem;
-		font-size: 1rem;
+		border-radius: 8px;
+		padding: 0.625rem 1.25rem;
+		font-size: 0.9375rem;
+		font-weight: 500;
 		cursor: pointer;
 		transition: all 0.2s ease;
-		max-width: 8em;
+		white-space: nowrap;
 	}
 
 	.button:hover {
@@ -447,38 +687,32 @@
 	}
 
 	.button:disabled {
-		opacity: 0.7;
+		opacity: 0.6;
 		cursor: not-allowed;
+		transform: none;
+		box-shadow: none;
 	}
 
-	/* Responsive styles */
-	@media (max-width: 768px) {
+	/* ── Mobile ── */
+	@media (max-width: 640px) {
 		.container {
 			padding: 1rem;
 		}
 
 		h1 {
-			font-size: 2rem;
-			margin-bottom: 1rem;
-		}
-
-		.intro-text {
-			font-size: 1rem;
-			margin: 1rem 0 1.5rem 0;
-		}
-
-		.key-prompt {
-			padding: 1.5rem;
-			margin-top: 1.5rem;
+			font-size: 1.75rem;
 		}
 
 		.input-group {
 			flex-direction: column;
-			gap: 0.75rem;
 		}
 
-		.decrypt-button {
+		.button {
 			width: 100%;
+		}
+
+		.key-input {
+			font-size: 16px;
 		}
 	}
 </style>

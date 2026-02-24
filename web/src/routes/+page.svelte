@@ -509,14 +509,18 @@
 		align-items: center;
 		justify-content: center;
 		gap: 0.6rem;
-		border: 2px dashed #d1d5db;
+		border: 1px solid #d1d5db;
 		border-radius: 14px;
 		padding: 3rem 2rem;
 		cursor: pointer;
-		background: #fafafa;
+		background: #f3f4f6;
+		box-shadow:
+			inset 0 2px 6px rgba(0, 0, 0, 0.07),
+			inset 0 1px 2px rgba(0, 0, 0, 0.04);
 		transition:
 			border-color 0.2s ease,
 			background 0.2s ease,
+			box-shadow 0.2s ease,
 			opacity 0.2s ease;
 		text-align: center;
 		user-select: none;
@@ -525,7 +529,10 @@
 
 	.drop-zone:hover {
 		border-color: var(--primary-green);
-		background: rgba(64, 184, 123, 0.04);
+		background: #eef8f3;
+		box-shadow:
+			inset 0 2px 8px rgba(0, 0, 0, 0.09),
+			inset 0 1px 3px rgba(0, 0, 0, 0.05);
 	}
 
 	.drop-zone:focus-visible {
@@ -535,8 +542,10 @@
 
 	.drop-zone.dragging {
 		border-color: var(--primary-green);
-		border-style: solid;
-		background: rgba(64, 184, 123, 0.07);
+		background: #e8f5ee;
+		box-shadow:
+			inset 0 3px 10px rgba(0, 0, 0, 0.1),
+			inset 0 1px 4px rgba(64, 184, 123, 0.15);
 	}
 
 	.drop-zone.uploading {
