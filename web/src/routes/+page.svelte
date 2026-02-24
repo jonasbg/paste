@@ -178,6 +178,7 @@
 			uploadError = error instanceof Error ? error.message : String(error);
 			uploadProgress = 0;
 			uploadMessage = '';
+			generatedPassphrase = generatePassphrase(); // fresh passphrase → new fileId avoids server-side collision
 		} finally {
 			isUploading = false;
 		}
