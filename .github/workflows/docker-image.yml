@@ -76,6 +76,7 @@ jobs:
 
       # Helm setup
       - name: Install Helm
+        if: github.ref == 'refs/heads/main'
         uses: azure/setup-helm@v3
 
       # Push Helm chart to GitHub Container Registry
