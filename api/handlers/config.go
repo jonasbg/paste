@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jonasbg/paste/crypto"
 )
 
 var GlobalConfig Config
@@ -168,26 +167,3 @@ func isValidFileSize(s string) bool {
 	return false
 }
 
-// GetPassphrase returns a handler that generates a random passphrase
-func GetPassphrase() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		numWords := 4
-		if n := c.Query("words"); n != "" {
-			parsed, err := strconv.Atoi(n)
-			if err == nil {
-				if parsed < 4 {
-					parsed = 4
-				} else if parsed > 8 {
-					parsed = 8
-				}
-				numWords = parsed
-			}
-		}
-		passphrase, err := crypto.GeneratePassphrase(numWords)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate passphrase"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"passphrase": passphrase})
-	}
-}

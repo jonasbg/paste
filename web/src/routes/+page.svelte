@@ -4,10 +4,8 @@
 
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
-	import {
-		uploadEncryptedFile,
-		generatePassphraseFromServer
-	} from '$lib/services/encryptionService';
+	import { uploadEncryptedFile } from '$lib/services/encryptionService';
+	import { generatePassphrase } from '$lib/utils/wordlist';
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import PassphraseShare from '$lib/components/PassphraseShare/PassphraseShare.svelte';
@@ -91,7 +89,7 @@
 
 			// Ensure passphrase is available
 			if (!generatedPassphrase) {
-				generatedPassphrase = await generatePassphraseFromServer();
+				generatedPassphrase = generatePassphrase();
 			}
 
 			const wasm = getWasmInstance();
@@ -168,10 +166,8 @@
 		fileSizeError = '';
 
 		if (fileInput) fileInput.value = '';
-		// Pre-fetch a new passphrase for the next upload
-		generatePassphraseFromServer()
-			.then((p) => (generatedPassphrase = p))
-			.catch(() => {});
+		// Generate a new passphrase for the next upload
+		generatedPassphrase = generatePassphrase();
 		setTimeout(() => {}, 100);
 	}
 
@@ -210,10 +206,8 @@
 			}
 		}
 
-		// Pre-fetch passphrase so it's ready when user clicks upload
-		generatePassphraseFromServer()
-			.then((p) => (generatedPassphrase = p))
-			.catch(() => {});
+		// Generate passphrase client-side so it's ready when user clicks upload
+		generatedPassphrase = generatePassphrase();
 
 		window.addEventListener('paste', handlePaste);
 	});

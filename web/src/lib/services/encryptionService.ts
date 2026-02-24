@@ -23,13 +23,6 @@ export function generateKey(): string | null {
     return wasmInstance.generateKey(keySize);
 }
 
-export async function generatePassphraseFromServer(numWords = 4): Promise<string> {
-    const response = await fetch(`/api/passphrase?words=${numWords}`);
-    if (!response.ok) throw new Error('Failed to generate passphrase');
-    const data = await response.json();
-    return data.passphrase;
-}
-
 export async function uploadEncryptedFile(
     file: File,
     key: string,
