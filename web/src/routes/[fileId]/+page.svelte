@@ -540,6 +540,12 @@
 		animation: none;
 	}
 
+	@media (prefers-color-scheme: dark) {
+		.progress-track {
+			background: #374151;
+		}
+	}
+
 	@keyframes shimmer {
 		to {
 			background-position: 200% 0;

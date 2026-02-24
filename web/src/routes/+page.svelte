@@ -936,6 +936,12 @@
 		margin-top: 0.1rem;
 	}
 
+	@media (prefers-color-scheme: dark) {
+		.progress-track {
+			background: #374151;
+		}
+	}
+
 	.progress-fill {
 		height: 100%;
 		background: var(--primary-green);
