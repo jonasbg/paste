@@ -175,6 +175,10 @@
 		} catch (error) {
 			fileSizeError = 'Upload Error: ' + (error instanceof Error ? error.message : String(error));
 			selectedFile = null;
+			generatedPassphrase = '';
+			uploadProgress = 0;
+			uploadMessage = '';
+			if (fileInput) fileInput.value = '';
 		} finally {
 			isUploading = false;
 		}
