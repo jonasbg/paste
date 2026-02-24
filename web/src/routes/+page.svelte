@@ -21,6 +21,7 @@
 	let sharePassphrase = '';
 	let shareUrl = '';
 	let fileSizeError = '';
+	let uploadError = '';
 	let generatedPassphrase = '';
 
 	// Passphrase download form
@@ -145,6 +146,7 @@
 
 		try {
 			isUploading = true;
+			uploadError = '';
 			const { initWasm, getWasmInstance } = await import('$lib/utils/wasm-loader');
 			await initWasm();
 
@@ -173,12 +175,9 @@
 			shareUrl = `${window.location.origin}/${fileId}#key=${key}`;
 			cleanupMemoryReferences();
 		} catch (error) {
-			fileSizeError = 'Upload Error: ' + (error instanceof Error ? error.message : String(error));
-			selectedFile = null;
-			generatedPassphrase = '';
+			uploadError = error instanceof Error ? error.message : String(error);
 			uploadProgress = 0;
 			uploadMessage = '';
-			if (fileInput) fileInput.value = '';
 		} finally {
 			isUploading = false;
 		}
@@ -295,8 +294,16 @@
 		uploadProgress = 0;
 		uploadMessage = '';
 		fileSizeError = '';
+		uploadError = '';
 		if (fileInput) fileInput.value = '';
 		generatedPassphrase = generatePassphrase();
+	}
+
+	function dismissUploadError() {
+		uploadError = '';
+		selectedFile = null;
+		generatedPassphrase = generatePassphrase();
+		if (fileInput) fileInput.value = '';
 	}
 
 	onMount(async () => {
@@ -455,8 +462,51 @@
 					<ErrorMessage message={fileSizeError} />
 				{/if}
 
-				<!-- Row 1: Drop zone — slides away once a passphrase file is resolved -->
-				{#if !passphraseFileMetadata}
+				{#if uploadError && selectedFile}
+					<div class="retry-row" in:fly={{ y: 6, duration: 200 }}>
+						<div class="retry-left">
+							<svg
+								width="20"
+								height="20"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<circle cx="12" cy="12" r="10" />
+								<line x1="12" y1="8" x2="12" y2="12" />
+								<line x1="12" y1="16" x2="12.01" y2="16" />
+							</svg>
+							<div class="retry-text">
+								<span class="retry-filename">{selectedFile.name}</span>
+								<span class="retry-errmsg">{uploadError}</span>
+							</div>
+						</div>
+						<div class="retry-actions">
+							<button class="btn-retry" on:click={handleUpload}>Prøv igjen</button>
+							<button class="btn-dismiss-retry" on:click={dismissUploadError} aria-label="Avbryt">
+								<svg
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<line x1="18" y1="6" x2="6" y2="18" />
+									<line x1="6" y1="6" x2="18" y2="18" />
+								</svg>
+							</button>
+						</div>
+					</div>
+				{/if}
+
+				<!-- Row 1: Drop zone — slides away once a passphrase file is resolved or on upload error -->
+				{#if !passphraseFileMetadata && !uploadError}
 					<div
 						class="drop-zone"
 						class:dragging={isDragging}
@@ -1028,6 +1078,109 @@
 
 	.download-error {
 		margin-top: 0.75rem;
+	}
+
+	/* ── Upload retry row ── */
+	.retry-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.875rem 1rem;
+		border: 1px solid #fca5a5;
+		border-radius: 10px;
+		background: #fff5f5;
+		margin-bottom: 0.75rem;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.retry-row {
+			background: #2d1a1a;
+			border-color: #7f1d1d;
+		}
+	}
+
+	.retry-left {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		min-width: 0;
+		color: #dc2626;
+		flex: 1;
+	}
+
+	.retry-left svg {
+		flex-shrink: 0;
+		color: #dc2626;
+	}
+
+	.retry-text {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.retry-filename {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: #111827;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.retry-filename {
+			color: #f3f4f6;
+		}
+	}
+
+	.retry-errmsg {
+		font-size: 0.8125rem;
+		color: #dc2626;
+	}
+
+	.retry-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-shrink: 0;
+	}
+
+	.btn-retry {
+		background-color: var(--primary-green);
+		color: white;
+		border: none;
+		border-radius: 8px;
+		padding: 0.5rem 1rem;
+		font-size: 0.875rem;
+		font-weight: 500;
+		font-family: inherit;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: all 0.2s ease;
+	}
+
+	.btn-retry:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+	}
+
+	.btn-dismiss-retry {
+		background: none;
+		border: none;
+		padding: 0.25rem;
+		cursor: pointer;
+		color: #9ca3af;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+		transition: color 0.15s ease;
+	}
+
+	.btn-dismiss-retry:hover {
+		color: #374151;
 	}
 
 	/* ── Mobile ── */
