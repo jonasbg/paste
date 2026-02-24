@@ -56,8 +56,52 @@ func main() {
 		"decryptMetadata":        js.FuncOf(decryptMetadata),
 		"encrypt":                js.FuncOf(encrypt),
 		"generateHmacToken":      js.FuncOf(generateHmacToken),
+		"deriveFromPassphrase":   js.FuncOf(deriveFromPassphrase),
 	})
 	<-c
+}
+
+func deriveFromPassphrase(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return handleError(errors.New("passphrase required"))
+	}
+	passphrase := args[0].String()
+	keySizeBits := 128
+	if len(args) >= 2 && args[1].Type() == js.TypeNumber {
+		keySizeBits = args[1].Int()
+	}
+	var keySize int
+	switch keySizeBits {
+	case 192:
+		keySize = 24
+	case 256:
+		keySize = 32
+	default:
+		keySize = 16
+	}
+
+	ikm := []byte(passphrase)
+	salt := []byte{}
+
+	fileIDReader := hkdf.New(sha256.New, ikm, salt, []byte("paste-v1-file-id"))
+	fileIDBytes := make([]byte, 16)
+	if _, err := io.ReadFull(fileIDReader, fileIDBytes); err != nil {
+		return handleError(err)
+	}
+
+	keyReader := hkdf.New(sha256.New, ikm, salt, []byte("paste-v1-encryption-key"))
+	key := make([]byte, keySize)
+	if _, err := io.ReadFull(keyReader, key); err != nil {
+		return handleError(err)
+	}
+
+	fileID := fmt.Sprintf("%x", fileIDBytes)
+	keyBase64 := base64.RawURLEncoding.EncodeToString(key)
+
+	return js.ValueOf(map[string]interface{}{
+		"fileId": fileID,
+		"key":    keyBase64,
+	})
 }
 
 func generateHmacToken(_ js.Value, args []js.Value) interface{} {

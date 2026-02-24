@@ -6,12 +6,15 @@ require (
 	github.com/gin-contrib/gzip v1.2.5
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/jonasbg/paste/crypto v0.0.0-00010101000000-000000000000
 	golang.org/x/sys v0.40.0
 	golang.org/x/time v0.14.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 	modernc.org/sqlite v1.44.3
 )
+
+replace github.com/jonasbg/paste/crypto => ../crypto
 
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
@@ -53,4 +56,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-

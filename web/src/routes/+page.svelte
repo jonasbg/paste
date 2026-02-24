@@ -4,10 +4,11 @@
 
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
-	import { generateKey, uploadEncryptedFile } from '$lib/services/encryptionService';
+	import { generateKey, uploadEncryptedFile, generatePassphraseFromServer } from '$lib/services/encryptionService';
 	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import UrlShare from '$lib/components/UrlShare/UrlShare.svelte';
+	import PassphraseShare from '$lib/components/PassphraseShare/PassphraseShare.svelte';
 	import { replaceState } from '$app/navigation';
 	import { fade } from 'svelte/transition';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -21,6 +22,58 @@
 	let uploadMessage = '';
 	let shareUrl = '';
 	let fileSizeError = '';
+
+	// Passphrase upload mode
+	let usePassphrase = false;
+	let generatedPassphrase = '';
+	let sharePassphrase = '';
+
+	// Passphrase download section
+	let passphraseInput = '';
+	let passphraseError = '';
+	let isDerivingPassphrase = false;
+
+	async function togglePassphrase() {
+		usePassphrase = !usePassphrase;
+		if (usePassphrase && !generatedPassphrase) {
+			try {
+				generatedPassphrase = await generatePassphraseFromServer();
+			} catch {
+				usePassphrase = false;
+				fileSizeError = 'Kunne ikke generere løsenord. Prøv igjen.';
+			}
+		}
+	}
+
+	async function handlePassphraseDownload() {
+		const phrase = passphraseInput.trim();
+		if (!phrase) return;
+
+		isDerivingPassphrase = true;
+		passphraseError = '';
+
+		try {
+			const { initWasm, getWasmInstance } = await import('$lib/utils/wasm-loader');
+			await initWasm();
+			const wasm = getWasmInstance();
+			if (!wasm) throw new Error('WASM not initialized');
+
+			const config = $configStore.data;
+			const keySize = config ? parseInt(config.key_size) : 128;
+
+			const result = wasm.deriveFromPassphrase(phrase, keySize);
+			if (result instanceof Error) throw result;
+
+			const { fileId, key } = result as { fileId: string; key: string };
+			sessionStorage.setItem('paste_key_' + fileId, key);
+			goto('/' + fileId);
+		} catch (err) {
+			passphraseError = 'Ugyldig løsenord eller feil. Prøv igjen.';
+			console.error('Passphrase derive error:', err);
+		} finally {
+			isDerivingPassphrase = false;
+		}
+	}
 
 	async function handleFileSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
@@ -87,18 +140,45 @@
 		try {
 			isUploading = true;
 			// Lazy load WASM runtime just-in-time before generating key / encrypting
-			const { initWasm } = await import('$lib/utils/wasm-loader');
+			const { initWasm, getWasmInstance } = await import('$lib/utils/wasm-loader');
 			await initWasm();
-			const key = encryptionKey || generateKey();
-			if (!key) throw new Error('Failed to generate encryption key');
 
-			const result = await uploadEncryptedFile(selectedFile, key, async (progress, message) => {
-				uploadProgress = progress;
-				uploadMessage = message;
-			});
+			if (usePassphrase) {
+				// Passphrase mode: derive fileId + key from passphrase
+				const phrase = generatedPassphrase || await generatePassphraseFromServer();
+				if (!generatedPassphrase) generatedPassphrase = phrase;
 
-			shareUrl = `${window.location.origin}/${result.fileId}#key=${key}`;
-			replaceState('', shareUrl);
+				const wasm = getWasmInstance();
+				if (!wasm) throw new Error('WASM not initialized');
+
+				const keySize = parseInt($configStore.data.key_size) || 128;
+				const derived = wasm.deriveFromPassphrase(phrase, keySize);
+				if (derived instanceof Error) throw derived;
+
+				const { fileId, key } = derived as { fileId: string; key: string };
+
+				await uploadEncryptedFile(selectedFile, key, async (progress, message) => {
+					uploadProgress = progress;
+					uploadMessage = message;
+				}, fileId);
+
+				sharePassphrase = phrase;
+				shareUrl = '';
+			} else {
+				// Normal mode: random key
+				const key = encryptionKey || generateKey();
+				if (!key) throw new Error('Failed to generate encryption key');
+
+				const result = await uploadEncryptedFile(selectedFile, key, async (progress, message) => {
+					uploadProgress = progress;
+					uploadMessage = message;
+				});
+
+				shareUrl = `${window.location.origin}/${result.fileId}#key=${key}`;
+				replaceState('', shareUrl);
+				sharePassphrase = '';
+			}
+
 			cleanupMemoryReferences();
 		} catch (error) {
 			console.error('Error: ' + (error instanceof Error ? error.message : String(error)));
@@ -197,6 +277,7 @@
 	function removeFile() {
 		selectedFile = null;
 		shareUrl = '';
+		sharePassphrase = '';
 		uploadProgress = 0;
 		uploadMessage = '';
 		fileSizeError = '';
@@ -319,7 +400,7 @@
 				lastes opp, og dekrypteres først når mottakeren laster dem ned.
 			</p>
 
-			{#if !isUploading && !shareUrl}
+			{#if !isUploading && !shareUrl && !sharePassphrase}
 				{#if fileSizeError}
 					<ErrorMessage message={fileSizeError} />
 				{/if}
@@ -347,6 +428,16 @@
 						{selectedFile ? 'Last opp' : 'Velg en fil'}
 					</button>
 				</div>
+				<label class="passphrase-toggle">
+					<input type="checkbox" checked={usePassphrase} on:change={togglePassphrase} />
+					Del via løsenord
+				</label>
+				{#if usePassphrase && generatedPassphrase}
+					<div class="passphrase-preview">
+						<span class="passphrase-label">Løsenord:</span>
+						<span class="passphrase-value">{generatedPassphrase}</span>
+					</div>
+				{/if}
 			{/if}
 
 			<ProgressBar
@@ -357,6 +448,37 @@
 				fileSize={selectedFile ? FileProcessor.formatFileSize(selectedFile.size) : ''}
 			/>
 			<UrlShare url={shareUrl} isVisible={!!shareUrl} />
+			<PassphraseShare passphrase={sharePassphrase} isVisible={!!sharePassphrase} />
+		</div>
+	</div>
+</div>
+
+<div class="passphrase-download-section">
+	<div class="container">
+		<div class="passphrase-download-inner">
+			<h2>Har du et løsenord?</h2>
+			<p class="description">Skriv inn løsenordet du har mottatt for å laste ned filen.</p>
+			{#if passphraseError}
+				<ErrorMessage message={passphraseError} />
+			{/if}
+			<form class="passphrase-form" on:submit|preventDefault={handlePassphraseDownload}>
+				<div class="input-group">
+					<input
+						type="text"
+						class="passphrase-input"
+						placeholder="Skriv inn løsenordet ditt"
+						bind:value={passphraseInput}
+						disabled={isDerivingPassphrase}
+					/>
+					<button
+						type="submit"
+						class="button"
+						disabled={!passphraseInput.trim() || isDerivingPassphrase}
+					>
+						{isDerivingPassphrase ? 'Laster...' : 'Last ned'}
+					</button>
+				</div>
+			</form>
 		</div>
 	</div>
 </div>
@@ -509,6 +631,90 @@
 		cursor: not-allowed;
 	}
 
+	.passphrase-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.75rem;
+		font-size: 0.875rem;
+		color: #555;
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.passphrase-toggle input[type='checkbox'] {
+		cursor: pointer;
+		accent-color: var(--primary-green);
+	}
+
+	.passphrase-preview {
+		margin-top: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		background: rgba(var(--primary-green-rgb), 0.05);
+		border: 1px solid rgba(var(--primary-green-rgb), 0.2);
+		border-radius: var(--border-radius);
+		font-size: 0.875rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.passphrase-label {
+		color: #666;
+		flex-shrink: 0;
+	}
+
+	.passphrase-value {
+		font-weight: 500;
+		color: #222;
+	}
+
+	.passphrase-download-section {
+		border-top: 1px solid #e0e0e0;
+		padding: 2rem 0;
+		background: #fafafa;
+	}
+
+	.passphrase-download-inner {
+		max-width: 600px;
+	}
+
+	.passphrase-download-inner h2 {
+		font-size: 1.5rem;
+		font-weight: 500;
+		margin-bottom: 0.5rem;
+	}
+
+	.passphrase-form {
+		margin-top: 1rem;
+	}
+
+	.input-group {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.passphrase-input {
+		flex: 1;
+		padding: 0.75rem;
+		border: 1px solid #e0e0e0;
+		border-radius: var(--border-radius);
+		font-family: inherit;
+		font-size: 1rem;
+		background: #fff;
+	}
+
+	.passphrase-input:focus {
+		outline: none;
+		border-color: var(--primary-green);
+		box-shadow: 0 0 0 2px rgba(64, 184, 123, 0.2);
+	}
+
+	.passphrase-download-section .button {
+		max-width: none;
+		white-space: nowrap;
+	}
+
 	/* Responsive styles */
 	@media (max-width: 768px) {
 		.container {
@@ -539,6 +745,20 @@
 		.button {
 			/* width: 100%; */
 			padding: 1rem 1.5rem;
+		}
+
+		.input-group {
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+
+		.passphrase-download-section .button {
+			width: 100%;
+			max-width: none;
+		}
+
+		.passphrase-input {
+			font-size: 16px;
 		}
 	}
 </style>

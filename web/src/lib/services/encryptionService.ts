@@ -23,10 +23,18 @@ export function generateKey(): string | null {
     return wasmInstance.generateKey(keySize);
 }
 
+export async function generatePassphraseFromServer(numWords = 4): Promise<string> {
+    const response = await fetch(`/api/passphrase?words=${numWords}`);
+    if (!response.ok) throw new Error('Failed to generate passphrase');
+    const data = await response.json();
+    return data.passphrase;
+}
+
 export async function uploadEncryptedFile(
     file: File,
     key: string,
-    onProgress: ProgressCallback
+    onProgress: ProgressCallback,
+    customFileId?: string
 ): Promise<{ fileId: string; token: string }> {
     const fileProcessor = new FileProcessor();
     const config = get(configStore);
@@ -73,7 +81,9 @@ export async function uploadEncryptedFile(
         };
 
         ws.onopen = async () => {
-            ws.send(JSON.stringify({ type: 'init', size: file.size }));
+            const initMsg: Record<string, unknown> = { type: 'init', size: file.size };
+            if (customFileId) initMsg.fileId = customFileId;
+            ws.send(JSON.stringify(initMsg));
         };
 
         ws.onmessage = async (event) => {

@@ -197,6 +197,18 @@
 		try {
 			// const { initWasm } = await import('$lib/utils/wasm-loader');
 			await initWasm();
+
+			const fileId = $page.params.fileId;
+
+			// Check sessionStorage for pre-stored key (from passphrase flow)
+			const storedKey = sessionStorage.getItem('paste_key_' + fileId);
+			if (storedKey) {
+				sessionStorage.removeItem('paste_key_' + fileId);
+				setEncryptionKey(storedKey);
+				await getMetadata();
+				return;
+			}
+
 			if (window.location.hash) {
 				// Check if a hash exists
 				const urlParams = new URLSearchParams(window.location.hash.slice(1));

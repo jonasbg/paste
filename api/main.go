@@ -69,6 +69,7 @@ func main() {
 	api.Use(middleware.RateLimit(limiter))
 	{
 		api.GET("/config", handlers.GetConfig())
+		api.GET("/passphrase", handlers.GetPassphrase())
 		api.GET("/metadata/:id", handlers.HandleMetadata(uploadDir))
 		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
 		api.DELETE("/delete/:id", handlers.HandleDelete(uploadDir))
