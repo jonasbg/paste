@@ -22,6 +22,7 @@
 	let uploadProgress = 0;
 	let uploadMessage = '';
 	let sharePassphrase = '';
+	let shareUrl = '';
 	let fileSizeError = '';
 
 	// Pre-generated passphrase (fetched on mount)
@@ -113,6 +114,7 @@
 			);
 
 			sharePassphrase = generatedPassphrase;
+			shareUrl = `${window.location.origin}/${fileId}#key=${key}`;
 			cleanupMemoryReferences();
 		} catch (error) {
 			console.error('Error: ' + (error instanceof Error ? error.message : String(error)));
@@ -159,6 +161,7 @@
 	function removeFile() {
 		selectedFile = null;
 		sharePassphrase = '';
+		shareUrl = '';
 		generatedPassphrase = '';
 		uploadProgress = 0;
 		uploadMessage = '';
@@ -448,7 +451,7 @@
 				fileName={selectedFile?.name}
 				fileSize={selectedFile ? FileProcessor.formatFileSize(selectedFile.size) : ''}
 			/>
-			<PassphraseShare passphrase={sharePassphrase} isVisible={!!sharePassphrase} />
+			<PassphraseShare passphrase={sharePassphrase} secureUrl={shareUrl} isVisible={!!sharePassphrase} />
 		</div>
 	</div>
 </div>
