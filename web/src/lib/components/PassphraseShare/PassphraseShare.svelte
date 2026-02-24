@@ -1,6 +1,10 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
+
 	export let passphrase: string = '';
 	export let isVisible: boolean = false;
+
+	$: shareUrl = browser ? `${window.location.origin}/#passphrase=${passphrase}` : '';
 
 	let copyMessage: string = '';
 	let messageTimeout: number;
@@ -13,39 +17,43 @@
 		}, 3000);
 	}
 
-	async function copyPassphrase() {
+	async function copyToClipboard(text: string, label: string) {
 		try {
-			await navigator.clipboard.writeText(passphrase);
-			showMessage('Løsenord kopiert!');
+			await navigator.clipboard.writeText(text);
+			showMessage(label + ' kopiert!');
 		} catch {
 			const textArea = document.createElement('textarea');
-			textArea.value = passphrase;
+			textArea.value = text;
 			document.body.appendChild(textArea);
 			textArea.select();
 			document.execCommand('copy');
 			document.body.removeChild(textArea);
-			showMessage('Løsenord kopiert!');
+			showMessage(label + ' kopiert!');
 		}
 	}
 </script>
 
-<div class="passphrase-container" style="display: {isVisible ? 'block' : 'none'}">
-	<div class="passphrase-section">
-		<h3>Løsenord for deling</h3>
-		<p class="hint">
-			Del dette løsenordet med mottakeren. De kan skrive det inn på forsiden for å laste ned filen.
-		</p>
+<div class="url-container" style="display: {isVisible ? 'block' : 'none'}">
+	<div class="copy-section">
+		<h3>Del via lenke</h3>
+		<p class="hint">Send denne lenken direkte — mottakeren klikker den og nedlastingen starter automatisk.</p>
 		<div class="input-group">
-			<input type="text" class="passphrase-field" value={passphrase} readonly />
-			<button class="button" on:click={copyPassphrase}>Kopier løsenord</button>
+			<input type="text" class="url-field" value={shareUrl} readonly />
+			<button class="button" on:click={() => copyToClipboard(shareUrl, 'Lenke')}>Kopier lenke</button>
 		</div>
 	</div>
 
-	<div class="info-box">
-		<p>
-			Mottakeren skriver inn løsenordet i feltet "Har du et løsenord?" på forsiden for å laste ned
-			filen.
-		</p>
+	<div class="separator">
+		<span>eller</span>
+	</div>
+
+	<div class="copy-section">
+		<h3>Delingskode</h3>
+		<p class="hint">Del kun koden — mottakeren skriver den inn på forsiden for å laste ned filen.</p>
+		<div class="input-group">
+			<input type="text" class="url-field" value={passphrase} readonly />
+			<button class="button" on:click={() => copyToClipboard(passphrase, 'Delingskode')}>Kopier kode</button>
+		</div>
 	</div>
 
 	{#if copyMessage}
@@ -54,11 +62,11 @@
 </div>
 
 <style>
-	.passphrase-container {
+	.url-container {
 		margin-top: 1rem;
 	}
 
-	.passphrase-section {
+	.copy-section {
 		background: #fff;
 		padding: 1rem;
 		border-radius: var(--border-radius);
@@ -66,7 +74,7 @@
 		margin-bottom: 1rem;
 	}
 
-	.passphrase-section h3 {
+	.copy-section h3 {
 		font-size: 1rem;
 		margin: 0 0 0.5rem 0;
 		font-weight: 500;
@@ -88,7 +96,7 @@
 		flex-shrink: 0;
 	}
 
-	.passphrase-field {
+	.url-field {
 		flex: 1;
 		padding: 0.75rem;
 		border: 1px solid #e0e0e0;
@@ -96,20 +104,37 @@
 		font-family: inherit;
 		background: #f5f5f5;
 		font-size: 1rem;
-		letter-spacing: 0.02em;
 	}
 
-	.info-box {
-		background: rgba(var(--primary-green-rgb), 0.05);
-		border: 1px solid rgba(var(--primary-green-rgb), 0.2);
-		border-radius: var(--border-radius);
-		padding: 0.75rem 1rem;
+	.separator {
+		text-align: center;
+		margin: 1rem 0;
+		position: relative;
+	}
+
+	.separator::before,
+	.separator::after {
+		content: '';
+		position: absolute;
+		top: 50%;
+		width: calc(50% - 2rem);
+		height: 1px;
+		background: #e0e0e0;
+	}
+
+	.separator::before {
+		left: 0;
+	}
+
+	.separator::after {
+		right: 0;
+	}
+
+	.separator span {
+		background: var(--background-color);
+		padding: 0 1rem;
+		color: #666;
 		font-size: 0.875rem;
-		color: #444;
-	}
-
-	.info-box p {
-		margin: 0;
 	}
 
 	.copy-message {
@@ -135,11 +160,11 @@
 			width: 100%;
 		}
 
-		.passphrase-field {
+		.url-field {
 			font-size: 16px;
 		}
 
-		.passphrase-section {
+		.copy-section {
 			padding: 0.75rem;
 		}
 
