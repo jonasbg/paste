@@ -1,6 +1,6 @@
 // Wordlist for client-side passphrase generation.
 // Mirror of crypto/wordlist.go — keep both in sync when adding words.
-// With 4 words + 4-char alphanumeric suffix: ~57 bits of entropy (log2(600^4 * 36^4))
+// With 4 words + 4-char alphanumeric suffix: ~59.0 bits of entropy (log2(760^4 * 36^4))
 const WORDLIST: readonly string[] = [
 	'able', 'acid', 'aged', 'also', 'area', 'army', 'away', 'baby',
 	'back', 'ball', 'band', 'bank', 'base', 'bath', 'bear', 'beat',
@@ -77,6 +77,27 @@ const WORDLIST: readonly string[] = [
 	'with', 'wood', 'word', 'wore', 'work', 'worn', 'wrap', 'yard',
 	'yeah', 'year', 'your', 'zero', 'zone', 'acre', 'aide', 'aims',
 	'ajar', 'ally', 'amid', 'aqua', 'arch', 'atom', 'aunt', 'axis',
+	'heal', 'herb', 'yoga', 'zest', 'mend', 'tonic', 'fiber', 'fresh',
+	'sleep', 'water', 'pulse', 'organ', 'heart', 'brain', 'nurse', 'medic',
+	'clean', 'flora', 'smile', 'happy', 'focus', 'zen', 'jonas', 'august',
+	'paris', 'berlin', 'madrid', 'lisbon', 'vienna', 'prague', 'zurich', 'geneva',
+	'oslo', 'athens', 'dublin', 'warsaw', 'naples', 'turin', 'sevilla', 'malaga',
+	'porto', 'brno', 'riga', 'vilnius', 'tallinn', 'sofia', 'zagreb', 'skopje',
+	'tirana', 'bologna', 'venice', 'milan', 'bergen', 'tromso', 'drammen', 'bodo',
+	'larvik', 'hamar', 'molde', 'alta', 'narvik', 'skien', 'svalbard', 'longyear',
+	'kirkenes', 'arendal', 'sandnes', 'tonsberg', 'notodden', 'leknes', 'halden',
+	'january', 'february', 'march', 'april', 'may', 'june', 'july', 'september',
+	'october', 'november', 'december',
+	'river', 'forest', 'meadow', 'cedar', 'maple', 'birch', 'willow', 'stone',
+	'cloud', 'frost', 'breeze', 'summit', 'valley', 'harbor', 'island', 'canyon',
+	'garden', 'cabin', 'bridge', 'lantern', 'window', 'kettle', 'anchor', 'button',
+	'pocket', 'candle', 'mirror', 'basket', 'hammer', 'saddle', 'compass', 'blanket',
+	'ribbon', 'tunnel', 'wander', 'gather', 'build', 'carry', 'weave', 'drift',
+	'sprint', 'climb', 'sketch', 'craft', 'forge', 'travel', 'apple', 'berry',
+	'olive', 'mango', 'cocoa', 'basil', 'honey', 'lemon', 'peach', 'walnut',
+	'barley', 'bright', 'steady', 'gentle', 'noble', 'brave', 'loyal', 'vivid',
+	'sunny', 'mellow', 'radiant', 'humble', 'kindly', 'serene', 'lively', 'placid',
+	'crisp', 'sacred', 'worthy', 'honest', 'grin', 'laugh', 'smiley',
 ];
 
 const ALPHANUMERIC = 'abcdefghijklmnopqrstuvwxyz0123456789';
