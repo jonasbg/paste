@@ -459,8 +459,9 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			sendWSError(ws, "Failed to create file")
 			return
 		}
-		// Buffered writer to minimize syscalls; buffer ~2 chunks
-		bufWriter := bufio.NewWriterSize(file, (GlobalConfig.ChunkSize*1024*1024+16)*2)
+		// 512 KB buffer is enough to smooth out syscall bursts; the OS page cache
+		// handles larger sequential writes efficiently without a huge userspace buffer.
+		bufWriter := bufio.NewWriterSize(file, 512*1024)
 		defer func() {
 			bufWriter.Flush()
 			file.Close()

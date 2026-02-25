@@ -62,6 +62,13 @@ export async function uploadEncryptedFile(
         let cipherId: number | null = null;
         let settled = false; // guard: resolve/reject only once
 
+        // Prefetch state: the next chunk's file read + WASM encryption is kicked
+        // off immediately after the current chunk is sent, so it overlaps with the
+        // network round-trip for the current chunk's ACK.
+        type PrefetchResult = { encrypted: Uint8Array; plaintextSize: number };
+        let prefetchForOffset = -1;
+        let prefetchPromise: Promise<PrefetchResult | null> | null = null;
+
         // Smooth intra-chunk progress interpolation
         let lastChunkDuration = 0; // ms it took to upload+ack the previous chunk
         let chunkSendTime = 0;     // when we sent the current chunk
@@ -240,6 +247,24 @@ export async function uploadEncryptedFile(
             }
         }
 
+        // Start reading + encrypting the chunk at `forOffset` in the background.
+        // Called immediately after ws.send() so the work overlaps with the ACK RTT.
+        // Returns null on failure; sendNextChunk falls back to a synchronous path.
+        async function prefetchNextChunk(forOffset: number): Promise<PrefetchResult | null> {
+            if (cipherId === null || forOffset >= file.size) return null;
+            try {
+                const slice = await file.slice(forOffset, forOffset + chunkSize).arrayBuffer();
+                // Re-check after the async file read — cleanup may have run.
+                if (cipherId === null) return null;
+                const isLast = forOffset + chunkSize >= file.size;
+                const encrypted = wasmInstance.encryptChunk(cipherId, new Uint8Array(slice), isLast);
+                if (!encrypted || encrypted instanceof Error) return null;
+                return { encrypted: encrypted as Uint8Array, plaintextSize: slice.byteLength };
+            } catch {
+                return null;
+            }
+        }
+
         async function sendNextChunk() {
             if (cipherId === null) {
                 settle(() => reject(new Error('Cipher not initialized')));
@@ -248,20 +273,48 @@ export async function uploadEncryptedFile(
             }
 
             if (fileOffset < file.size) {
-                const chunk = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
-                const isLastChunk = fileOffset + chunkSize >= file.size;
-                const encryptedChunk = wasmInstance.encryptChunk(
-                    cipherId,
-                    new Uint8Array(chunk),
-                    isLastChunk
-                );
+                let encryptedChunk: Uint8Array;
+                let plaintextSize: number;
+
+                if (prefetchPromise !== null && prefetchForOffset === fileOffset) {
+                    // A prefetch was started for exactly this offset — await it.
+                    // If it was already resolved this is effectively free; if it's
+                    // still in flight we overlap the wait with nothing useful anyway.
+                    const result = await prefetchPromise;
+                    prefetchPromise = null;
+                    if (result !== null) {
+                        encryptedChunk = result.encrypted;
+                        plaintextSize = result.plaintextSize;
+                    } else {
+                        // Prefetch failed — read and encrypt now.
+                        const slice = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
+                        const isLast = fileOffset + chunkSize >= file.size;
+                        encryptedChunk = wasmInstance.encryptChunk(cipherId, new Uint8Array(slice), isLast) as Uint8Array;
+                        plaintextSize = slice.byteLength;
+                    }
+                } else {
+                    // No prefetch in flight for this offset (first chunk, or prefetch
+                    // was not started because the previous chunk was the last).
+                    const slice = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
+                    const isLast = fileOffset + chunkSize >= file.size;
+                    encryptedChunk = wasmInstance.encryptChunk(cipherId, new Uint8Array(slice), isLast) as Uint8Array;
+                    plaintextSize = slice.byteLength;
+                }
 
                 chunkSendTime = Date.now();
-                chunkStartBytes = fileOffset;       // plaintext bytes confirmed before this chunk
-                chunkByteSize = chunk.byteLength;   // plaintext size of this chunk
-                fileOffset += chunk.byteLength;
+                chunkStartBytes = fileOffset;       // plaintext bytes before this chunk
+                chunkByteSize = plaintextSize;      // plaintext size of this chunk
+                fileOffset += plaintextSize;
 
+                const isLastChunk = fileOffset >= file.size;
                 ws.send(encryptedChunk);
+
+                // Immediately kick off the next chunk's file read + encryption so it
+                // is ready (or nearly ready) when the server ACK arrives.
+                if (!isLastChunk) {
+                    prefetchForOffset = fileOffset;
+                    prefetchPromise = prefetchNextChunk(fileOffset);
+                }
 
                 // Interpolate progress within this chunk every 100ms using the previous
                 // chunk's round-trip duration as a speed estimate.
