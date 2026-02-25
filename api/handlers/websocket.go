@@ -43,6 +43,12 @@ var upgrader = websocket.Upgrader{
 // idle connections during large uploads/downloads. The goroutine exits when ctx
 // is cancelled or a write fails. The caller must configure ws.SetPongHandler to
 // reset the read deadline on each pong received.
+//
+// IMPORTANT: pings are sent via WriteControl, not WriteMessage.
+// Gorilla WebSocket allows only one concurrent writer, but WriteControl is
+// explicitly documented as safe to call concurrently with all other methods.
+// Using WriteMessage here would race with the main goroutine's data writes and
+// silently corrupt frames.
 func startPingLoop(ctx context.Context, ws *websocket.Conn) {
 	go func() {
 		ticker := time.NewTicker(pingInterval)
@@ -50,8 +56,11 @@ func startPingLoop(ctx context.Context, ws *websocket.Conn) {
 		for {
 			select {
 			case <-ticker.C:
-				ws.SetWriteDeadline(time.Now().Add(writeWait))
-				if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				if err := ws.WriteControl(
+					websocket.PingMessage,
+					nil,
+					time.Now().Add(writeWait),
+				); err != nil {
 					return
 				}
 			case <-ctx.Done():

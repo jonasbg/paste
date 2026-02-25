@@ -33,7 +33,6 @@ type StreamingCipher struct {
 	chunk   int
 	nonce   [12]byte // pre-allocated; avoids a make([]byte,12) on every chunk
 	sealBuf []byte   // reused output buffer for Seal; grows to fit largest chunk, then stable
-	openBuf []byte   // reused output buffer for Open; same principle
 }
 
 type CipherRegistry struct {
@@ -408,8 +407,7 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 	copy(cipher.nonce[:], cipher.iv)
 	binary.LittleEndian.PutUint32(cipher.nonce[8:], uint32(cipher.chunk))
 
-	var err error
-	cipher.openBuf, err = cipher.gcm.Open(cipher.openBuf[:0], cipher.nonce[:], data, nil)
+	decrypted, err := cipher.gcm.Open(nil, cipher.nonce[:], data, nil)
 	if err != nil {
 		fmt.Printf("Decryption error: %v\n", err)
 		return handleError(err)
@@ -417,8 +415,8 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 
 	cipher.chunk++
 
-	uint8Array := js.Global().Get("Uint8Array").New(len(cipher.openBuf))
-	js.CopyBytesToJS(uint8Array, cipher.openBuf)
+	uint8Array := js.Global().Get("Uint8Array").New(len(decrypted))
+	js.CopyBytesToJS(uint8Array, decrypted)
 
 	// If this is the last chunk, clean up the cipher
 	if isLastChunk {
@@ -429,9 +427,6 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 			}
 			for i := range c.nonce {
 				c.nonce[i] = 0
-			}
-			for i := range c.openBuf {
-				c.openBuf[i] = 0
 			}
 			delete(registry.ciphers, cipherID)
 		}
@@ -461,9 +456,6 @@ func disposeCipher(_ js.Value, args []js.Value) interface{} {
 		}
 		for i := range cipher.sealBuf {
 			cipher.sealBuf[i] = 0
-		}
-		for i := range cipher.openBuf {
-			cipher.openBuf[i] = 0
 		}
 		delete(registry.ciphers, cipherID)
 	}

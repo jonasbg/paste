@@ -28,7 +28,7 @@ const WASM_CACHE_NAME = 'paste-wasm-cache-v2';
 const WASM_PATH = '/encryption.wasm';
 const WASM_VERSION_KEY = 'wasm-version';
 // Update this when your WASM file changes
-const CURRENT_WASM_VERSION = '1.4.0-nonce-prealloc';
+const CURRENT_WASM_VERSION = '1.4.1-revert-openbuf';
 
 let wasmInstance: GoEncryption | null = null;
 let wasmInitPromise: Promise<GoEncryption> | null = null;
