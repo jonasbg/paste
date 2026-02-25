@@ -206,7 +206,7 @@
 
 	@media (prefers-color-scheme: dark) {
 		.progress-track {
-			background: #374151;
+			background: rgb(209, 209, 209);
 		}
 	}
 

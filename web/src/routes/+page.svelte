@@ -113,12 +113,10 @@
 		return true;
 	}
 
-	async function handleFileSelect(event: Event) {
+	function handleFileSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
 		if (input.files?.length) {
-			if (validateAndSetFile(input.files[0])) {
-				await handleUpload();
-			} else {
+			if (!validateAndSetFile(input.files[0])) {
 				input.value = '';
 			}
 		}
@@ -307,8 +305,26 @@
 		if (fileInput) fileInput.value = '';
 	}
 
+	function preventBrowserFileDrop(event: DragEvent) {
+		// Prevent browser from navigating to dropped file outside our drop zone
+		event.preventDefault();
+	}
+
+	function handlePageDrop(event: DragEvent) {
+		event.preventDefault();
+		if (isUploading || sharePassphrase) return;
+		const files = event.dataTransfer?.files;
+		if (files?.length) {
+			validateAndSetFile(files[0]);
+		}
+	}
+
 	onMount(async () => {
 		if (!browser) return;
+
+		// Block browser's default file-drop navigation on the whole page
+		document.addEventListener('dragover', preventBrowserFileDrop);
+		document.addEventListener('drop', handlePageDrop);
 
 		if ($configStore.loading) {
 			await new Promise<void>((resolve) => {
@@ -342,7 +358,11 @@
 	});
 
 	onDestroy(() => {
-		if (browser) window.removeEventListener('paste', handlePaste);
+		if (browser) {
+			window.removeEventListener('paste', handlePaste);
+			document.removeEventListener('dragover', preventBrowserFileDrop);
+			document.removeEventListener('drop', handlePageDrop);
+		}
 		if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
 	});
 
@@ -373,7 +393,7 @@
 		if (isUploading || sharePassphrase) return;
 		const files = event.dataTransfer?.files;
 		if (files?.length) {
-			if (validateAndSetFile(files[0])) handleUpload();
+			validateAndSetFile(files[0]);
 		}
 	}
 
@@ -431,7 +451,7 @@
 		}
 	}
 
-	async function processClipboardFile(file: File) {
+	function processClipboardFile(file: File) {
 		if (!$configStore.data) {
 			fileSizeError = 'Unable to validate file size: configuration not loaded';
 			return;
@@ -444,7 +464,6 @@
 		}
 		selectedFile = file;
 		fileSizeError = '';
-		await handleUpload();
 	}
 </script>
 
@@ -506,8 +525,8 @@
 					</div>
 				{/if}
 
-				<!-- Row 1: Drop zone — slides away once a passphrase file is resolved or on upload error -->
-				{#if !passphraseFileMetadata && !uploadError}
+				<!-- Row 1: Drop zone — slides away once a passphrase file is resolved, on upload error, or when a file is selected -->
+				{#if !passphraseFileMetadata && !uploadError && !selectedFile}
 					<div
 						class="drop-zone"
 						class:dragging={isDragging}
@@ -553,6 +572,49 @@
 						<p class="drop-secondary">Maksimum filstørrelse {maxFileSizeLabel}</p>
 					</div>
 				{/if}
+			{/if}
+
+			<!-- Selected file preview: shown after file chosen, before upload starts -->
+			{#if selectedFile && !isUploading && !sharePassphrase && !uploadError}
+				<div class="selected-file-row" in:fly={{ y: 8, duration: 220 }}>
+					<div class="col-icon">
+						<svg
+							width="32"
+							height="32"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+							<polyline points="13 2 13 9 20 9" />
+						</svg>
+					</div>
+					<div class="col-info">
+						<div class="file-name">{selectedFile.name}</div>
+						<div class="file-pre-size">{FileProcessor.formatFileSize(selectedFile.size)}</div>
+					</div>
+					<div class="selected-col-action">
+						<button class="btn-upload-now" on:click={handleUpload}>Last opp</button>
+						<button class="btn-remove-file" on:click={removeFile} aria-label="Fjern fil">
+							<svg
+								width="15"
+								height="15"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<line x1="18" y1="6" x2="6" y2="18" />
+								<line x1="6" y1="6" x2="18" y2="18" />
+							</svg>
+						</button>
+					</div>
+				</div>
 			{/if}
 
 			<!-- Row 2: Upload progress -->
@@ -993,7 +1055,7 @@
 
 	@media (prefers-color-scheme: dark) {
 		.progress-track {
-			background: #374151;
+			background: #4b5563;
 		}
 	}
 
@@ -1181,6 +1243,63 @@
 	}
 
 	.btn-dismiss-retry:hover {
+		color: #374151;
+	}
+
+	/* ── Selected file preview (before upload) ── */
+	.selected-file-row {
+		display: grid;
+		grid-template-columns: 52px 1fr auto;
+		align-items: center;
+		gap: 1rem;
+		padding: 1rem 1.25rem;
+		margin-top: 0.75rem;
+	}
+
+	.file-pre-size {
+		font-size: 0.8125rem;
+		color: #6b7280;
+	}
+
+	.selected-col-action {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.btn-upload-now {
+		background-color: var(--primary-green);
+		color: white;
+		border: none;
+		border-radius: 8px;
+		padding: 0.5rem 1.125rem;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		font-family: inherit;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: all 0.2s ease;
+	}
+
+	.btn-upload-now:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
+	}
+
+	.btn-remove-file {
+		background: none;
+		border: none;
+		padding: 0.25rem;
+		cursor: pointer;
+		color: #9ca3af;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+		transition: color 0.15s ease;
+	}
+
+	.btn-remove-file:hover {
 		color: #374151;
 	}
 
