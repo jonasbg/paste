@@ -298,6 +298,35 @@
 		generatedPassphrase = generatePassphrase();
 	}
 
+	function resetAll() {
+		selectedFile = null;
+		isUploading = false;
+		uploadProgress = 0;
+		uploadMessage = '';
+		sharePassphrase = '';
+		shareUrl = '';
+		fileSizeError = '';
+		uploadError = '';
+		generatedPassphrase = generatePassphrase();
+		passphraseInput = '';
+		passphraseError = '';
+		passphraseFileId = '';
+		passphraseKey = '';
+		passphraseFileMetadata = null;
+		passphraseFileSizeStr = '';
+		isPassphraseDownloading = false;
+		passphraseDownloadProgress = 0;
+		passphraseDisplayProgress = 0;
+		passphraseDownloadComplete = false;
+		passphraseDownloadError = '';
+		passphraseDownloadStartTime = 0;
+		passphraseEta = '';
+		isDragging = false;
+		dragCounter = 0;
+		if (fileInput) fileInput.value = '';
+		if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
+	}
+
 	function dismissUploadError() {
 		uploadError = '';
 		selectedFile = null;
@@ -470,7 +499,7 @@
 <div class="page-container">
 	<div class="container">
 		<div class="upload-section">
-			<h1>Vi <a href="/">deler</a> filer sikkert</h1>
+			<h1>Vi <a href="/" on:click|preventDefault={resetAll}>deler</a> filer sikkert</h1>
 
 			{#if !sharePassphrase}
 				<p class="description">
