@@ -215,24 +215,6 @@
 		background: var(--primary-green);
 		border-radius: 99px;
 		transition: width 0.15s ease;
-		background-image: linear-gradient(
-			90deg,
-			rgba(255, 255, 255, 0) 0%,
-			rgba(255, 255, 255, 0.22) 50%,
-			rgba(255, 255, 255, 0) 100%
-		);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s linear infinite;
-	}
-
-	.progress-fill.complete {
-		animation: none;
-	}
-
-	@keyframes shimmer {
-		to {
-			background-position: 200% 0;
-		}
 	}
 
 	.col-action {
