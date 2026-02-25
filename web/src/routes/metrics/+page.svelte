@@ -494,7 +494,7 @@
 				{#each rangeOptions as option}
 					<button
 						class="range-btn {dateRange === option.value ? 'active' : ''}"
-						  { dateRange = option.value; handleRangeChange(); }}
+						on:click={() => { dateRange = option.value; handleRangeChange(); }}
 					>
 						{option.label}
 					</button>
