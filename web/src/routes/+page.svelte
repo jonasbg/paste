@@ -470,7 +470,7 @@
 <div class="page-container">
 	<div class="container">
 		<div class="upload-section">
-			<h1>Vi <span on:click={() => history.pushState(null, '', '/')}>deler</span> filer sikkert</h1>
+			<h1>Vi <a href="/">deler</a> filer sikkert</h1>
 
 			{#if !sharePassphrase}
 				<p class="description">
@@ -801,9 +801,9 @@
 		margin-bottom: 0.75rem;
 	}
 
-	h1 span {
+	h1 a {
 		color: var(--primary-green);
-		cursor: pointer;
+		text-decoration: none;
 	}
 
 	.description {
