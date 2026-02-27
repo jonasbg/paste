@@ -28,7 +28,7 @@ const WASM_CACHE_NAME = 'paste-wasm-cache-v2';
 const WASM_PATH = '/encryption.wasm';
 const WASM_VERSION_KEY = 'wasm-version';
 // Update this when your WASM file changes
-const CURRENT_WASM_VERSION = '1.4.1-revert-openbuf';
+const CURRENT_WASM_VERSION = '1.5.0-tinygo-alloc-fix';
 
 let wasmInstance: GoEncryption | null = null;
 let wasmInitPromise: Promise<GoEncryption> | null = null;
@@ -39,7 +39,7 @@ async function loadWasmExecutor() {
 
 	return new Promise<typeof window.Go>((resolve, reject) => {
 		const script = document.createElement('script');
-		script.src = '/wasm_exec.js';
+		script.src = `/wasm_exec.js?v=${CURRENT_WASM_VERSION}`;
 		script.type = 'application/javascript';
 		script.setAttribute('crossorigin', 'anonymous');
 

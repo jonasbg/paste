@@ -28,11 +28,13 @@ type Metadata struct {
 }
 
 type StreamingCipher struct {
-	gcm     cipher.AEAD
-	iv      []byte
-	chunk   int
-	nonce   [12]byte // pre-allocated; avoids a make([]byte,12) on every chunk
-	sealBuf []byte   // reused output buffer for Seal; grows to fit largest chunk, then stable
+	gcm      cipher.AEAD
+	iv       []byte
+	chunk    int
+	nonce    [12]byte // pre-allocated; avoids make([]byte,12) per chunk
+	plainBuf []byte   // pre-allocated input copy buffer; eliminates repeated large allocs in TinyGo's leaking allocator
+	sealBuf  []byte   // pre-allocated encrypt output; reused via Seal(sealBuf[:0],...)
+	openBuf  []byte   // pre-allocated decrypt output; reused via Open(openBuf[:0],...)
 }
 
 type CipherRegistry struct {
@@ -338,8 +340,6 @@ func encryptChunk(_ js.Value, args []js.Value) interface{} {
 	}
 
 	cipherID := args[0].Int()
-	data := make([]byte, args[1].Length())
-	js.CopyBytesToGo(data, args[1])
 	isLastChunk := args[2].Bool()
 
 	// Get cipher from registry
@@ -350,6 +350,14 @@ func encryptChunk(_ js.Value, args []js.Value) interface{} {
 	if !exists {
 		return handleError(errors.New("invalid cipher ID"))
 	}
+
+	// Reuse plainBuf to avoid repeated large allocations in TinyGo's leaking allocator.
+	n := args[1].Length()
+	if n > len(cipher.plainBuf) {
+		cipher.plainBuf = make([]byte, n)
+	}
+	data := cipher.plainBuf[:n]
+	js.CopyBytesToGo(data, args[1])
 
 	// Build nonce in-place: first 8 bytes of IV, then 4-byte little-endian chunk counter.
 	copy(cipher.nonce[:], cipher.iv)
@@ -374,6 +382,9 @@ func encryptChunk(_ js.Value, args []js.Value) interface{} {
 			for i := range c.nonce {
 				c.nonce[i] = 0
 			}
+			for i := range c.plainBuf {
+				c.plainBuf[i] = 0
+			}
 			for i := range c.sealBuf {
 				c.sealBuf[i] = 0
 			}
@@ -391,8 +402,6 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 	}
 
 	cipherID := args[0].Int()
-	data := make([]byte, args[1].Length())
-	js.CopyBytesToGo(data, args[1])
 	isLastChunk := args[2].Bool()
 
 	// Get cipher from registry
@@ -404,10 +413,19 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid cipher ID"))
 	}
 
+	// Reuse plainBuf to avoid repeated large allocations in TinyGo's leaking allocator.
+	n := args[1].Length()
+	if n > len(cipher.plainBuf) {
+		cipher.plainBuf = make([]byte, n)
+	}
+	data := cipher.plainBuf[:n]
+	js.CopyBytesToGo(data, args[1])
+
 	copy(cipher.nonce[:], cipher.iv)
 	binary.LittleEndian.PutUint32(cipher.nonce[8:], uint32(cipher.chunk))
 
-	decrypted, err := cipher.gcm.Open(nil, cipher.nonce[:], data, nil)
+	var err error
+	cipher.openBuf, err = cipher.gcm.Open(cipher.openBuf[:0], cipher.nonce[:], data, nil)
 	if err != nil {
 		fmt.Printf("Decryption error: %v\n", err)
 		return handleError(err)
@@ -415,8 +433,8 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 
 	cipher.chunk++
 
-	uint8Array := js.Global().Get("Uint8Array").New(len(decrypted))
-	js.CopyBytesToJS(uint8Array, decrypted)
+	uint8Array := js.Global().Get("Uint8Array").New(len(cipher.openBuf))
+	js.CopyBytesToJS(uint8Array, cipher.openBuf)
 
 	// If this is the last chunk, clean up the cipher
 	if isLastChunk {
@@ -427,6 +445,12 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 			}
 			for i := range c.nonce {
 				c.nonce[i] = 0
+			}
+			for i := range c.plainBuf {
+				c.plainBuf[i] = 0
+			}
+			for i := range c.openBuf {
+				c.openBuf[i] = 0
 			}
 			delete(registry.ciphers, cipherID)
 		}
@@ -454,8 +478,14 @@ func disposeCipher(_ js.Value, args []js.Value) interface{} {
 		for i := range cipher.nonce {
 			cipher.nonce[i] = 0
 		}
+		for i := range cipher.plainBuf {
+			cipher.plainBuf[i] = 0
+		}
 		for i := range cipher.sealBuf {
 			cipher.sealBuf[i] = 0
+		}
+		for i := range cipher.openBuf {
+			cipher.openBuf[i] = 0
 		}
 		delete(registry.ciphers, cipherID)
 	}
