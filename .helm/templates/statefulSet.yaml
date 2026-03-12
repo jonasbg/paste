@@ -27,22 +27,6 @@ spec:
           - 100
         runAsNonRoot: true
         runAsUser: 101
-      initContainers:
-      - name: volume-permissions
-        image: busybox
-        command: ["sh", "-c", "touch /data/.initialized"]
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          privileged: false
-          runAsNonRoot: true
-          runAsUser: 101
-          runAsGroup: 101
-        volumeMounts:
-        - name: data
-          mountPath: /data
       containers:
       - name: {{ $key }}
         image: {{ $value.repository }}:{{ $value.tag | default "latest" }}

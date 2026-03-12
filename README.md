@@ -172,12 +172,16 @@ Environment variables:
 | `ID_SIZE` | `64` | Size of the generated IDs (64, 128, 192, 256 bit) |
 | `KEY_SIZE` | `128` | Size of the encryption keys (128, 192, 256 bit) |
 | `CHUNK_SIZE` | `4` | Size of chunks in MB for transmission |
-| `METRICS_ALLOWED_IPS` | `127.0.0.1/8,::1/128` | IP addresses allowed to access metrics endpoints |
 | `OTEL_PROMETHEUS_ENABLED` | `true` | Expose a Prometheus-compatible OTEL scrape endpoint |
 | `OTEL_PROMETHEUS_PATH` | `/metrics` | Path for the Prometheus-compatible OTEL scrape endpoint |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP HTTP endpoint for pushing runtime metrics |
 | `TRUSTED_PROXIES` | `10.0.0.0/8` | IP ranges of trusted proxies for correct client IP detection |
 | `LOG_HASH_SALT` | (empty) | Optional per-instance salt used when hashing client IPs. Setting it changes stored hashes; keep it secret.
+
+Current OTEL metrics include request counts and latency plus upload-focused metrics:
+- `paste.upload.size.bytes`
+- `paste.upload.bytes.total`
+- `paste.upload.files.total`
 
 ## Security Implementation
 

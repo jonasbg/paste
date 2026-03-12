@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jonasbg/paste/m/v2/middleware"
 	"github.com/jonasbg/paste/m/v2/utils"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
@@ -29,6 +28,9 @@ type Provider struct {
 	latency       metric.Float64Histogram
 	transfers     metric.Int64Counter
 	transferBytes metric.Int64Counter
+	uploadSize    metric.Int64Histogram
+	uploadBytes   metric.Int64Counter
+	uploadFiles   metric.Int64Counter
 }
 
 func Init(ctx context.Context) (*Provider, error) {
@@ -81,6 +83,18 @@ func Init(ctx context.Context) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	uploadSize, err := meter.Int64Histogram("paste.upload.size.bytes", metric.WithUnit("By"))
+	if err != nil {
+		return nil, err
+	}
+	uploadBytes, err := meter.Int64Counter("paste.upload.bytes.total", metric.WithUnit("By"))
+	if err != nil {
+		return nil, err
+	}
+	uploadFiles, err := meter.Int64Counter("paste.upload.files.total")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Provider{
 		meterProvider: mp,
@@ -89,6 +103,9 @@ func Init(ctx context.Context) (*Provider, error) {
 		latency:       latency,
 		transfers:     transfers,
 		transferBytes: transferBytes,
+		uploadSize:    uploadSize,
+		uploadBytes:   uploadBytes,
+		uploadFiles:   uploadFiles,
 	}, nil
 }
 
@@ -147,6 +164,21 @@ func (p *Provider) RecordTransfer(ctx context.Context, operation string, size in
 	}
 }
 
+func (p *Provider) RecordUpload(ctx context.Context, size int64, success bool, protocol string) {
+	if p == nil || size < 0 {
+		return
+	}
+	attrs := []attribute.KeyValue{
+		attribute.Bool("paste.success", success),
+		attribute.String("network.protocol.name", protocol),
+	}
+	p.uploadSize.Record(ctx, size, metric.WithAttributes(attrs...))
+	if success {
+		p.uploadBytes.Add(ctx, size, metric.WithAttributes(attrs...))
+		p.uploadFiles.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
 func MountPrometheusRoute(r *gin.Engine, handler http.Handler) error {
 	if handler == nil {
 		return nil
@@ -157,7 +189,6 @@ func MountPrometheusRoute(r *gin.Engine, handler http.Handler) error {
 		return errors.New("OTEL_PROMETHEUS_PATH must start with '/'")
 	}
 
-	allowedIPs := utils.GetEnv("METRICS_ALLOWED_IPS", "127.0.0.1/8,::1/128")
-	r.GET(path, middleware.IPSourceRestriction(allowedIPs), gin.WrapH(handler))
+	r.GET(path, gin.WrapH(handler))
 	return nil
 }

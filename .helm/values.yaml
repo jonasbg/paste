@@ -7,20 +7,12 @@ paste:
     mountPath: /uploads
     readOnly: false
     storage: 10Gi
-  - name: data
-    mountPath: /data
-    readOnly: false
-    storage: 500Mi
   host: chase.example.com
   env:
   - name: UPLOAD_DIR
     value: "/uploads"
-  - name: DATABASE_DIR
-    value: "/data"
-  - name: PASTE_RETENTION_DAYS
+  - name: FILES_RETENTION_DAYS
     value: "7"
-  - name: LOGS_RETENTION_DAYS
-    value: "180"
   services:
   - name: http
     port: 8080

@@ -562,6 +562,7 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 		}
 
 		metrics.RecordTransfer(c.Request.Context(), "upload", totalBytes, true, "websocket")
+		metrics.RecordUpload(c.Request.Context(), totalBytes, true, "websocket")
 
 		// 10. Send Completion Message
 		if err := wsWriteJSON(ws, gin.H{
