@@ -24,7 +24,7 @@ RUN TINYGO_ARCH=$(case ${TARGETARCH} in \
     rm tinygo0.40.1.linux-${TINYGO_ARCH}.tar.gz
 
 # Build WASM with TinyGo
-RUN /usr/local/tinygo/bin/tinygo build -o encryption.wasm -target wasm -no-debug wasm.go
+RUN /usr/local/tinygo/bin/tinygo build -o encryption.wasm -target wasm -no-debug -gc=conservative wasm.go
 
 RUN cp "/usr/local/tinygo/targets/wasm_exec.js" .
 
@@ -77,9 +77,6 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 FROM scratch
 
 ENV GIN_MODE=release
-ENV DATABASE_DIR=/uploads
-ENV PASTE_RETENTION_DAYS=7
-ENV LOGS_RETENTION_DAYS=180
 ENV MAX_FILE_SIZE=2GB
 ENV ID_SIZE=64
 ENV KEY_SIZE=128
@@ -95,7 +92,6 @@ COPY --from=wasm-builder --chown=101:101 /wasm/wasm_exec.js /web/wasm_exec.js
 
 # Define any necessary volumes
 VOLUME ["/uploads"]
-VOLUME ["/data"]
 
 # Set user 101
 USER 101

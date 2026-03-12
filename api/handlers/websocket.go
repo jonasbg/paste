@@ -14,9 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/jonasbg/paste/m/v2/db"
-	"github.com/jonasbg/paste/m/v2/types"
-	"github.com/jonasbg/paste/m/v2/utils"
+	"github.com/jonasbg/paste/m/v2/telemetry"
 )
 
 const (
@@ -76,9 +74,8 @@ func wsWriteJSON(ws *websocket.Conn, v any) error {
 	return ws.WriteJSON(v)
 }
 
-func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
+func HandleWSDownload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		start := time.Now()
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
@@ -99,8 +96,6 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		ctx, cancelPing := context.WithCancel(context.Background())
 		defer cancelPing()
 		startPingLoop(ctx, ws)
-
-		hashedIP := utils.HashIP(utils.GetRealIP(c))
 
 		// Get initial request with fileId and token
 		_, msg, err := ws.ReadMessage()
@@ -289,54 +284,21 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		// Calculate duration of download
-		duration := time.Since(start)
-
 		// Only delete file if download was completed successfully
 		if isComplete {
 			if err := os.Remove(filePath); err != nil {
 				log.Printf("Failed to remove file: %v", err)
 			}
 
-			// Log successful transaction
-			tx := &types.TransactionLog{
-				Timestamp:  start,
-				Action:     "download",
-				Method:     "websocket",
-				IP:         hashedIP,
-				FileID:     request.FileId,
-				Duration:   duration.Milliseconds(),
-				Size:       totalSent,
-				Success:    true,
-				StatusCode: 200,
-			}
-
-			if err = db.LogTransaction(tx); err != nil {
-				log.Printf("Failed to create transaction log: %v", err)
-			}
+			metrics.RecordTransfer(c.Request.Context(), "download", totalSent, true, "websocket")
 		} else {
-			// Log incomplete transaction
-			tx := &types.TransactionLog{
-				Timestamp:  start,
-				Action:     "download_incomplete",
-				Method:     "websocket",
-				IP:         hashedIP,
-				FileID:     request.FileId,
-				Duration:   duration.Milliseconds(),
-				Size:       totalSent,
-				Success:    false,
-				StatusCode: 500,
-			}
-
-			if err = db.LogTransaction(tx); err != nil {
-				log.Printf("Failed to create transaction log: %v", err)
-			}
+			metrics.RecordTransfer(c.Request.Context(), "download", totalSent, false, "websocket")
 		}
 	}
 }
 
-func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
+func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		start := time.Now()
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
@@ -360,8 +322,6 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		ctx, cancelPing := context.WithCancel(context.Background())
 		defer cancelPing()
 		startPingLoop(ctx, ws)
-
-		hashedIP := utils.HashIP(utils.GetRealIP(c))
 
 		// 1. Initial Message: Size Check
 		_, msg, err := ws.ReadMessage()
@@ -601,24 +561,7 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			return
 		}
 
-		duration := time.Since(start)
-
-		// 9. Log Transaction
-		tx := &types.TransactionLog{
-			Timestamp:  start,
-			Action:     "upload",
-			Method:     "websocket",
-			IP:         hashedIP,
-			FileID:     id,
-			Duration:   duration.Milliseconds(),
-			Size:       totalBytes,
-			Success:    true,
-			StatusCode: 200,
-		}
-
-		if err = db.LogTransaction(tx); err != nil {
-			log.Printf("Failed to create transaction log: %v", err)
-		}
+		metrics.RecordTransfer(c.Request.Context(), "upload", totalBytes, true, "websocket")
 
 		// 10. Send Completion Message
 		if err := wsWriteJSON(ws, gin.H{
