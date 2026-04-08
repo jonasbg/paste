@@ -40,7 +40,7 @@ export class FileProcessor {
         return parseFloat(size) * (units[unit.toUpperCase()] || 1);
     }
 
-    private getMaxFileSize(): number {
+    getMaxFileSize(): number {
         const config = get(configStore);
         if (!config.data) {
             throw new Error('Config has not been loaded. Please wait for config to load before processing files.');

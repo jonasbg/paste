@@ -1,7 +1,18 @@
 import { configStore } from '$lib/stores/config';
 import { getWasmInstance } from '$lib/utils/wasm-loader';
-import { ProgressCallback } from './fileProcessor';
+import type { ProgressCallback } from './fileProcessor';
 import { get } from 'svelte/store';
+
+function requireWasmMethod<T>(
+	method: T | undefined,
+	name: string
+): NonNullable<T> {
+	if (!method) {
+		throw new Error(`${name} is unavailable`);
+	}
+
+	return method as NonNullable<T>;
+}
 
 export async function downloadAndDecryptFile(
 	fileId: string,
@@ -12,6 +23,12 @@ export async function downloadAndDecryptFile(
 	const wasmInstance = getWasmInstance();
 	const config = get(configStore);
 	if (!wasmInstance) throw new Error('WASM not initialized');
+	const decryptMetadata = requireWasmMethod(wasmInstance.decryptMetadata, 'decryptMetadata');
+	const createDecryptionStream = requireWasmMethod(
+		wasmInstance.createDecryptionStream,
+		'createDecryptionStream'
+	);
+	const decryptChunk = requireWasmMethod(wasmInstance.decryptChunk, 'decryptChunk');
 
 	await onProgress(0, 'Laster ned...');
 
@@ -26,7 +43,7 @@ export async function downloadAndDecryptFile(
 	}
 
 	const headerData = new Uint8Array(await headerResponse.arrayBuffer());
-	const metadata = await wasmInstance.decryptMetadata(key, headerData);
+	const metadata = await decryptMetadata(key, headerData);
 
 	// Now start streaming the full file
 	const response = await fetch(`/api/download/${fileId}`, {
@@ -44,11 +61,12 @@ export async function downloadAndDecryptFile(
 
 	const reader = response.body!.getReader();
 	const contentLength = +(response.headers.get('Content-Length') || 0);
-	const decryptedChunks: Uint8Array[] = [];
+	const decryptedChunks: BlobPart[] = [];
 
 	let receivedLength = 0;
 	let headerProcessed = false;
 	let decryptionInitialized = false;
+	let cipherId: number | null = null;
 	let bufferedData = new Uint8Array(0);
 
 	// Process the stream
@@ -82,8 +100,8 @@ export async function downloadAndDecryptFile(
 		if (!decryptionInitialized && bufferedData.length >= 12) {
 			// Initialize decryption with IV
 			const iv = bufferedData.slice(0, 12);
-			const success = wasmInstance.createDecryptionStream(key, iv);
-			if (!success) {
+			cipherId = createDecryptionStream(key, iv);
+			if (typeof cipherId !== 'number') {
 				throw new Error('Failed to initialize decryption stream');
 			}
 
@@ -91,19 +109,19 @@ export async function downloadAndDecryptFile(
 			bufferedData = bufferedData.slice(12);
 		}
 
-		if (decryptionInitialized && bufferedData.length > 0) {
+		if (decryptionInitialized && bufferedData.length > 0 && cipherId !== null) {
 			// Process buffered data in chunks
-			const chunkSize = config.chunkSize *1024 * 1024 + 16; // 1MB + GCM tag
+			const chunkSize = config.chunkSize * 1024 * 1024 + 16; // 1MB + GCM tag
 			while (bufferedData.length >= chunkSize) {
 				const chunk = bufferedData.slice(0, chunkSize);
 				const isLastChunk = false; // We don't know yet
 
-				const decrypted = wasmInstance.decryptChunk(chunk, isLastChunk);
+				const decrypted = decryptChunk(cipherId, chunk, isLastChunk);
 				if (!decrypted) {
 					throw new Error('Failed to decrypt chunk');
 				}
 
-				decryptedChunks.push(decrypted);
+				decryptedChunks.push(new Uint8Array(decrypted));
 
 				const progress = Math.round(((decryptedChunks.length * chunkSize) / contentLength) * 100);
 				await onProgress(progress, `Laster ned... `);
@@ -114,12 +132,12 @@ export async function downloadAndDecryptFile(
 	}
 
 	// Process any remaining data
-	if (bufferedData.length > 0) {
-		const decrypted = wasmInstance.decryptChunk(bufferedData, true);
+	if (bufferedData.length > 0 && cipherId !== null) {
+		const decrypted = decryptChunk(cipherId, bufferedData, true);
 		if (!decrypted) {
 			throw new Error('Failed to decrypt final chunk');
 		}
-		decryptedChunks.push(decrypted);
+		decryptedChunks.push(new Uint8Array(decrypted));
 	}
 
 	// Create a blob from all decrypted chunks
@@ -136,6 +154,7 @@ export async function fetchMetadata(fileId: string, key: string, token: string):
 	try {
 		const wasmInstance = getWasmInstance();
 		if (!wasmInstance) throw new Error('WASM not initialized');
+		const decryptMetadata = requireWasmMethod(wasmInstance.decryptMetadata, 'decryptMetadata');
 
 		const response = await fetch(`/api/metadata/${fileId}`, {
 			headers: {
@@ -153,7 +172,7 @@ export async function fetchMetadata(fileId: string, key: string, token: string):
 
 		const fileSize = response.headers.get('X-File-Size');
 		const encryptedData = await response.arrayBuffer();
-		const metadata = wasmInstance.decryptMetadata(key, new Uint8Array(encryptedData));
+		const metadata = decryptMetadata(key, new Uint8Array(encryptedData));
 
 		if (!metadata.filename) {
 			throw new Error('Invalid metadata received');
@@ -196,6 +215,12 @@ export async function streamDownloadAndDecrypt(
   const wasmInstance = getWasmInstance();
   const config = get(configStore);
   if (!wasmInstance) throw new Error('WASM not initialized');
+  const decryptMetadata = requireWasmMethod(wasmInstance.decryptMetadata, 'decryptMetadata');
+  const createDecryptionStream = requireWasmMethod(
+    wasmInstance.createDecryptionStream,
+    'createDecryptionStream'
+  );
+  const decryptChunk = requireWasmMethod(wasmInstance.decryptChunk, 'decryptChunk');
 
   await onProgress(0, 'Starting download...');
 
@@ -212,7 +237,7 @@ export async function streamDownloadAndDecrypt(
 
 	
   const headerData = new Uint8Array(await headerResponse.arrayBuffer());
-  const metadata = await wasmInstance.decryptMetadata(key, headerData);
+  const metadata = await decryptMetadata(key, headerData);
 
   // Now start streaming the full file
   const response = await fetch(`/api/download/${fileId}`, {
@@ -300,7 +325,7 @@ export async function streamDownloadAndDecrypt(
       if (!decryptionInitialized && bufferedData.length >= 12) {
         // Initialize decryption with IV
         const iv = bufferedData.slice(0, 12);
-        cipherId = wasmInstance.createDecryptionStream(key, iv);
+        cipherId = createDecryptionStream(key, iv);
         if (typeof cipherId !== 'number') {
           controller.error(new Error('Failed to initialize decryption stream'));
           return;
@@ -317,7 +342,7 @@ export async function streamDownloadAndDecrypt(
           const dataChunk = bufferedData.slice(0, chunkSize);
           const isLastChunk = false; // We don't know yet
 
-          const decrypted = wasmInstance.decryptChunk(cipherId, dataChunk, isLastChunk);
+          const decrypted = decryptChunk(cipherId, dataChunk, isLastChunk);
           if (!decrypted) {
             controller.error(new Error('Failed to decrypt chunk'));
             return;
@@ -335,7 +360,7 @@ export async function streamDownloadAndDecrypt(
       
       // Process any remaining data
       if (bufferedData.length > 0 && decryptionInitialized && cipherId !== null) {
-        const decrypted = wasmInstance.decryptChunk(cipherId, bufferedData, true);
+        const decrypted = decryptChunk(cipherId, bufferedData, true);
         if (!decrypted) {
           controller.error(new Error('Failed to decrypt final chunk'));
           return;

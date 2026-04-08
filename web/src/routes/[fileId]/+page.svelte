@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { initWasm } from '$lib/utils/wasm-loader';
@@ -12,10 +12,12 @@
 	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
+	import { renderTextPreview } from '$lib/utils/textPreview';
 	import { fly } from 'svelte/transition';
 
 	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
 	const TEXT_PREVIEW_MAX_CHARS = 120_000;
+	const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 	const TEXT_PREVIEW_EXTENSIONS = new Set([
 		'txt',
 		'md',
@@ -60,6 +62,26 @@
 		'hpp',
 		'sql'
 	]);
+	const IMAGE_PREVIEW_EXTENSIONS = new Set([
+		'png',
+		'jpg',
+		'jpeg',
+		'gif',
+		'webp',
+		'bmp',
+		'avif',
+		'svg'
+	]);
+	const IMAGE_MIME_TYPES: Record<string, string> = {
+		png: 'image/png',
+		jpg: 'image/jpeg',
+		jpeg: 'image/jpeg',
+		gif: 'image/gif',
+		webp: 'image/webp',
+		bmp: 'image/bmp',
+		avif: 'image/avif',
+		svg: 'image/svg+xml'
+	};
 
 	type FileMetadata = {
 		filename?: string;
@@ -81,9 +103,14 @@
 	let isLoading = true;
 	let deletionError: string | null = null;
 	let textPreview: string | null = null;
+	let textPreviewHtml = '';
+	let textPreviewMode: 'pre' | 'table' = 'pre';
 	let textPreviewError: string | null = null;
 	let isLoadingTextPreview = false;
 	let isTextPreviewTruncated = false;
+	let imagePreviewUrl: string | null = null;
+	let imagePreviewError: string | null = null;
+	let isLoadingImagePreview = false;
 	let previewRequestId = 0;
 
 	// Smooth progress animation
@@ -152,6 +179,14 @@
 		return null;
 	}
 
+	function getCurrentFileId(): string {
+		const fileId = $page.params.fileId;
+		if (!fileId) {
+			throw new Error('Missing file ID');
+		}
+		return fileId;
+	}
+
 	function formatPreviewLimit(bytes: number): string {
 		if (bytes >= 1024 * 1024) {
 			return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
@@ -187,22 +222,127 @@
 		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
 	}
 
+	function isImagePreviewable(fileMetadata: FileMetadata | null): boolean {
+		if (!fileMetadata?.filename) return false;
+
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('image/')) return true;
+
+		return IMAGE_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
+	}
+
+	function resolveImagePreviewType(fileMetadata: FileMetadata): string | null {
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('image/')) {
+			return contentType;
+		}
+
+		return IMAGE_MIME_TYPES[getFileExtension(fileMetadata.filename)] || null;
+	}
+
+	function getUnavailableDownloadMessage(error: unknown): string | null {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message.includes('Failed to download file') || message.includes('Invalid access token')) {
+			return 'Filen finnes ikke eller har allerede blitt lastet ned.';
+		}
+		return null;
+	}
+
+	function fitViewport(
+		node: HTMLElement,
+		options: { reserveSelector?: string; bottomGap?: number; minHeight?: number } = {}
+	) {
+		let frame = 0;
+		let resizeObserver: ResizeObserver | null = null;
+		let currentOptions = options;
+
+		const getOuterHeight = (element: Element) => {
+			const styles = window.getComputedStyle(element as HTMLElement);
+			const marginTop = parseFloat(styles.marginTop) || 0;
+			const marginBottom = parseFloat(styles.marginBottom) || 0;
+			return (element as HTMLElement).getBoundingClientRect().height + marginTop + marginBottom;
+		};
+
+		const update = () => {
+			frame = 0;
+			const rect = node.getBoundingClientRect();
+			const viewportHeight = window.visualViewport?.height || window.innerHeight;
+			const reserveHeight = currentOptions.reserveSelector
+				? Array.from(
+						node.closest('.download-section')?.querySelectorAll(currentOptions.reserveSelector) ??
+							[]
+					).reduce((total, element) => total + getOuterHeight(element), 0)
+				: 0;
+			const bottomGap = currentOptions.bottomGap ?? 24;
+			const minHeight = currentOptions.minHeight ?? 160;
+			const availableHeight = Math.max(
+				minHeight,
+				Math.floor(viewportHeight - rect.top - reserveHeight - bottomGap)
+			);
+			node.style.maxHeight = `${availableHeight}px`;
+		};
+
+		const scheduleUpdate = () => {
+			if (frame) cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(update);
+		};
+
+		scheduleUpdate();
+		window.addEventListener('resize', scheduleUpdate);
+		window.visualViewport?.addEventListener('resize', scheduleUpdate);
+
+		if ('ResizeObserver' in window) {
+			resizeObserver = new ResizeObserver(scheduleUpdate);
+			resizeObserver.observe(document.body);
+		}
+
+		return {
+			update(nextOptions: typeof currentOptions = currentOptions) {
+				currentOptions = nextOptions;
+				scheduleUpdate();
+			},
+			destroy() {
+				if (frame) cancelAnimationFrame(frame);
+				window.removeEventListener('resize', scheduleUpdate);
+				window.visualViewport?.removeEventListener('resize', scheduleUpdate);
+				resizeObserver?.disconnect();
+			}
+		};
+	}
+
 	function resetTextPreview() {
-		previewRequestId += 1;
 		textPreview = null;
+		textPreviewHtml = '';
+		textPreviewMode = 'pre';
 		textPreviewError = null;
 		isLoadingTextPreview = false;
 		isTextPreviewTruncated = false;
+	}
+
+	function resetImagePreview() {
+		if (imagePreviewUrl && browser) {
+			URL.revokeObjectURL(imagePreviewUrl);
+		}
+
+		imagePreviewUrl = null;
+		imagePreviewError = null;
+		isLoadingImagePreview = false;
+	}
+
+	function resetPreviews(): number {
+		previewRequestId += 1;
+		resetTextPreview();
+		resetImagePreview();
+		return previewRequestId;
 	}
 
 	async function loadTextPreview(
 		fileId: string,
 		key: string,
 		token: string,
-		fileMetadata: FileMetadata
+		fileMetadata: FileMetadata,
+		requestId: number
 	) {
-		resetTextPreview();
-
 		if (!isTextPreviewable(fileMetadata)) return;
 
 		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
@@ -210,7 +350,6 @@
 			return;
 		}
 
-		const requestId = ++previewRequestId;
 		isLoadingTextPreview = true;
 
 		try {
@@ -219,11 +358,20 @@
 
 			if (requestId !== previewRequestId) return;
 
-			textPreview = previewText.slice(0, TEXT_PREVIEW_MAX_CHARS);
+			const clippedPreview = previewText.slice(0, TEXT_PREVIEW_MAX_CHARS);
+			textPreview = clippedPreview;
 			isTextPreviewTruncated = previewText.length > TEXT_PREVIEW_MAX_CHARS;
+			const renderedPreview = renderTextPreview(clippedPreview, fileMetadata);
+			textPreviewHtml = renderedPreview.html;
+			textPreviewMode = renderedPreview.mode;
 		} catch (error) {
 			if (requestId !== previewRequestId) return;
 			console.error('Text preview error:', error);
+			const unavailableMessage = getUnavailableDownloadMessage(error);
+			if (unavailableMessage) {
+				metadata = { error: unavailableMessage };
+				return;
+			}
 			textPreviewError = 'Kunne ikke laste forhåndsvisning av tekstfilen.';
 		} finally {
 			if (requestId === previewRequestId) {
@@ -232,17 +380,86 @@
 		}
 	}
 
-	async function getMetadata() {
-		resetTextPreview();
+	async function loadImagePreview(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		if (!isImagePreviewable(fileMetadata)) return;
+
+		if ((fileMetadata.size || 0) > IMAGE_PREVIEW_MAX_BYTES) {
+			imagePreviewError = `Forhåndsvisning er bare tilgjengelig for bildefiler opptil ${formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)}.`;
+			return;
+		}
+
+		isLoadingImagePreview = true;
 
 		try {
-			const fileId = $page.params.fileId;
+			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
+			const previewType = resolveImagePreviewType(fileMetadata);
+			const previewBlob =
+				previewType && decrypted.type !== previewType
+					? new Blob([decrypted], { type: previewType })
+					: decrypted;
+			const objectUrl = URL.createObjectURL(previewBlob);
+
+			if (requestId !== previewRequestId) {
+				URL.revokeObjectURL(objectUrl);
+				return;
+			}
+
+			imagePreviewUrl = objectUrl;
+		} catch (error) {
+			if (requestId !== previewRequestId) return;
+			console.error('Image preview error:', error);
+			const unavailableMessage = getUnavailableDownloadMessage(error);
+			if (unavailableMessage) {
+				metadata = { error: unavailableMessage };
+				return;
+			}
+			imagePreviewError = 'Kunne ikke laste forhåndsvisning av bildefilen.';
+		} finally {
+			if (requestId === previewRequestId) {
+				isLoadingImagePreview = false;
+			}
+		}
+	}
+
+	async function loadPreviews(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		const previewTasks: Promise<void>[] = [];
+
+		if (isTextPreviewable(fileMetadata)) {
+			previewTasks.push(loadTextPreview(fileId, key, token, fileMetadata, requestId));
+		}
+
+		if (isImagePreviewable(fileMetadata)) {
+			previewTasks.push(loadImagePreview(fileId, key, token, fileMetadata, requestId));
+		}
+
+		if (previewTasks.length > 0) {
+			await Promise.all(previewTasks);
+		}
+	}
+
+	async function getMetadata() {
+		const requestId = resetPreviews();
+
+		try {
+			const fileId = getCurrentFileId();
 			const activeKey = encryptionKey;
 			const hmacToken = await generateHmacToken(fileId, activeKey);
 			const metadataResponse = await fetchMetadata(fileId, activeKey, hmacToken);
 			metadata = metadataResponse.metadata;
 			fileSize = metadataResponse.size?.toString();
-			void loadTextPreview(fileId, activeKey, hmacToken, metadataResponse.metadata);
+			void loadPreviews(fileId, activeKey, hmacToken, metadataResponse.metadata, requestId);
 		} catch (error) {
 			console.error('Metadata error:', error);
 			encryptionKey = '';
@@ -258,7 +475,7 @@
 
 	function setEncryptionKey(key: string) {
 		encryptionKey = key;
-		resetTextPreview();
+		resetPreviews();
 		if (browser) replaceState('', window.location.pathname);
 	}
 
@@ -279,7 +496,7 @@
 		downloadError = null;
 
 		try {
-			const fileId = $page.params.fileId;
+			const fileId = getCurrentFileId();
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
 			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
@@ -293,14 +510,14 @@
 			);
 
 			const reader = stream.getReader();
-			const chunks = [];
+			const chunks: BlobPart[] = [];
 			let receivedLength = 0;
 
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
 				if (value) {
-					chunks.push(value);
+					chunks.push(new Uint8Array(value));
 					receivedLength += value.length;
 				}
 			}
@@ -366,7 +583,7 @@
 		try {
 			await initWasm();
 
-			const fileId = $page.params.fileId;
+			const fileId = getCurrentFileId();
 
 			const storedKey = sessionStorage.getItem('paste_key_' + fileId);
 			if (storedKey) {
@@ -397,6 +614,10 @@
 		}
 	});
 
+	onDestroy(() => {
+		resetPreviews();
+	});
+
 	$: canDownload = !!(
 		metadata &&
 		!metadata.error &&
@@ -405,7 +626,7 @@
 		encryptionKey
 	);
 
-	$: manualKeyInput, (keyError = null);
+	$: (manualKeyInput, (keyError = null));
 </script>
 
 <div class="page-container">
@@ -427,6 +648,74 @@
 			{:else if metadata?.error}
 				<ErrorMessage message={metadata.error} />
 			{:else if metadata?.filename}
+				{#if isImagePreviewable(metadata)}
+					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+						<div class="preview-header">
+							<h2>Forhåndsvisning</h2>
+							<span class="preview-badge">Bilde</span>
+						</div>
+
+						{#if isLoadingImagePreview}
+							<div class="preview-loading">
+								<LoadingSpinner message="Laster bildeforhåndsvisning..." />
+							</div>
+						{:else if imagePreviewUrl}
+							<img
+								class="image-preview"
+								src={imagePreviewUrl}
+								alt={`Forhåndsvisning av ${metadata.filename}`}
+								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 96 }}
+							/>
+						{:else if imagePreviewError}
+							<p class="preview-note">{imagePreviewError}</p>
+						{/if}
+					</div>
+				{/if}
+
+				{#if isTextPreviewable(metadata)}
+					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+						<div class="preview-header">
+							<h2>Forhåndsvisning</h2>
+							<span class="preview-badge">Tekst</span>
+						</div>
+
+						{#if isLoadingTextPreview}
+							<div class="preview-loading">
+								<LoadingSpinner message="Laster tekstforhåndsvisning..." />
+							</div>
+						{:else if textPreview !== null}
+							{#if textPreview.length > 0}
+								{#if textPreviewMode === 'table'}
+									<div
+										class="table-preview"
+										use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 180, minHeight: 96 }}
+									>
+										{@html textPreviewHtml}
+									</div>
+								{:else}
+									<pre
+										class="text-preview syntax-preview"
+										use:fitViewport={{
+											reserveSelector: '.file-row',
+											bottomGap: 180,
+											minHeight: 96
+										}}>{@html textPreviewHtml}</pre>
+								{/if}
+							{:else}
+								<p class="preview-note">Denne tekstfilen er tom.</p>
+							{/if}
+
+							{#if isTextPreviewTruncated}
+								<p class="preview-note">
+									Forhåndsvisningen er avkortet. Last ned filen for å se hele innholdet.
+								</p>
+							{/if}
+						{:else if textPreviewError}
+							<p class="preview-note">{textPreviewError}</p>
+						{/if}
+					</div>
+				{/if}
+
 				<!-- Unified 3-column file row -->
 				<div class="file-row" in:fly={{ y: 16, duration: 280 }}>
 					<!-- Left: file icon -->
@@ -498,48 +787,17 @@
 						{:else if isDownloading}
 							<div class="spinner" aria-label="Laster ned..."></div>
 						{:else}
-							<button
-								class="download-btn"
-								on:click={initiateDownload}
-								disabled={!canDownload}
-							>
+							<button class="download-btn" on:click={initiateDownload} disabled={!canDownload}>
 								Last ned
 							</button>
 						{/if}
 					</div>
 				</div>
 
-				{#if isTextPreviewable(metadata)}
-					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
-						<div class="preview-header">
-							<h2>Forhåndsvisning</h2>
-							<span class="preview-badge">Tekst</span>
-						</div>
-
-						{#if isLoadingTextPreview}
-							<div class="preview-loading">
-								<LoadingSpinner message="Laster tekstforhåndsvisning..." />
-							</div>
-						{:else if textPreview !== null}
-							{#if textPreview.length > 0}
-								<pre class="text-preview">{textPreview}</pre>
-							{:else}
-								<p class="preview-note">Denne tekstfilen er tom.</p>
-							{/if}
-
-							{#if isTextPreviewTruncated}
-								<p class="preview-note">
-									Forhåndsvisningen er avkortet. Last ned filen for å se hele innholdet.
-								</p>
-							{/if}
-						{:else if textPreviewError}
-							<p class="preview-note">{textPreviewError}</p>
-						{/if}
-					</div>
-				{/if}
-
 				{#if isDownloadComplete}
-					<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>Filen er slettet fra serveren.</p>
+					<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
+						Filen er slettet fra serveren.
+					</p>
 				{/if}
 
 				{#if deletionError}
@@ -562,11 +820,7 @@
 							bind:value={manualKeyInput}
 							disabled={isDownloading}
 						/>
-						<button
-							type="submit"
-							class="button"
-							disabled={!manualKeyInput.trim() || isDownloading}
-						>
+						<button type="submit" class="button" disabled={!manualKeyInput.trim() || isDownloading}>
 							Dekrypter
 						</button>
 					</div>
@@ -626,7 +880,7 @@
 		font-size: 1rem;
 		line-height: 1.6;
 		color: #555;
-		margin-bottom: 1.5rem;
+		/* margin-bottom: 1.5rem; */
 	}
 
 	/* ── Unified 3-column file row ── */
@@ -692,17 +946,92 @@
 		color: #111827;
 		font-size: 0.875rem;
 		line-height: 1.6;
-		font-family:
-			'SFMono-Regular',
-			'SFMono-Regular',
-			Consolas,
-			'Liberation Mono',
-			Menlo,
-			monospace;
+		font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 		white-space: pre-wrap;
 		word-break: break-word;
-		overflow-x: auto;
-		max-height: 32rem;
+		overflow: auto;
+	}
+
+	:global(.syntax-preview .tok-key),
+	:global(.syntax-preview .tok-attr) {
+		color: #0f766e;
+	}
+
+	:global(.syntax-preview .tok-string) {
+		color: #9a3412;
+	}
+
+	:global(.syntax-preview .tok-number) {
+		color: #7c3aed;
+	}
+
+	:global(.syntax-preview .tok-bool),
+	:global(.syntax-preview .tok-null) {
+		color: #b45309;
+	}
+
+	:global(.syntax-preview .tok-comment) {
+		color: #6b7280;
+		font-style: italic;
+	}
+
+	:global(.syntax-preview .tok-keyword),
+	:global(.syntax-preview .tok-tag) {
+		color: #1d4ed8;
+	}
+
+	:global(.syntax-preview .tok-punct) {
+		color: #475569;
+	}
+
+	.image-preview {
+		display: block;
+		width: 100%;
+		object-fit: contain;
+		border-radius: 8px;
+		border: 1px solid #e5e7eb;
+		background: #f8fafc;
+	}
+
+	.table-preview {
+		overflow: auto;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		background: #f8fafc;
+	}
+
+	.table-preview :global(.preview-table) {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.875rem;
+		line-height: 1.45;
+	}
+
+	.table-preview :global(th),
+	.table-preview :global(td) {
+		padding: 0.625rem 0.75rem;
+		border-bottom: 1px solid #e5e7eb;
+		border-right: 1px solid #e5e7eb;
+		text-align: left;
+		vertical-align: top;
+		white-space: nowrap;
+	}
+
+	.table-preview :global(th) {
+		position: sticky;
+		top: 0;
+		background: #eef2ff;
+		color: #1f2937;
+		font-weight: 600;
+	}
+
+	.table-preview :global(tr:last-child td) {
+		border-bottom: none;
+	}
+
+	.table-preview :global(th:last-child),
+	.table-preview :global(td:last-child) {
+		border-right: none;
 	}
 
 	.preview-note {

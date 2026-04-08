@@ -3,7 +3,11 @@
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
-	import { fetchMetadata, streamDownloadAndDecrypt } from '$lib/services/fileService';
+	import {
+		downloadAndDecryptFile,
+		fetchMetadata,
+		streamDownloadAndDecrypt
+	} from '$lib/services/fileService';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import { generatePassphrase } from '$lib/utils/wordlist';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
@@ -11,7 +15,84 @@
 	import { fade, fly, slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { configStore } from '$lib/stores/config';
+	import { renderTextPreview } from '$lib/utils/textPreview';
+
+	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
+	const TEXT_PREVIEW_MAX_CHARS = 120_000;
+	const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+	const TEXT_PREVIEW_EXTENSIONS = new Set([
+		'txt',
+		'md',
+		'markdown',
+		'json',
+		'jsonl',
+		'log',
+		'csv',
+		'tsv',
+		'xml',
+		'yaml',
+		'yml',
+		'toml',
+		'ini',
+		'conf',
+		'cfg',
+		'env',
+		'sh',
+		'bash',
+		'zsh',
+		'fish',
+		'ps1',
+		'js',
+		'ts',
+		'jsx',
+		'tsx',
+		'css',
+		'scss',
+		'html',
+		'htm',
+		'svelte',
+		'py',
+		'rb',
+		'php',
+		'java',
+		'go',
+		'rs',
+		'c',
+		'cc',
+		'cpp',
+		'h',
+		'hpp',
+		'sql'
+	]);
+	const IMAGE_PREVIEW_EXTENSIONS = new Set([
+		'png',
+		'jpg',
+		'jpeg',
+		'gif',
+		'webp',
+		'bmp',
+		'avif',
+		'svg'
+	]);
+	const IMAGE_MIME_TYPES = {
+		png: 'image/png',
+		jpg: 'image/jpeg',
+		jpeg: 'image/jpeg',
+		gif: 'image/gif',
+		webp: 'image/webp',
+		bmp: 'image/bmp',
+		avif: 'image/avif',
+		svg: 'image/svg+xml'
+	};
+
+	type FileMetadata = {
+		filename?: string;
+		contentType?: string;
+		size?: number;
+		error?: string;
+	};
 
 	let fileInput: HTMLInputElement;
 	let selectedFile: File | null = null;
@@ -42,6 +123,16 @@
 	let passphraseDownloadStartTime = 0;
 	let passphraseEta = '';
 	let passphraseAnimFrame: number;
+	let passphraseTextPreview: string | null = null;
+	let passphraseTextPreviewHtml = '';
+	let passphraseTextPreviewMode: 'pre' | 'table' = 'pre';
+	let passphraseTextPreviewError = '';
+	let isLoadingPassphraseTextPreview = false;
+	let isPassphraseTextPreviewTruncated = false;
+	let passphraseImagePreviewUrl: string | null = null;
+	let passphraseImagePreviewError = '';
+	let isLoadingPassphraseImagePreview = false;
+	let passphrasePreviewRequestId = 0;
 
 	// Drag state
 	let dragCounter = 0;
@@ -55,6 +146,269 @@
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.ceil(seconds % 60);
 		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} igjen`;
+	}
+
+	function formatPreviewLimit(bytes: number): string {
+		if (bytes >= 1024 * 1024) {
+			return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+		}
+
+		if (bytes >= 1024) {
+			return `${(bytes / 1024).toFixed(0)} KB`;
+		}
+
+		return `${bytes} B`;
+	}
+
+	function getFileExtension(filename: string | undefined): string {
+		if (!filename || !filename.includes('.')) return '';
+		return filename.split('.').pop()?.toLowerCase() || '';
+	}
+
+	function isTextPreviewable(fileMetadata: FileMetadata | null): boolean {
+		if (!fileMetadata?.filename) return false;
+
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('text/')) return true;
+
+		if (
+			contentType.includes('json') ||
+			contentType.includes('xml') ||
+			contentType.includes('yaml') ||
+			contentType.includes('javascript')
+		) {
+			return true;
+		}
+
+		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
+	}
+
+	function isImagePreviewable(fileMetadata: FileMetadata | null): boolean {
+		if (!fileMetadata?.filename) return false;
+
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('image/')) return true;
+
+		return IMAGE_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
+	}
+
+	function resolveImagePreviewType(fileMetadata: FileMetadata): string | null {
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('image/')) {
+			return contentType;
+		}
+
+		const ext = getFileExtension(fileMetadata.filename);
+		return (IMAGE_MIME_TYPES as Record<string, string>)[ext] || null;
+	}
+
+	function getUnavailableDownloadMessage(error: unknown): string | null {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message.includes('Failed to download file') || message.includes('Invalid access token')) {
+			return 'Filen finnes ikke eller har allerede blitt lastet ned.';
+		}
+		return null;
+	}
+
+	function fitViewport(
+		node: HTMLElement,
+		options: { reserveSelector?: string; bottomGap?: number; minHeight?: number } = {}
+	) {
+		let frame = 0;
+		let resizeObserver: ResizeObserver | null = null;
+		let currentOptions = options;
+
+		const getOuterHeight = (element: Element) => {
+			const styles = window.getComputedStyle(element as HTMLElement);
+			const marginTop = parseFloat(styles.marginTop) || 0;
+			const marginBottom = parseFloat(styles.marginBottom) || 0;
+			return (element as HTMLElement).getBoundingClientRect().height + marginTop + marginBottom;
+		};
+
+		const update = () => {
+			frame = 0;
+			const rect = node.getBoundingClientRect();
+			const viewportHeight = window.visualViewport?.height || window.innerHeight;
+			const reserveHeight = currentOptions.reserveSelector
+				? Array.from(
+						node.closest('.passphrase-panel')?.querySelectorAll(currentOptions.reserveSelector) ??
+							[]
+					).reduce((total, element) => total + getOuterHeight(element), 0)
+				: 0;
+			const bottomGap = currentOptions.bottomGap ?? 24;
+			const minHeight = currentOptions.minHeight ?? 160;
+			const availableHeight = Math.max(
+				minHeight,
+				Math.floor(viewportHeight - rect.top - reserveHeight - bottomGap)
+			);
+			node.style.maxHeight = `${availableHeight}px`;
+		};
+
+		const scheduleUpdate = () => {
+			if (frame) cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(update);
+		};
+
+		scheduleUpdate();
+		window.addEventListener('resize', scheduleUpdate);
+		window.visualViewport?.addEventListener('resize', scheduleUpdate);
+
+		if ('ResizeObserver' in window) {
+			resizeObserver = new ResizeObserver(scheduleUpdate);
+			resizeObserver.observe(document.body);
+		}
+
+		return {
+			update(nextOptions: typeof currentOptions = currentOptions) {
+				currentOptions = nextOptions;
+				scheduleUpdate();
+			},
+			destroy() {
+				if (frame) cancelAnimationFrame(frame);
+				window.removeEventListener('resize', scheduleUpdate);
+				window.visualViewport?.removeEventListener('resize', scheduleUpdate);
+				resizeObserver?.disconnect();
+			}
+		};
+	}
+
+	function resetPassphraseTextPreview() {
+		passphraseTextPreview = null;
+		passphraseTextPreviewHtml = '';
+		passphraseTextPreviewMode = 'pre';
+		passphraseTextPreviewError = '';
+		isLoadingPassphraseTextPreview = false;
+		isPassphraseTextPreviewTruncated = false;
+	}
+
+	function resetPassphraseImagePreview() {
+		if (passphraseImagePreviewUrl && browser) {
+			URL.revokeObjectURL(passphraseImagePreviewUrl);
+		}
+
+		passphraseImagePreviewUrl = null;
+		passphraseImagePreviewError = '';
+		isLoadingPassphraseImagePreview = false;
+	}
+
+	function resetPassphrasePreviews(): number {
+		passphrasePreviewRequestId += 1;
+		resetPassphraseTextPreview();
+		resetPassphraseImagePreview();
+		return passphrasePreviewRequestId;
+	}
+
+	async function loadPassphraseTextPreview(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		if (!isTextPreviewable(fileMetadata)) return;
+
+		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
+			passphraseTextPreviewError = `Forhåndsvisning er bare tilgjengelig for tekstfiler opptil ${formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)}.`;
+			return;
+		}
+
+		isLoadingPassphraseTextPreview = true;
+
+		try {
+			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
+			const previewText = (await decrypted.text()).replace(/\r\n/g, '\n');
+
+			if (requestId !== passphrasePreviewRequestId) return;
+
+			const clippedPreview = previewText.slice(0, TEXT_PREVIEW_MAX_CHARS);
+			passphraseTextPreview = clippedPreview;
+			isPassphraseTextPreviewTruncated = previewText.length > TEXT_PREVIEW_MAX_CHARS;
+			const renderedPreview = renderTextPreview(clippedPreview, fileMetadata);
+			passphraseTextPreviewHtml = renderedPreview.html;
+			passphraseTextPreviewMode = renderedPreview.mode;
+		} catch (error) {
+			if (requestId !== passphrasePreviewRequestId) return;
+			console.error('Passphrase text preview error:', error);
+			const unavailableMessage = getUnavailableDownloadMessage(error);
+			if (unavailableMessage) {
+				passphraseFileMetadata = { error: unavailableMessage };
+				return;
+			}
+			passphraseTextPreviewError = 'Kunne ikke laste forhåndsvisning av tekstfilen.';
+		} finally {
+			if (requestId === passphrasePreviewRequestId) {
+				isLoadingPassphraseTextPreview = false;
+			}
+		}
+	}
+
+	async function loadPassphraseImagePreview(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		if (!isImagePreviewable(fileMetadata)) return;
+
+		if ((fileMetadata.size || 0) > IMAGE_PREVIEW_MAX_BYTES) {
+			passphraseImagePreviewError = `Forhåndsvisning er bare tilgjengelig for bildefiler opptil ${formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)}.`;
+			return;
+		}
+
+		isLoadingPassphraseImagePreview = true;
+
+		try {
+			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
+			const previewType = resolveImagePreviewType(fileMetadata);
+			const previewBlob =
+				previewType && decrypted.type !== previewType
+					? new Blob([decrypted], { type: previewType })
+					: decrypted;
+			const objectUrl = URL.createObjectURL(previewBlob);
+
+			if (requestId !== passphrasePreviewRequestId) {
+				URL.revokeObjectURL(objectUrl);
+				return;
+			}
+
+			passphraseImagePreviewUrl = objectUrl;
+		} catch (error) {
+			if (requestId !== passphrasePreviewRequestId) return;
+			console.error('Passphrase image preview error:', error);
+			const unavailableMessage = getUnavailableDownloadMessage(error);
+			if (unavailableMessage) {
+				passphraseFileMetadata = { error: unavailableMessage };
+				return;
+			}
+			passphraseImagePreviewError = 'Kunne ikke laste forhåndsvisning av bildefilen.';
+		} finally {
+			if (requestId === passphrasePreviewRequestId) {
+				isLoadingPassphraseImagePreview = false;
+			}
+		}
+	}
+
+	async function loadPassphrasePreviews(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		const previewTasks: Promise<void>[] = [];
+
+		if (isTextPreviewable(fileMetadata)) {
+			previewTasks.push(loadPassphraseTextPreview(fileId, key, token, fileMetadata, requestId));
+		}
+
+		if (isImagePreviewable(fileMetadata)) {
+			previewTasks.push(loadPassphraseImagePreview(fileId, key, token, fileMetadata, requestId));
+		}
+
+		if (previewTasks.length > 0) {
+			await Promise.all(previewTasks);
+		}
 	}
 
 	function animatePassphraseProgress() {
@@ -128,6 +482,13 @@
 		}
 	}
 
+	function clearUploadDraft() {
+		selectedFile = null;
+		fileSizeError = '';
+		uploadError = '';
+		if (fileInput) fileInput.value = '';
+	}
+
 	async function handleUpload() {
 		if (!selectedFile) return;
 		if (!$configStore.data) {
@@ -151,7 +512,7 @@
 			if (!generatedPassphrase) generatedPassphrase = generatePassphrase();
 
 			const wasm = getWasmInstance();
-			if (!wasm) throw new Error('WASM not initialized');
+			if (!wasm || !wasm.deriveFromPassphrase) throw new Error('WASM not initialized');
 
 			const keySize = parseInt($configStore.data.key_size) || 128;
 			const derived = wasm.deriveFromPassphrase(generatedPassphrase, keySize);
@@ -188,12 +549,13 @@
 
 		isDerivingPassphrase = true;
 		passphraseError = '';
+		const previewRequestId = resetPassphrasePreviews();
 
 		try {
 			const { initWasm, getWasmInstance } = await import('$lib/utils/wasm-loader');
 			await initWasm();
 			const wasm = getWasmInstance();
-			if (!wasm) throw new Error('WASM not initialized');
+			if (!wasm || !wasm.deriveFromPassphrase) throw new Error('WASM not initialized');
 
 			const config = $configStore.data;
 			const keySize = config ? parseInt(config.key_size) : 128;
@@ -210,12 +572,15 @@
 				throw new Error(response.metadata.error);
 			}
 
+			clearUploadDraft();
 			passphraseFileId = fileId;
 			passphraseKey = key;
 			passphraseFileMetadata = response.metadata;
 			passphraseFileSizeStr = response.size?.toString() ?? '';
+			void loadPassphrasePreviews(fileId, key, hmacToken, response.metadata, previewRequestId);
 		} catch (err) {
 			passphraseError = 'Ugyldig delingskode eller filen finnes ikke. Prøv igjen.';
+			resetPassphrasePreviews();
 			console.error('Passphrase resolve error:', err);
 		} finally {
 			isDerivingPassphrase = false;
@@ -241,14 +606,14 @@
 			);
 
 			const reader = stream.getReader();
-			const chunks: Uint8Array[] = [];
+			const chunks: BlobPart[] = [];
 			let receivedLength = 0;
 
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
 				if (value) {
-					chunks.push(value);
+					chunks.push(new Uint8Array(value));
 					receivedLength += value.length;
 				}
 			}
@@ -321,6 +686,7 @@
 		passphraseDownloadError = '';
 		passphraseDownloadStartTime = 0;
 		passphraseEta = '';
+		resetPassphrasePreviews();
 		isDragging = false;
 		dragCounter = 0;
 		if (fileInput) fileInput.value = '';
@@ -393,6 +759,7 @@
 			document.removeEventListener('drop', handlePageDrop);
 		}
 		if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
+		resetPassphrasePreviews();
 	});
 
 	function handleDragEnter(event: DragEvent) {
@@ -604,7 +971,7 @@
 			{/if}
 
 			<!-- Selected file preview: shown after file chosen, before upload starts -->
-			{#if selectedFile && !isUploading && !sharePassphrase && !uploadError}
+			{#if selectedFile && !isUploading && !sharePassphrase && !uploadError && !passphraseFileMetadata}
 				<div class="selected-file-row" in:fly={{ y: 8, duration: 220 }}>
 					<div class="col-icon">
 						<svg
@@ -704,6 +1071,78 @@
 						{#if passphraseFileMetadata.error}
 							<ErrorMessage message={passphraseFileMetadata.error} />
 						{:else}
+							{#if isImagePreviewable(passphraseFileMetadata)}
+								<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+									<div class="preview-header">
+										<h2>Forhåndsvisning</h2>
+										<span class="preview-badge">Bilde</span>
+									</div>
+
+									{#if isLoadingPassphraseImagePreview}
+										<div class="preview-loading">
+											<LoadingSpinner message="Laster bildeforhåndsvisning..." />
+										</div>
+									{:else if passphraseImagePreviewUrl}
+										<img
+											class="image-preview"
+											src={passphraseImagePreviewUrl}
+											alt={`Forhåndsvisning av ${passphraseFileMetadata.filename}`}
+											use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 96 }}
+										/>
+									{:else if passphraseImagePreviewError}
+										<p class="preview-note">{passphraseImagePreviewError}</p>
+									{/if}
+								</div>
+							{/if}
+
+							{#if isTextPreviewable(passphraseFileMetadata)}
+								<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+									<div class="preview-header">
+										<h2>Forhåndsvisning</h2>
+										<span class="preview-badge">Tekst</span>
+									</div>
+
+									{#if isLoadingPassphraseTextPreview}
+										<div class="preview-loading">
+											<LoadingSpinner message="Laster tekstforhåndsvisning..." />
+										</div>
+									{:else if passphraseTextPreview !== null}
+										{#if passphraseTextPreview.length > 0}
+											{#if passphraseTextPreviewMode === 'table'}
+												<div
+													class="table-preview"
+													use:fitViewport={{
+														reserveSelector: '.file-row',
+														bottomGap: 180,
+														minHeight: 96
+													}}
+												>
+													{@html passphraseTextPreviewHtml}
+												</div>
+											{:else}
+												<pre
+													class="text-preview syntax-preview"
+													use:fitViewport={{
+														reserveSelector: '.file-row',
+														bottomGap: 180,
+														minHeight: 96
+													}}>{@html passphraseTextPreviewHtml}</pre>
+											{/if}
+										{:else}
+											<p class="preview-note">Denne tekstfilen er tom.</p>
+										{/if}
+
+										{#if isPassphraseTextPreviewTruncated}
+											<p class="preview-note">
+												Forhåndsvisningen er avkortet. Last ned filen for å se hele innholdet.
+											</p>
+										{/if}
+									{:else if passphraseTextPreviewError}
+										<p class="preview-note">{passphraseTextPreviewError}</p>
+									{/if}
+								</div>
+							{/if}
+
 							<!-- File row below copy-section, no border -->
 							<div class="file-row" in:fly={{ y: 12, duration: 260 }}>
 								<!-- Left: file icon -->
@@ -839,7 +1278,7 @@
 		font-size: 1rem;
 		line-height: 1.6;
 		color: #555;
-		margin-bottom: 1.5rem;
+		/* margin-bottom: 1.5rem; */
 	}
 
 	.file-input {
@@ -924,7 +1363,7 @@
 
 	/* ── Passphrase panel ── */
 	.passphrase-panel {
-		margin-top: 1.5rem;
+		/* margin-top: 1.5rem; */
 		overflow: hidden;
 	}
 
@@ -1024,6 +1463,155 @@
 		align-items: center;
 		gap: 1rem;
 		padding: 1.5rem 1rem 0.25rem;
+	}
+
+	.preview-card {
+		margin-top: 1rem;
+		padding: 1rem 1.25rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 10px;
+		background: #fff;
+	}
+
+	.preview-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.875rem;
+	}
+
+	.preview-header h2 {
+		margin: 0;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: #111827;
+	}
+
+	.preview-badge {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: #166534;
+		background: rgba(34, 197, 94, 0.12);
+		border-radius: 999px;
+		padding: 0.25rem 0.625rem;
+	}
+
+	.preview-loading {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 8rem;
+	}
+
+	.text-preview {
+		margin: 0;
+		padding: 1rem;
+		border-radius: 8px;
+		background: #f8fafc;
+		border: 1px solid #e5e7eb;
+		color: #111827;
+		font-size: 0.875rem;
+		line-height: 1.6;
+		font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow: auto;
+	}
+
+	:global(.syntax-preview .tok-key),
+	:global(.syntax-preview .tok-attr) {
+		color: #0f766e;
+	}
+
+	:global(.syntax-preview .tok-string) {
+		color: #9a3412;
+	}
+
+	:global(.syntax-preview .tok-number) {
+		color: #7c3aed;
+	}
+
+	:global(.syntax-preview .tok-bool),
+	:global(.syntax-preview .tok-null) {
+		color: #b45309;
+	}
+
+	:global(.syntax-preview .tok-comment) {
+		color: #6b7280;
+		font-style: italic;
+	}
+
+	:global(.syntax-preview .tok-keyword),
+	:global(.syntax-preview .tok-tag) {
+		color: #1d4ed8;
+	}
+
+	:global(.syntax-preview .tok-punct) {
+		color: #475569;
+	}
+
+	.image-preview {
+		display: block;
+		width: 100%;
+		object-fit: contain;
+		border-radius: 8px;
+		border: 1px solid #e5e7eb;
+		background: #f8fafc;
+	}
+
+	.table-preview {
+		overflow: auto;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		background: #f8fafc;
+	}
+
+	.table-preview :global(.preview-table) {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.875rem;
+		line-height: 1.45;
+	}
+
+	.table-preview :global(th),
+	.table-preview :global(td) {
+		padding: 0.625rem 0.75rem;
+		border-bottom: 1px solid #e5e7eb;
+		border-right: 1px solid #e5e7eb;
+		text-align: left;
+		vertical-align: top;
+		white-space: nowrap;
+	}
+
+	.table-preview :global(th) {
+		position: sticky;
+		top: 0;
+		background: #eef2ff;
+		color: #1f2937;
+		font-weight: 600;
+	}
+
+	.table-preview :global(tr:last-child td) {
+		border-bottom: none;
+	}
+
+	.table-preview :global(th:last-child),
+	.table-preview :global(td:last-child) {
+		border-right: none;
+	}
+
+	.preview-note {
+		margin: 0;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: #6b7280;
+	}
+
+	.text-preview + .preview-note {
+		margin-top: 0.75rem;
 	}
 
 	.col-icon {
@@ -1338,6 +1926,15 @@
 
 		.url-field {
 			font-size: 16px;
+		}
+
+		.preview-card {
+			padding: 0.875rem;
+		}
+
+		.preview-header {
+			align-items: flex-start;
+			flex-direction: column;
 		}
 	}
 </style>
