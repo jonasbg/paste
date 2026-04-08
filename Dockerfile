@@ -1,5 +1,5 @@
 # Stage 1: Build WASM binaries and dependencies
-FROM golang:1.25-alpine AS wasm-builder
+FROM golang:1.26-alpine AS wasm-builder
 
 # Docker buildx provides these for multi-platform builds
 ARG TARGETOS
@@ -11,7 +11,7 @@ COPY wasm/ .
 # Install dependencies and download TinyGo
 RUN apk add --no-cache wget ca-certificates
 
-# Use TinyGo 0.40.1 with Go 1.25 support
+# Use TinyGo 0.40.1 with Go 1.26 support
 # Map Docker TARGETARCH to TinyGo's architecture naming
 RUN TINYGO_ARCH=$(case ${TARGETARCH} in \
         amd64) echo "amd64" ;; \
