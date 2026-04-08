@@ -3,16 +3,74 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import { streamDownloadAndDecrypt, fetchMetadata } from '$lib/services/fileService';
+	import {
+		downloadAndDecryptFile,
+		streamDownloadAndDecrypt,
+		fetchMetadata
+	} from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import { fly } from 'svelte/transition';
 
+	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
+	const TEXT_PREVIEW_MAX_CHARS = 120_000;
+	const TEXT_PREVIEW_EXTENSIONS = new Set([
+		'txt',
+		'md',
+		'markdown',
+		'json',
+		'jsonl',
+		'log',
+		'csv',
+		'tsv',
+		'xml',
+		'yaml',
+		'yml',
+		'toml',
+		'ini',
+		'conf',
+		'cfg',
+		'env',
+		'sh',
+		'bash',
+		'zsh',
+		'fish',
+		'ps1',
+		'js',
+		'ts',
+		'jsx',
+		'tsx',
+		'css',
+		'scss',
+		'html',
+		'htm',
+		'svelte',
+		'py',
+		'rb',
+		'php',
+		'java',
+		'go',
+		'rs',
+		'c',
+		'cc',
+		'cpp',
+		'h',
+		'hpp',
+		'sql'
+	]);
+
+	type FileMetadata = {
+		filename?: string;
+		contentType?: string;
+		size?: number;
+		error?: string;
+	};
+
 	let encryptionKey: string = '';
 	let manualKeyInput: string = '';
-	let metadata: any = null;
+	let metadata: FileMetadata | null = null;
 	let fileSize: string | undefined;
 	let downloadProgress = 0;
 	let downloadMessage = '';
@@ -22,6 +80,11 @@
 	let keyError: string | null = null;
 	let isLoading = true;
 	let deletionError: string | null = null;
+	let textPreview: string | null = null;
+	let textPreviewError: string | null = null;
+	let isLoadingTextPreview = false;
+	let isTextPreviewTruncated = false;
+	let previewRequestId = 0;
 
 	// Smooth progress animation
 	let displayProgress = 0;
@@ -89,13 +152,97 @@
 		return null;
 	}
 
+	function formatPreviewLimit(bytes: number): string {
+		if (bytes >= 1024 * 1024) {
+			return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+		}
+
+		if (bytes >= 1024) {
+			return `${(bytes / 1024).toFixed(0)} KB`;
+		}
+
+		return `${bytes} B`;
+	}
+
+	function getFileExtension(filename: string | undefined): string {
+		if (!filename || !filename.includes('.')) return '';
+		return filename.split('.').pop()?.toLowerCase() || '';
+	}
+
+	function isTextPreviewable(fileMetadata: FileMetadata | null): boolean {
+		if (!fileMetadata?.filename) return false;
+
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('text/')) return true;
+
+		if (
+			contentType.includes('json') ||
+			contentType.includes('xml') ||
+			contentType.includes('yaml') ||
+			contentType.includes('javascript')
+		) {
+			return true;
+		}
+
+		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
+	}
+
+	function resetTextPreview() {
+		previewRequestId += 1;
+		textPreview = null;
+		textPreviewError = null;
+		isLoadingTextPreview = false;
+		isTextPreviewTruncated = false;
+	}
+
+	async function loadTextPreview(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata
+	) {
+		resetTextPreview();
+
+		if (!isTextPreviewable(fileMetadata)) return;
+
+		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
+			textPreviewError = `Forhåndsvisning er bare tilgjengelig for tekstfiler opptil ${formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)}.`;
+			return;
+		}
+
+		const requestId = ++previewRequestId;
+		isLoadingTextPreview = true;
+
+		try {
+			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
+			const previewText = (await decrypted.text()).replace(/\r\n/g, '\n');
+
+			if (requestId !== previewRequestId) return;
+
+			textPreview = previewText.slice(0, TEXT_PREVIEW_MAX_CHARS);
+			isTextPreviewTruncated = previewText.length > TEXT_PREVIEW_MAX_CHARS;
+		} catch (error) {
+			if (requestId !== previewRequestId) return;
+			console.error('Text preview error:', error);
+			textPreviewError = 'Kunne ikke laste forhåndsvisning av tekstfilen.';
+		} finally {
+			if (requestId === previewRequestId) {
+				isLoadingTextPreview = false;
+			}
+		}
+	}
+
 	async function getMetadata() {
+		resetTextPreview();
+
 		try {
 			const fileId = $page.params.fileId;
-			const hmacToken = await generateHmacToken(fileId, encryptionKey);
-			const metadataResponse = await fetchMetadata(fileId, encryptionKey, hmacToken);
+			const activeKey = encryptionKey;
+			const hmacToken = await generateHmacToken(fileId, activeKey);
+			const metadataResponse = await fetchMetadata(fileId, activeKey, hmacToken);
 			metadata = metadataResponse.metadata;
 			fileSize = metadataResponse.size?.toString();
+			void loadTextPreview(fileId, activeKey, hmacToken, metadataResponse.metadata);
 		} catch (error) {
 			console.error('Metadata error:', error);
 			encryptionKey = '';
@@ -111,6 +258,7 @@
 
 	function setEncryptionKey(key: string) {
 		encryptionKey = key;
+		resetTextPreview();
 		if (browser) replaceState('', window.location.pathname);
 	}
 
@@ -361,6 +509,35 @@
 					</div>
 				</div>
 
+				{#if isTextPreviewable(metadata)}
+					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+						<div class="preview-header">
+							<h2>Forhåndsvisning</h2>
+							<span class="preview-badge">Tekst</span>
+						</div>
+
+						{#if isLoadingTextPreview}
+							<div class="preview-loading">
+								<LoadingSpinner message="Laster tekstforhåndsvisning..." />
+							</div>
+						{:else if textPreview !== null}
+							{#if textPreview.length > 0}
+								<pre class="text-preview">{textPreview}</pre>
+							{:else}
+								<p class="preview-note">Denne tekstfilen er tom.</p>
+							{/if}
+
+							{#if isTextPreviewTruncated}
+								<p class="preview-note">
+									Forhåndsvisningen er avkortet. Last ned filen for å se hele innholdet.
+								</p>
+							{/if}
+						{:else if textPreviewError}
+							<p class="preview-note">{textPreviewError}</p>
+						{/if}
+					</div>
+				{/if}
+
 				{#if isDownloadComplete}
 					<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>Filen er slettet fra serveren.</p>
 				{/if}
@@ -463,6 +640,80 @@
 		border-radius: 10px;
 		padding: 1rem 1.25rem;
 		/* box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); */
+	}
+
+	.preview-card {
+		margin-top: 1rem;
+		padding: 1rem 1.25rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 10px;
+		background: #fff;
+	}
+
+	.preview-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.875rem;
+	}
+
+	.preview-header h2 {
+		margin: 0;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: #111827;
+	}
+
+	.preview-badge {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: #166534;
+		background: rgba(34, 197, 94, 0.12);
+		border-radius: 999px;
+		padding: 0.25rem 0.625rem;
+	}
+
+	.preview-loading {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 8rem;
+	}
+
+	.text-preview {
+		margin: 0;
+		padding: 1rem;
+		border-radius: 8px;
+		background: #f8fafc;
+		border: 1px solid #e5e7eb;
+		color: #111827;
+		font-size: 0.875rem;
+		line-height: 1.6;
+		font-family:
+			'SFMono-Regular',
+			'SFMono-Regular',
+			Consolas,
+			'Liberation Mono',
+			Menlo,
+			monospace;
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow-x: auto;
+		max-height: 32rem;
+	}
+
+	.preview-note {
+		margin: 0;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: #6b7280;
+	}
+
+	.text-preview + .preview-note {
+		margin-top: 0.75rem;
 	}
 
 	.col-icon {
@@ -711,6 +962,15 @@
 
 		.key-input {
 			font-size: 16px;
+		}
+
+		.preview-card {
+			padding: 0.875rem;
+		}
+
+		.preview-header {
+			align-items: flex-start;
+			flex-direction: column;
 		}
 	}
 </style>

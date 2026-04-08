@@ -8,7 +8,7 @@ export async function downloadAndDecryptFile(
 	key: string,
 	token: string,
 	onProgress: ProgressCallback
-): Promise<{ decrypted: Uint8Array; metadata: any }> {
+): Promise<{ decrypted: Blob; metadata: any }> {
 	const wasmInstance = getWasmInstance();
 	const config = get(configStore);
 	if (!wasmInstance) throw new Error('WASM not initialized');
