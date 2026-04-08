@@ -45,7 +45,7 @@ COPY web .
 RUN NODE_ENV=production npm run build
 
 # Stage 3: Build the Go backend
-FROM golang:1.25-alpine AS backend-builder
+FROM golang:1.26-alpine AS backend-builder
 
 # Docker buildx automatically provides these
 ARG TARGETOS
