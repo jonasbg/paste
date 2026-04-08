@@ -1034,13 +1034,13 @@
 			{#if !isUploading && !sharePassphrase}
 				<div class="passphrase-panel" transition:slide={{ duration: 300, easing: cubicOut }}>
 					<!-- "eller" separator fades away once a file is resolved -->
-					{#if !passphraseFileMetadata}
+					{#if !passphraseFileMetadata && !selectedFile}
 						<div class="horizontal-separator" out:fade={{ duration: 200 }}>
 							<span>eller</span>
 						</div>
 					{/if}
 
-					{#if !passphraseFileMetadata}
+					{#if !passphraseFileMetadata && !selectedFile}
 						<div class="copy-section" out:slide={{ duration: 250, easing: cubicOut }}>
 							<p class="hint">Skriv inn delingskoden du har mottatt for å laste ned filen.</p>
 							{#if passphraseError}
@@ -1372,6 +1372,7 @@
 		align-items: center;
 		gap: 1rem;
 		margin-bottom: 1.25rem;
+		margin-top: 1.25rem;
 	}
 
 	.horizontal-separator::before,
