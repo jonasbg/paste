@@ -849,7 +849,7 @@
 		flex: 1;
 		max-width: 860px;
 		margin: 0 auto;
-		padding: 2rem;
+		padding: 1rem 2rem;
 		display: flex;
 		flex-direction: column;
 	}
@@ -863,6 +863,7 @@
 	h1 {
 		font-size: 2.5rem;
 		font-weight: 500;
+		margin-top: 0;
 		margin-bottom: 0.75rem;
 	}
 
