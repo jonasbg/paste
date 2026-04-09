@@ -274,7 +274,7 @@
 					).reduce((total, element) => total + getOuterHeight(element), 0)
 				: 0;
 			const bottomGap = currentOptions.bottomGap ?? 24;
-			const minHeight = currentOptions.minHeight ?? 160;
+			const minHeight = currentOptions.minHeight ?? 120;
 			const availableHeight = Math.max(
 				minHeight,
 				Math.floor(viewportHeight - rect.top - reserveHeight - bottomGap)
@@ -664,7 +664,7 @@
 								class="image-preview"
 								src={imagePreviewUrl}
 								alt={`Forhåndsvisning av ${metadata.filename}`}
-								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 96 }}
+								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 32, minHeight: 200 }}
 							/>
 						{:else if imagePreviewError}
 							<p class="preview-note">{imagePreviewError}</p>
@@ -688,7 +688,11 @@
 								{#if textPreviewMode === 'table'}
 									<div
 										class="table-preview"
-										use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 180, minHeight: 96 }}
+										use:fitViewport={{
+											reserveSelector: '.file-row',
+											bottomGap: 32,
+											minHeight: 200
+										}}
 									>
 										{@html textPreviewHtml}
 									</div>
@@ -697,8 +701,8 @@
 										class="text-preview syntax-preview"
 										use:fitViewport={{
 											reserveSelector: '.file-row',
-											bottomGap: 180,
-											minHeight: 96
+											bottomGap: 32,
+											minHeight: 200
 										}}>{@html textPreviewHtml}</pre>
 								{/if}
 							{:else}

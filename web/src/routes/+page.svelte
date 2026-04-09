@@ -236,7 +236,7 @@
 					).reduce((total, element) => total + getOuterHeight(element), 0)
 				: 0;
 			const bottomGap = currentOptions.bottomGap ?? 24;
-			const minHeight = currentOptions.minHeight ?? 160;
+			const minHeight = currentOptions.minHeight ?? 120;
 			const availableHeight = Math.max(
 				minHeight,
 				Math.floor(viewportHeight - rect.top - reserveHeight - bottomGap)
@@ -1087,7 +1087,7 @@
 											class="image-preview"
 											src={passphraseImagePreviewUrl}
 											alt={`Forhåndsvisning av ${passphraseFileMetadata.filename}`}
-											use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 96 }}
+											use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 32, minHeight: 200 }}
 										/>
 									{:else if passphraseImagePreviewError}
 										<p class="preview-note">{passphraseImagePreviewError}</p>
@@ -1113,8 +1113,8 @@
 													class="table-preview"
 													use:fitViewport={{
 														reserveSelector: '.file-row',
-														bottomGap: 180,
-														minHeight: 96
+														bottomGap: 32,
+														minHeight: 200
 													}}
 												>
 													{@html passphraseTextPreviewHtml}
@@ -1124,8 +1124,8 @@
 													class="text-preview syntax-preview"
 													use:fitViewport={{
 														reserveSelector: '.file-row',
-														bottomGap: 180,
-														minHeight: 96
+														bottomGap: 32,
+														minHeight: 200
 													}}>{@html passphraseTextPreviewHtml}</pre>
 											{/if}
 										{:else}
@@ -1463,7 +1463,7 @@
 		grid-template-columns: 52px 1fr auto;
 		align-items: center;
 		gap: 1rem;
-		padding: 1.5rem 1rem 0.25rem;
+		padding: 1.5rem 1rem;
 	}
 
 	.preview-card {
