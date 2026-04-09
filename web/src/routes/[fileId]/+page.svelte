@@ -664,7 +664,7 @@
 								class="image-preview"
 								src={imagePreviewUrl}
 								alt={`Forhåndsvisning av ${metadata.filename}`}
-								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 32, minHeight: 200 }}
+								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 48, minHeight: 200 }}
 							/>
 						{:else if imagePreviewError}
 							<p class="preview-note">{imagePreviewError}</p>
@@ -690,7 +690,7 @@
 										class="table-preview"
 										use:fitViewport={{
 											reserveSelector: '.file-row',
-											bottomGap: 32,
+											bottomGap: 48,
 											minHeight: 200
 										}}
 									>
@@ -701,7 +701,7 @@
 										class="text-preview syntax-preview"
 										use:fitViewport={{
 											reserveSelector: '.file-row',
-											bottomGap: 32,
+											bottomGap: 48,
 											minHeight: 200
 										}}>{@html textPreviewHtml}</pre>
 								{/if}

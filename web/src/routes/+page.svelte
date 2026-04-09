@@ -1087,7 +1087,7 @@
 											class="image-preview"
 											src={passphraseImagePreviewUrl}
 											alt={`Forhåndsvisning av ${passphraseFileMetadata.filename}`}
-											use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 32, minHeight: 200 }}
+											use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 48, minHeight: 200 }}
 										/>
 									{:else if passphraseImagePreviewError}
 										<p class="preview-note">{passphraseImagePreviewError}</p>
@@ -1113,7 +1113,7 @@
 													class="table-preview"
 													use:fitViewport={{
 														reserveSelector: '.file-row',
-														bottomGap: 32,
+														bottomGap: 48,
 														minHeight: 200
 													}}
 												>
@@ -1124,7 +1124,7 @@
 													class="text-preview syntax-preview"
 													use:fitViewport={{
 														reserveSelector: '.file-row',
-														bottomGap: 32,
+														bottomGap: 48,
 														minHeight: 200
 													}}>{@html passphraseTextPreviewHtml}</pre>
 											{/if}
