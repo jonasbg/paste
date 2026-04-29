@@ -132,6 +132,9 @@
 	let passphraseTextPreviewError = '';
 	let isLoadingPassphraseTextPreview = false;
 	let isPassphraseTextPreviewTruncated = false;
+	let showPasteAffordance = false;
+	let pasteAffordanceState: 'idle' | 'reading' | 'denied' | 'empty' = 'idle';
+	let pasteAffordanceTimer: ReturnType<typeof setTimeout> | null = null;
 	let passphraseCopyState: 'idle' | 'copied' | 'error' = 'idle';
 	let passphraseCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
 	let passphraseImagePreviewUrl: string | null = null;
@@ -748,9 +751,102 @@
 			}
 			return;
 		}
+		if (event.key === 'Escape' && showPasteAffordance) {
+			event.preventDefault();
+			dismissPasteAffordance();
+			return;
+		}
 		if (event.key === 'Tab' && event.shiftKey && passphraseInputEl) {
 			event.preventDefault();
 			passphraseInputEl.focus();
+		}
+	}
+
+	function handleDropZoneContextMenu(event: MouseEvent) {
+		if (isUploading || sharePassphrase) return;
+		event.preventDefault();
+		event.stopPropagation();
+		openPasteAffordance();
+	}
+
+	function openPasteAffordance() {
+		pasteAffordanceState = 'idle';
+		showPasteAffordance = true;
+		if (pasteAffordanceTimer) clearTimeout(pasteAffordanceTimer);
+		pasteAffordanceTimer = setTimeout(dismissPasteAffordance, 6000);
+	}
+
+	function dismissPasteAffordance() {
+		showPasteAffordance = false;
+		pasteAffordanceState = 'idle';
+		if (pasteAffordanceTimer) {
+			clearTimeout(pasteAffordanceTimer);
+			pasteAffordanceTimer = null;
+		}
+	}
+
+	function handleDocumentPointerDown(event: PointerEvent) {
+		if (!showPasteAffordance) return;
+		const target = event.target as HTMLElement | null;
+		if (target?.closest('.paste-affordance')) return;
+		dismissPasteAffordance();
+	}
+
+	async function pasteFromClipboard() {
+		if (isUploading || sharePassphrase) return;
+		if (!browser || !navigator.clipboard) {
+			pasteAffordanceState = 'denied';
+			return;
+		}
+		pasteAffordanceState = 'reading';
+		const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+
+		// Try rich clipboard items first (images, files)
+		// @ts-ignore — read() not in all TS lib targets
+		if (typeof navigator.clipboard.read === 'function') {
+			try {
+				// @ts-ignore
+				const items = await navigator.clipboard.read();
+				for (const item of items) {
+					const imageType = item.types.find((t: string) => t.startsWith('image/'));
+					if (imageType) {
+						const blob = await item.getType(imageType);
+						const ext = imageType.split('/')[1] || 'png';
+						processClipboardFile(
+							new File([blob], `screenshot-${ts}.${ext}`, { type: imageType })
+						);
+						dismissPasteAffordance();
+						return;
+					}
+					if (item.types.includes('text/plain')) {
+						const blob = await item.getType('text/plain');
+						const text = await blob.text();
+						if (text.trim()) {
+							const out = new Blob([text], { type: 'text/plain' });
+							processClipboardFile(
+								new File([out], `pasted-text-${ts}.txt`, { type: 'text/plain' })
+							);
+							dismissPasteAffordance();
+							return;
+						}
+					}
+				}
+			} catch {
+				// fall through to readText
+			}
+		}
+
+		try {
+			const text = await navigator.clipboard.readText();
+			if (!text.trim()) {
+				pasteAffordanceState = 'empty';
+				return;
+			}
+			const out = new Blob([text], { type: 'text/plain' });
+			processClipboardFile(new File([out], `pasted-text-${ts}.txt`, { type: 'text/plain' }));
+			dismissPasteAffordance();
+		} catch {
+			pasteAffordanceState = 'denied';
 		}
 	}
 
@@ -799,6 +895,7 @@
 
 		generatedPassphrase = generatePassphrase();
 		window.addEventListener('paste', handlePaste);
+		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
 
 		await tick();
 		passphraseInputEl?.focus();
@@ -809,8 +906,10 @@
 			window.removeEventListener('paste', handlePaste);
 			document.removeEventListener('dragover', preventBrowserFileDrop);
 			document.removeEventListener('drop', handlePageDrop);
+			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
 		}
 		if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
+		if (pasteAffordanceTimer) clearTimeout(pasteAffordanceTimer);
 		resetPassphrasePreviews();
 	});
 
@@ -912,6 +1011,7 @@
 		}
 		selectedFile = file;
 		fileSizeError = '';
+		tick().then(() => uploadButtonEl?.focus());
 	}
 </script>
 
@@ -981,6 +1081,7 @@
 						class:uploading={isUploading}
 						bind:this={dropZoneEl}
 						on:click={handleZoneClick}
+						on:contextmenu={handleDropZoneContextMenu}
 						on:dragenter={handleDragEnter}
 						on:dragleave={handleDragLeave}
 						on:dragover={handleDragOver}
@@ -991,6 +1092,48 @@
 						aria-label="Velg fil for opplasting"
 						out:slide={{ duration: 350, easing: cubicOut }}
 					>
+						{#if showPasteAffordance}
+							<div
+								class="paste-affordance"
+								role="menu"
+								on:click|stopPropagation
+								on:contextmenu|preventDefault|stopPropagation
+								transition:fade={{ duration: 120 }}
+							>
+								<button
+									type="button"
+									class="paste-affordance-btn"
+									on:click|stopPropagation={pasteFromClipboard}
+									disabled={pasteAffordanceState === 'reading'}
+								>
+									<svg
+										width="16"
+										height="16"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+										<rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+									</svg>
+									<span>
+										{#if pasteAffordanceState === 'reading'}
+											Leser utklippstavlen...
+										{:else if pasteAffordanceState === 'denied'}
+											Tilgang nektet
+										{:else if pasteAffordanceState === 'empty'}
+											Utklippstavlen er tom
+										{:else}
+											Lim inn fra utklippstavlen
+										{/if}
+									</span>
+								</button>
+							</div>
+						{/if}
 						<input
 							type="file"
 							bind:this={fileInput}
@@ -1380,6 +1523,7 @@
 
 	/* ── Drop zone ── */
 	.drop-zone {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -1401,6 +1545,51 @@
 		text-align: center;
 		user-select: none;
 		-webkit-user-select: none;
+	}
+
+	.paste-affordance {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(243, 244, 246, 0.92);
+		-webkit-backdrop-filter: blur(2px);
+		backdrop-filter: blur(2px);
+		border-radius: inherit;
+		z-index: 5;
+	}
+
+	.paste-affordance-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.6rem 1rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: #fff;
+		background: #111827;
+		border: none;
+		border-radius: 999px;
+		cursor: pointer;
+		box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+		transition:
+			transform 120ms ease,
+			background 120ms ease,
+			opacity 120ms ease;
+	}
+
+	.paste-affordance-btn:hover {
+		background: #1f2937;
+	}
+
+	.paste-affordance-btn:active {
+		transform: scale(0.98);
+	}
+
+	.paste-affordance-btn:disabled {
+		opacity: 0.7;
+		cursor: progress;
 	}
 
 	.drop-zone:hover {
