@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
@@ -95,6 +95,9 @@
 	};
 
 	let fileInput: HTMLInputElement;
+	let dropZoneEl: HTMLDivElement | null = null;
+	let passphraseInputEl: HTMLInputElement | null = null;
+	let uploadButtonEl: HTMLButtonElement | null = null;
 	let selectedFile: File | null = null;
 	let isUploading = false;
 	let uploadProgress = 0;
@@ -129,6 +132,8 @@
 	let passphraseTextPreviewError = '';
 	let isLoadingPassphraseTextPreview = false;
 	let isPassphraseTextPreviewTruncated = false;
+	let passphraseCopyState: 'idle' | 'copied' | 'error' = 'idle';
+	let passphraseCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
 	let passphraseImagePreviewUrl: string | null = null;
 	let passphraseImagePreviewError = '';
 	let isLoadingPassphraseImagePreview = false;
@@ -279,6 +284,26 @@
 		passphraseTextPreviewError = '';
 		isLoadingPassphraseTextPreview = false;
 		isPassphraseTextPreviewTruncated = false;
+		if (passphraseCopyResetTimer) {
+			clearTimeout(passphraseCopyResetTimer);
+			passphraseCopyResetTimer = null;
+		}
+		passphraseCopyState = 'idle';
+	}
+
+	async function copyPassphrasePreview() {
+		if (passphraseTextPreview === null) return;
+		try {
+			await navigator.clipboard.writeText(passphraseTextPreview);
+			passphraseCopyState = 'copied';
+		} catch {
+			passphraseCopyState = 'error';
+		}
+		if (passphraseCopyResetTimer) clearTimeout(passphraseCopyResetTimer);
+		passphraseCopyResetTimer = setTimeout(() => {
+			passphraseCopyState = 'idle';
+			passphraseCopyResetTimer = null;
+		}, 1800);
 	}
 
 	function resetPassphraseImagePreview() {
@@ -464,6 +489,7 @@
 		}
 		selectedFile = file;
 		fileSizeError = '';
+		tick().then(() => uploadButtonEl?.focus());
 		return true;
 	}
 
@@ -705,6 +731,29 @@
 		event.preventDefault();
 	}
 
+	function handlePassphraseKeydown(event: KeyboardEvent) {
+		if (event.key === 'Tab' && !event.shiftKey && dropZoneEl) {
+			event.preventDefault();
+			dropZoneEl.focus();
+		}
+	}
+
+	function handleDropZoneKeydown(event: KeyboardEvent) {
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			if (selectedFile && !isUploading) {
+				handleUpload();
+			} else {
+				handleZoneClick();
+			}
+			return;
+		}
+		if (event.key === 'Tab' && event.shiftKey && passphraseInputEl) {
+			event.preventDefault();
+			passphraseInputEl.focus();
+		}
+	}
+
 	function handlePageDrop(event: DragEvent) {
 		event.preventDefault();
 		if (isUploading || sharePassphrase) return;
@@ -750,6 +799,9 @@
 
 		generatedPassphrase = generatePassphrase();
 		window.addEventListener('paste', handlePaste);
+
+		await tick();
+		passphraseInputEl?.focus();
 	});
 
 	onDestroy(() => {
@@ -927,6 +979,7 @@
 						class="drop-zone"
 						class:dragging={isDragging}
 						class:uploading={isUploading}
+						bind:this={dropZoneEl}
 						on:click={handleZoneClick}
 						on:dragenter={handleDragEnter}
 						on:dragleave={handleDragLeave}
@@ -934,7 +987,7 @@
 						on:drop={handleDrop}
 						role="button"
 						tabindex="0"
-						on:keydown={(e) => e.key === 'Enter' && handleZoneClick()}
+						on:keydown={handleDropZoneKeydown}
 						aria-label="Velg fil for opplasting"
 						out:slide={{ duration: 350, easing: cubicOut }}
 					>
@@ -993,7 +1046,7 @@
 						<div class="file-pre-size">{FileProcessor.formatFileSize(selectedFile.size)}</div>
 					</div>
 					<div class="selected-col-action">
-						<button class="btn-upload-now" on:click={handleUpload}>Last opp</button>
+						<button class="btn-upload-now" bind:this={uploadButtonEl} on:click={handleUpload}>Last opp</button>
 						<button class="btn-remove-file" on:click={removeFile} aria-label="Fjern fil">
 							<svg
 								width="15"
@@ -1053,6 +1106,8 @@
 										class="url-field"
 										placeholder="Skriv inn delingskoden din"
 										bind:value={passphraseInput}
+										bind:this={passphraseInputEl}
+										on:keydown={handlePassphraseKeydown}
 										disabled={isDerivingPassphrase}
 									/>
 									<button
@@ -1112,26 +1167,59 @@
 										</div>
 									{:else if passphraseTextPreview !== null}
 										{#if passphraseTextPreview.length > 0}
-											{#if passphraseTextPreviewMode === 'table'}
-												<div
-													class="table-preview"
-													use:fitViewport={{
-														reserveSelector: '.file-row',
-														bottomGap: 48,
-														minHeight: 200
-													}}
+											<div class="text-preview-wrap">
+												<button
+													type="button"
+													class="copy-preview-btn"
+													class:copied={passphraseCopyState === 'copied'}
+													class:error={passphraseCopyState === 'error'}
+													on:click={copyPassphrasePreview}
+													aria-label="Kopier tekst"
+													title="Kopier tekst"
 												>
-													{@html passphraseTextPreviewHtml}
-												</div>
-											{:else}
-												<pre
-													class="text-preview syntax-preview"
-													use:fitViewport={{
-														reserveSelector: '.file-row',
-														bottomGap: 48,
-														minHeight: 200
-													}}>{@html passphraseTextPreviewHtml}</pre>
-											{/if}
+													{#if passphraseCopyState === 'copied'}
+														Kopiert
+													{:else if passphraseCopyState === 'error'}
+														Feil
+													{:else}
+														<svg
+															width="14"
+															height="14"
+															viewBox="0 0 24 24"
+															fill="none"
+															stroke="currentColor"
+															stroke-width="2"
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															aria-hidden="true"
+														>
+															<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+															<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+														</svg>
+														<span>Kopier</span>
+													{/if}
+												</button>
+												{#if passphraseTextPreviewMode === 'table'}
+													<div
+														class="table-preview"
+														use:fitViewport={{
+															reserveSelector: '.file-row',
+															bottomGap: 48,
+															minHeight: 200
+														}}
+													>
+														{@html passphraseTextPreviewHtml}
+													</div>
+												{:else}
+													<pre
+														class="text-preview syntax-preview"
+														use:fitViewport={{
+															reserveSelector: '.file-row',
+															bottomGap: 48,
+															minHeight: 200
+														}}>{@html passphraseTextPreviewHtml}</pre>
+												{/if}
+											</div>
 										{:else}
 											<p class="preview-note">Denne tekstfilen er tom.</p>
 										{/if}
@@ -1525,6 +1613,52 @@
 		white-space: pre-wrap;
 		word-break: break-word;
 		overflow: auto;
+	}
+
+	.text-preview-wrap {
+		position: relative;
+	}
+
+	.copy-preview-btn {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		z-index: 2;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.3rem 0.6rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #1f2937;
+		background: rgba(255, 255, 255, 0.92);
+		border: 1px solid #e5e7eb;
+		border-radius: 6px;
+		cursor: pointer;
+		backdrop-filter: blur(2px);
+		transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+	}
+
+	.copy-preview-btn:hover {
+		background: #fff;
+		border-color: #cbd5e1;
+	}
+
+	.copy-preview-btn:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 2px;
+	}
+
+	.copy-preview-btn.copied {
+		color: #166534;
+		border-color: rgba(34, 197, 94, 0.5);
+		background: rgba(34, 197, 94, 0.12);
+	}
+
+	.copy-preview-btn.error {
+		color: #b91c1c;
+		border-color: rgba(239, 68, 68, 0.5);
+		background: rgba(239, 68, 68, 0.1);
 	}
 
 	:global(.syntax-preview .tok-key),
