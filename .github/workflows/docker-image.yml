@@ -85,9 +85,19 @@ jobs:
         run: |
           helm pull oci://${{ vars.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')/paste
           file=$(ls paste-*.tgz)
-          CURRENT_VERSION=$(echo $file | grep -oP 'paste-\K[0-9]+\.[0-9]+\.[0-9]+')
-          NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
-          echo $NEW_VERSION
+          REGISTRY_VERSION=$(echo $file | grep -oP 'paste-\K[0-9]+\.[0-9]+\.[0-9]+')
+          DECLARED_VERSION=$(grep -oP '^version: \K[0-9]+\.[0-9]+\.[0-9]+' .helm/Chart.yaml)
+          IFS=. read -r DMAJ DMIN _ <<< "$DECLARED_VERSION"
+          IFS=. read -r RMAJ RMIN RPAT <<< "$REGISTRY_VERSION"
+          # If Chart.yaml declares a higher major.minor than the registry holds,
+          # this is the first publish of that series — ship the declared version
+          # verbatim. Otherwise bump the patch from the registry's latest.
+          if [ "$DMAJ" -gt "$RMAJ" ] || { [ "$DMAJ" -eq "$RMAJ" ] && [ "$DMIN" -gt "$RMIN" ]; }; then
+            NEW_VERSION="$DECLARED_VERSION"
+          else
+            NEW_VERSION="$RMAJ.$RMIN.$((RPAT + 1))"
+          fi
+          echo "Registry: $REGISTRY_VERSION | Declared: $DECLARED_VERSION | Publishing: $NEW_VERSION"
           sed -i -E "s/^version: [0-9]+\.[0-9]+\.[0-9]+/version: $NEW_VERSION/" .helm/Chart.yaml
 
           DIGEST=${{steps.build-docker-image.outputs.digest}}
