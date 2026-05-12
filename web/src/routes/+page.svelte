@@ -18,6 +18,7 @@
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { configStore } from '$lib/stores/config';
 	import { renderTextPreview } from '$lib/utils/textPreview';
+	import { isTextBased } from '$lib/utils/mimeType';
 
 	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
 	const TEXT_PREVIEW_MAX_CHARS = 120_000;
@@ -64,7 +65,29 @@
 		'cpp',
 		'h',
 		'hpp',
-		'sql'
+		'sql',
+		'kt',
+		'kts',
+		'swift',
+		'dart',
+		'lua',
+		'r',
+		'rmd',
+		'vue',
+		'astro',
+		'scala',
+		'ex',
+		'exs',
+		'hs',
+		'zig',
+		'diff',
+		'patch',
+		'lock',
+		'gradle',
+		'pl',
+		'pm',
+		'properties',
+		'rtf'
 	]);
 	const IMAGE_PREVIEW_EXTENSIONS = new Set([
 		'png',
@@ -175,18 +198,11 @@
 	function isTextPreviewable(fileMetadata: FileMetadata | null): boolean {
 		if (!fileMetadata?.filename) return false;
 
+		// Trust the server-stored contentType (normalized at upload time)
 		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType.startsWith('text/')) return true;
+		if (contentType && isTextBased(contentType)) return true;
 
-		if (
-			contentType.includes('json') ||
-			contentType.includes('xml') ||
-			contentType.includes('yaml') ||
-			contentType.includes('javascript')
-		) {
-			return true;
-		}
-
+		// Extension fallback for files uploaded before MIME normalization
 		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
 	}
 

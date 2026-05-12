@@ -13,6 +13,7 @@
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import { renderTextPreview } from '$lib/utils/textPreview';
+	import { isTextBased } from '$lib/utils/mimeType';
 	import { fly } from 'svelte/transition';
 
 	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
@@ -60,7 +61,29 @@
 		'cpp',
 		'h',
 		'hpp',
-		'sql'
+		'sql',
+		'kt',
+		'kts',
+		'swift',
+		'dart',
+		'lua',
+		'r',
+		'rmd',
+		'vue',
+		'astro',
+		'scala',
+		'ex',
+		'exs',
+		'hs',
+		'zig',
+		'diff',
+		'patch',
+		'lock',
+		'gradle',
+		'pl',
+		'pm',
+		'properties',
+		'rtf'
 	]);
 	const IMAGE_PREVIEW_EXTENSIONS = new Set([
 		'png',
@@ -209,18 +232,11 @@
 	function isTextPreviewable(fileMetadata: FileMetadata | null): boolean {
 		if (!fileMetadata?.filename) return false;
 
+		// Trust the server-stored contentType (normalized at upload time)
 		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType.startsWith('text/')) return true;
+		if (contentType && isTextBased(contentType)) return true;
 
-		if (
-			contentType.includes('json') ||
-			contentType.includes('xml') ||
-			contentType.includes('yaml') ||
-			contentType.includes('javascript')
-		) {
-			return true;
-		}
-
+		// Extension fallback for files uploaded before MIME normalization
 		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
 	}
 
@@ -329,8 +345,23 @@
 	async function copyTextPreview() {
 		if (textPreview === null) return;
 		try {
-			await navigator.clipboard.writeText(textPreview);
-			copyState = 'copied';
+			if (navigator.clipboard && window.isSecureContext) {
+				await navigator.clipboard.writeText(textPreview);
+				copyState = 'copied';
+			} else {
+				// Fallback: use a temporary textarea for older browsers / insecure contexts
+				const textarea = document.createElement('textarea');
+				textarea.value = textPreview;
+				textarea.style.position = 'fixed';
+				textarea.style.left = '-9999px';
+				textarea.style.top = '-9999px';
+				document.body.appendChild(textarea);
+				textarea.focus();
+				textarea.select();
+				const success = document.execCommand('copy');
+				document.body.removeChild(textarea);
+				copyState = success ? 'copied' : 'error';
+			}
 		} catch {
 			copyState = 'error';
 		}

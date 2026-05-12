@@ -1,26 +1,37 @@
 import { generateHmacToken } from '$lib/utils/hmacUtils';
 import { getWasmInstance } from '$lib/utils/wasm-loader';
-import { FileProcessor, ProgressCallback } from './fileProcessor';
+import { normalizeMimeType } from '$lib/utils/mimeType';
+import { FileProcessor } from './fileProcessor';
+import type { ProgressCallback } from './fileProcessor';
 import { configStore } from '$lib/stores/config';
 import { get } from 'svelte/store';
+
+function requireWasmMethod<T>(method: T | undefined, name: string): NonNullable<T> {
+    if (!method) {
+        throw new Error(`${name} is unavailable`);
+    }
+
+    return method as NonNullable<T>;
+}
 
 export function generateKey(): string | null {
     const wasmInstance = getWasmInstance();
     if (!wasmInstance) return null;
+    const generateKeyMethod = requireWasmMethod(wasmInstance.generateKey, 'generateKey');
 
     const config = get(configStore);
     if (!config.data) {
         console.warn('Config not loaded, using default key size of 128');
-        return wasmInstance.generateKey(128);
+        return generateKeyMethod(128);
     }
 
     const keySize = parseInt(config.data.key_size);
     if (isNaN(keySize)) {
         console.warn('Invalid key size in config, using default of 128');
-        return wasmInstance.generateKey(128);
+        return generateKeyMethod(128);
     }
 
-    return wasmInstance.generateKey(keySize);
+    return generateKeyMethod(keySize);
 }
 
 export async function uploadEncryptedFile(
@@ -51,6 +62,13 @@ export async function uploadEncryptedFile(
 
     const wasmInstance = getWasmInstance();
     if (!wasmInstance) throw new Error('WASM not initialized');
+    const encrypt = requireWasmMethod(wasmInstance.encrypt, 'encrypt');
+    const createEncryptionStream = requireWasmMethod(
+        wasmInstance.createEncryptionStream,
+        'createEncryptionStream'
+    );
+    const encryptChunk = requireWasmMethod(wasmInstance.encryptChunk, 'encryptChunk');
+    const disposeCipher = wasmInstance.disposeCipher;
 
     return new Promise((resolve, reject) => {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -87,8 +105,8 @@ export async function uploadEncryptedFile(
 
         const cleanup = () => {
             stopProgressTimer();
-            if (cipherId !== null && wasmInstance.disposeCipher) {
-                wasmInstance.disposeCipher(cipherId);
+            if (cipherId !== null && disposeCipher) {
+                disposeCipher(cipherId);
                 cipherId = null;
             }
         };
@@ -187,11 +205,11 @@ export async function uploadEncryptedFile(
             if (msgType === 'token_accepted') {
                 const metadata = {
                     filename: file.name,
-                    contentType: file.type,
+                    contentType: normalizeMimeType(file),
                     size: file.size
                 };
                 const metadataBytes = new TextEncoder().encode(JSON.stringify(metadata));
-                const encryptedMetadata = wasmInstance.encrypt(key, metadataBytes);
+                const encryptedMetadata = encrypt(key, metadataBytes);
                 const header = new Uint8Array(16 + encryptedMetadata.length - 12);
                 header.set(encryptedMetadata.slice(0, 12), 0);
                 new DataView(header.buffer).setUint32(12, encryptedMetadata.length - 12, true);
@@ -202,7 +220,7 @@ export async function uploadEncryptedFile(
 
             // Step 3 → server ready, initialise encryption stream and send first chunk
             if (msgType === 'ready') {
-                const streamResult = wasmInstance.createEncryptionStream(key);
+                const streamResult = createEncryptionStream(key);
                 if (!streamResult || typeof streamResult.id !== 'number' || !streamResult.iv) {
                     const errorMsg =
                         streamResult instanceof Error ? streamResult.message : 'Invalid result';
@@ -257,7 +275,7 @@ export async function uploadEncryptedFile(
                 // Re-check after the async file read — cleanup may have run.
                 if (cipherId === null) return null;
                 const isLast = forOffset + chunkSize >= file.size;
-                const encrypted = wasmInstance.encryptChunk(cipherId, new Uint8Array(slice), isLast);
+                const encrypted = encryptChunk(cipherId, new Uint8Array(slice), isLast);
                 if (!encrypted || encrypted instanceof Error) return null;
                 return { encrypted: encrypted as Uint8Array, plaintextSize: slice.byteLength };
             } catch {
@@ -289,7 +307,7 @@ export async function uploadEncryptedFile(
                         // Prefetch failed — read and encrypt now.
                         const slice = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
                         const isLast = fileOffset + chunkSize >= file.size;
-                        encryptedChunk = wasmInstance.encryptChunk(cipherId, new Uint8Array(slice), isLast) as Uint8Array;
+                        encryptedChunk = encryptChunk(cipherId, new Uint8Array(slice), isLast) as Uint8Array;
                         plaintextSize = slice.byteLength;
                     }
                 } else {
@@ -297,7 +315,7 @@ export async function uploadEncryptedFile(
                     // was not started because the previous chunk was the last).
                     const slice = await file.slice(fileOffset, fileOffset + chunkSize).arrayBuffer();
                     const isLast = fileOffset + chunkSize >= file.size;
-                    encryptedChunk = wasmInstance.encryptChunk(cipherId, new Uint8Array(slice), isLast) as Uint8Array;
+                    encryptedChunk = encryptChunk(cipherId, new Uint8Array(slice), isLast) as Uint8Array;
                     plaintextSize = slice.byteLength;
                 }
 

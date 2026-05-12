@@ -1,5 +1,5 @@
 # Stage 1: Build WASM binaries and dependencies
-FROM golang:1.25-alpine AS wasm-builder
+FROM golang:1.25.9-alpine AS wasm-builder
 
 # Docker buildx provides these for multi-platform builds
 ARG TARGETOS
