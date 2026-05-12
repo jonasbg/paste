@@ -76,6 +76,7 @@ jobs:
 
       # Helm setup
       - name: Install Helm
+        if: github.ref == 'refs/heads/main'
         uses: azure/setup-helm@v3
 
       # Push Helm chart to GitHub Container Registry
@@ -87,7 +88,7 @@ jobs:
           CURRENT_VERSION=$(echo $file | grep -oP 'paste-\K[0-9]+\.[0-9]+\.[0-9]+')
           NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
           echo $NEW_VERSION
-          sed -i "s/version: 0.0.1/version: $NEW_VERSION/" .helm/Chart.yaml
+          sed -i -E "s/^version: [0-9]+\.[0-9]+\.[0-9]+/version: $NEW_VERSION/" .helm/Chart.yaml
 
           DIGEST=${{steps.build-docker-image.outputs.digest}}
           DIGEST="latest@$DIGEST"

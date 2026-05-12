@@ -1,20 +1,98 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import { streamDownloadAndDecrypt, fetchMetadata } from '$lib/services/fileService';
+	import {
+		downloadAndDecryptFile,
+		streamDownloadAndDecrypt,
+		fetchMetadata
+	} from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import SuccessMessage from '$lib/components/SuccessMessage.svelte';
-	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
-	import FileInfo from '$lib/components/FileUpload/FileInfo.svelte';
 	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
+	import { renderTextPreview } from '$lib/utils/textPreview';
+	import { fly } from 'svelte/transition';
+
+	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
+	const TEXT_PREVIEW_MAX_CHARS = 120_000;
+	const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+	const TEXT_PREVIEW_EXTENSIONS = new Set([
+		'txt',
+		'md',
+		'markdown',
+		'json',
+		'jsonl',
+		'log',
+		'csv',
+		'tsv',
+		'xml',
+		'yaml',
+		'yml',
+		'toml',
+		'ini',
+		'conf',
+		'cfg',
+		'env',
+		'sh',
+		'bash',
+		'zsh',
+		'fish',
+		'ps1',
+		'js',
+		'ts',
+		'jsx',
+		'tsx',
+		'css',
+		'scss',
+		'html',
+		'htm',
+		'svelte',
+		'py',
+		'rb',
+		'php',
+		'java',
+		'go',
+		'rs',
+		'c',
+		'cc',
+		'cpp',
+		'h',
+		'hpp',
+		'sql'
+	]);
+	const IMAGE_PREVIEW_EXTENSIONS = new Set([
+		'png',
+		'jpg',
+		'jpeg',
+		'gif',
+		'webp',
+		'bmp',
+		'avif',
+		'svg'
+	]);
+	const IMAGE_MIME_TYPES: Record<string, string> = {
+		png: 'image/png',
+		jpg: 'image/jpeg',
+		jpeg: 'image/jpeg',
+		gif: 'image/gif',
+		webp: 'image/webp',
+		bmp: 'image/bmp',
+		avif: 'image/avif',
+		svg: 'image/svg+xml'
+	};
+
+	type FileMetadata = {
+		filename?: string;
+		contentType?: string;
+		size?: number;
+		error?: string;
+	};
 
 	let encryptionKey: string = '';
 	let manualKeyInput: string = '';
-	let metadata: any = null;
+	let metadata: FileMetadata | null = null;
 	let fileSize: string | undefined;
 	let downloadProgress = 0;
 	let downloadMessage = '';
@@ -24,11 +102,71 @@
 	let keyError: string | null = null;
 	let isLoading = true;
 	let deletionError: string | null = null;
+	let textPreview: string | null = null;
+	let textPreviewHtml = '';
+	let textPreviewMode: 'pre' | 'table' = 'pre';
+	let textPreviewError: string | null = null;
+	let isLoadingTextPreview = false;
+	let isTextPreviewTruncated = false;
+	let copyState: 'idle' | 'copied' | 'error' = 'idle';
+	let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+	let imagePreviewUrl: string | null = null;
+	let imagePreviewError: string | null = null;
+	let isLoadingImagePreview = false;
+	let previewRequestId = 0;
 
-	// Function to validate and extract key from input
+	// Smooth progress animation
+	let displayProgress = 0;
+	let animationFrame: number;
+	let downloadStartTime = 0;
+	let eta = '';
+
+	function formatEta(seconds: number): string {
+		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
+		if (seconds < 60) return `${Math.ceil(seconds)}s igjen`;
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.ceil(seconds % 60);
+		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} igjen`;
+	}
+
+	function animateProgress() {
+		const diff = downloadProgress - displayProgress;
+		if (Math.abs(diff) < 0.2) {
+			displayProgress = downloadProgress;
+		} else {
+			displayProgress += diff * 0.1;
+		}
+
+		if (displayProgress > 2 && displayProgress < 99 && downloadStartTime > 0) {
+			const elapsed = (Date.now() - downloadStartTime) / 1000;
+			if (elapsed > 0.5) {
+				const rate = displayProgress / elapsed;
+				eta = formatEta((100 - displayProgress) / rate);
+			}
+		} else if (displayProgress >= 99) {
+			eta = '';
+		}
+
+		if (displayProgress !== downloadProgress || isDownloading) {
+			animationFrame = requestAnimationFrame(animateProgress);
+		}
+	}
+
+	$: if (downloadProgress !== displayProgress) {
+		if (downloadStartTime === 0 && downloadProgress > 0) {
+			downloadStartTime = Date.now();
+		}
+		if (animationFrame) cancelAnimationFrame(animationFrame);
+		animationFrame = requestAnimationFrame(animateProgress);
+	}
+
+	$: if (isDownloadComplete) {
+		displayProgress = 100;
+		eta = '';
+	}
+
 	function validateAndExtractKey(input: string): string | null {
 		input = input.trim();
-
 		if (input.includes('://')) {
 			try {
 				const url = new URL(input);
@@ -38,24 +176,312 @@
 				return null;
 			}
 		}
-
 		const base64Regex = /^[A-Za-z0-9+/=_-]+$/;
-		if (base64Regex.test(input)) {
-			return input;
-		}
-
+		if (base64Regex.test(input)) return input;
 		return null;
 	}
 
-	async function getMetadata() {
-		try {
-			const fileId = $page.params.fileId;
-			// Generate token from encryption key
-			const hmacToken = await generateHmacToken(fileId, encryptionKey);
+	function getCurrentFileId(): string {
+		const fileId = $page.params.fileId;
+		if (!fileId) {
+			throw new Error('Missing file ID');
+		}
+		return fileId;
+	}
 
-			const metadataResponse = await fetchMetadata(fileId, encryptionKey, hmacToken);
+	function formatPreviewLimit(bytes: number): string {
+		if (bytes >= 1024 * 1024) {
+			return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+		}
+
+		if (bytes >= 1024) {
+			return `${(bytes / 1024).toFixed(0)} KB`;
+		}
+
+		return `${bytes} B`;
+	}
+
+	function getFileExtension(filename: string | undefined): string {
+		if (!filename || !filename.includes('.')) return '';
+		return filename.split('.').pop()?.toLowerCase() || '';
+	}
+
+	function isTextPreviewable(fileMetadata: FileMetadata | null): boolean {
+		if (!fileMetadata?.filename) return false;
+
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('text/')) return true;
+
+		if (
+			contentType.includes('json') ||
+			contentType.includes('xml') ||
+			contentType.includes('yaml') ||
+			contentType.includes('javascript')
+		) {
+			return true;
+		}
+
+		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
+	}
+
+	function isImagePreviewable(fileMetadata: FileMetadata | null): boolean {
+		if (!fileMetadata?.filename) return false;
+
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('image/')) return true;
+
+		return IMAGE_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
+	}
+
+	function resolveImagePreviewType(fileMetadata: FileMetadata): string | null {
+		const contentType = fileMetadata.contentType?.toLowerCase() || '';
+		if (contentType.startsWith('image/')) {
+			return contentType;
+		}
+
+		return IMAGE_MIME_TYPES[getFileExtension(fileMetadata.filename)] || null;
+	}
+
+	function getUnavailableDownloadMessage(error: unknown): string | null {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message.includes('Failed to download file') || message.includes('Invalid access token')) {
+			return 'Filen finnes ikke eller har allerede blitt lastet ned.';
+		}
+		return null;
+	}
+
+	function fitViewport(
+		node: HTMLElement,
+		options: { reserveSelector?: string; bottomGap?: number; minHeight?: number } = {}
+	) {
+		let frame = 0;
+		let resizeObserver: ResizeObserver | null = null;
+		let currentOptions = options;
+
+		const getOuterHeight = (element: Element) => {
+			const styles = window.getComputedStyle(element as HTMLElement);
+			const marginTop = parseFloat(styles.marginTop) || 0;
+			const marginBottom = parseFloat(styles.marginBottom) || 0;
+			return (element as HTMLElement).getBoundingClientRect().height + marginTop + marginBottom;
+		};
+
+		const update = () => {
+			frame = 0;
+			const rect = node.getBoundingClientRect();
+			const viewportHeight = window.visualViewport?.height || window.innerHeight;
+			const reserveHeight = currentOptions.reserveSelector
+				? Array.from(
+						node.closest('.download-section')?.querySelectorAll(currentOptions.reserveSelector) ??
+							[]
+					).reduce((total, element) => total + getOuterHeight(element), 0)
+				: 0;
+			const bottomGap = currentOptions.bottomGap ?? 24;
+			const minHeight = currentOptions.minHeight ?? 120;
+			const availableHeight = Math.max(
+				minHeight,
+				Math.floor(viewportHeight - rect.top - reserveHeight - bottomGap)
+			);
+			node.style.maxHeight = `${availableHeight}px`;
+		};
+
+		const scheduleUpdate = () => {
+			if (frame) cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(update);
+		};
+
+		scheduleUpdate();
+		window.addEventListener('resize', scheduleUpdate);
+		window.visualViewport?.addEventListener('resize', scheduleUpdate);
+
+		if ('ResizeObserver' in window) {
+			resizeObserver = new ResizeObserver(scheduleUpdate);
+			resizeObserver.observe(document.body);
+		}
+
+		return {
+			update(nextOptions: typeof currentOptions = currentOptions) {
+				currentOptions = nextOptions;
+				scheduleUpdate();
+			},
+			destroy() {
+				if (frame) cancelAnimationFrame(frame);
+				window.removeEventListener('resize', scheduleUpdate);
+				window.visualViewport?.removeEventListener('resize', scheduleUpdate);
+				resizeObserver?.disconnect();
+			}
+		};
+	}
+
+	function resetTextPreview() {
+		textPreview = null;
+		textPreviewHtml = '';
+		textPreviewMode = 'pre';
+		textPreviewError = null;
+		isLoadingTextPreview = false;
+		isTextPreviewTruncated = false;
+		if (copyResetTimer) {
+			clearTimeout(copyResetTimer);
+			copyResetTimer = null;
+		}
+		copyState = 'idle';
+	}
+
+	async function copyTextPreview() {
+		if (textPreview === null) return;
+		try {
+			await navigator.clipboard.writeText(textPreview);
+			copyState = 'copied';
+		} catch {
+			copyState = 'error';
+		}
+		if (copyResetTimer) clearTimeout(copyResetTimer);
+		copyResetTimer = setTimeout(() => {
+			copyState = 'idle';
+			copyResetTimer = null;
+		}, 1800);
+	}
+
+	function resetImagePreview() {
+		if (imagePreviewUrl && browser) {
+			URL.revokeObjectURL(imagePreviewUrl);
+		}
+
+		imagePreviewUrl = null;
+		imagePreviewError = null;
+		isLoadingImagePreview = false;
+	}
+
+	function resetPreviews(): number {
+		previewRequestId += 1;
+		resetTextPreview();
+		resetImagePreview();
+		return previewRequestId;
+	}
+
+	async function loadTextPreview(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		if (!isTextPreviewable(fileMetadata)) return;
+
+		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
+			textPreviewError = `Forhåndsvisning er bare tilgjengelig for tekstfiler opptil ${formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)}.`;
+			return;
+		}
+
+		isLoadingTextPreview = true;
+
+		try {
+			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
+			const previewText = (await decrypted.text()).replace(/\r\n/g, '\n');
+
+			if (requestId !== previewRequestId) return;
+
+			const clippedPreview = previewText.slice(0, TEXT_PREVIEW_MAX_CHARS);
+			textPreview = clippedPreview;
+			isTextPreviewTruncated = previewText.length > TEXT_PREVIEW_MAX_CHARS;
+			const renderedPreview = renderTextPreview(clippedPreview, fileMetadata);
+			textPreviewHtml = renderedPreview.html;
+			textPreviewMode = renderedPreview.mode;
+		} catch (error) {
+			if (requestId !== previewRequestId) return;
+			console.error('Text preview error:', error);
+			const unavailableMessage = getUnavailableDownloadMessage(error);
+			if (unavailableMessage) {
+				metadata = { error: unavailableMessage };
+				return;
+			}
+			textPreviewError = 'Kunne ikke laste forhåndsvisning av tekstfilen.';
+		} finally {
+			if (requestId === previewRequestId) {
+				isLoadingTextPreview = false;
+			}
+		}
+	}
+
+	async function loadImagePreview(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		if (!isImagePreviewable(fileMetadata)) return;
+
+		if ((fileMetadata.size || 0) > IMAGE_PREVIEW_MAX_BYTES) {
+			imagePreviewError = `Forhåndsvisning er bare tilgjengelig for bildefiler opptil ${formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)}.`;
+			return;
+		}
+
+		isLoadingImagePreview = true;
+
+		try {
+			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
+			const previewType = resolveImagePreviewType(fileMetadata);
+			const previewBlob =
+				previewType && decrypted.type !== previewType
+					? new Blob([decrypted], { type: previewType })
+					: decrypted;
+			const objectUrl = URL.createObjectURL(previewBlob);
+
+			if (requestId !== previewRequestId) {
+				URL.revokeObjectURL(objectUrl);
+				return;
+			}
+
+			imagePreviewUrl = objectUrl;
+		} catch (error) {
+			if (requestId !== previewRequestId) return;
+			console.error('Image preview error:', error);
+			const unavailableMessage = getUnavailableDownloadMessage(error);
+			if (unavailableMessage) {
+				metadata = { error: unavailableMessage };
+				return;
+			}
+			imagePreviewError = 'Kunne ikke laste forhåndsvisning av bildefilen.';
+		} finally {
+			if (requestId === previewRequestId) {
+				isLoadingImagePreview = false;
+			}
+		}
+	}
+
+	async function loadPreviews(
+		fileId: string,
+		key: string,
+		token: string,
+		fileMetadata: FileMetadata,
+		requestId: number
+	) {
+		const previewTasks: Promise<void>[] = [];
+
+		if (isTextPreviewable(fileMetadata)) {
+			previewTasks.push(loadTextPreview(fileId, key, token, fileMetadata, requestId));
+		}
+
+		if (isImagePreviewable(fileMetadata)) {
+			previewTasks.push(loadImagePreview(fileId, key, token, fileMetadata, requestId));
+		}
+
+		if (previewTasks.length > 0) {
+			await Promise.all(previewTasks);
+		}
+	}
+
+	async function getMetadata() {
+		const requestId = resetPreviews();
+
+		try {
+			const fileId = getCurrentFileId();
+			const activeKey = encryptionKey;
+			const hmacToken = await generateHmacToken(fileId, activeKey);
+			const metadataResponse = await fetchMetadata(fileId, activeKey, hmacToken);
 			metadata = metadataResponse.metadata;
 			fileSize = metadataResponse.size?.toString();
+			void loadPreviews(fileId, activeKey, hmacToken, metadataResponse.metadata, requestId);
 		} catch (error) {
 			console.error('Metadata error:', error);
 			encryptionKey = '';
@@ -69,37 +495,32 @@
 		}
 	}
 
-	// Function to safely handle encryption key without exposing it in URL
 	function setEncryptionKey(key: string) {
 		encryptionKey = key;
-		// Clear any sensitive data from URL without adding to history
-		if (browser) {
-			replaceState('', window.location.pathname);
-		}
+		resetPreviews();
+		if (browser) replaceState('', window.location.pathname);
 	}
 
 	async function handleManualKeySubmit() {
 		if (!manualKeyInput.trim()) return;
-
 		const key = validateAndExtractKey(manualKeyInput.trim());
 		if (key) {
 			setEncryptionKey(key);
 			await getMetadata();
 		} else {
-			keyError = 'Invalid key or URL';
+			keyError = 'Ugyldig nøkkel eller URL';
 		}
 	}
 
 	async function initiateDownload() {
-		if (!encryptionKey || isDownloading || !metadata || metadata.error) return; // Prevent download if metadata failed
+		if (!encryptionKey || isDownloading || !metadata || metadata.error) return;
 		isDownloading = true;
 		downloadError = null;
 
 		try {
-			const fileId = $page.params.fileId;
+			const fileId = getCurrentFileId();
 			const hmacToken = await generateHmacToken(fileId, encryptionKey);
 
-			// Use streamDownloadAndDecrypt instead of downloadAndDecryptFile
 			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
 				fileId,
 				encryptionKey,
@@ -110,36 +531,31 @@
 				}
 			);
 
-			// Read the stream and collect chunks
 			const reader = stream.getReader();
-			const chunks = [];
+			const chunks: BlobPart[] = [];
 			let receivedLength = 0;
 
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
 				if (value) {
-					chunks.push(value);
+					chunks.push(new Uint8Array(value));
 					receivedLength += value.length;
 				}
 			}
 
-			// Check if any data was received
 			if (receivedLength === 0) {
 				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
 			}
 
-			// Create a Blob from the collected chunks
 			const blob = new Blob(chunks, {
 				type: fileMetadata.contentType || 'application/octet-stream'
 			});
 
-			// Verify the Blob has content
 			if (blob.size === 0) {
 				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
 			}
 
-			// Create and trigger the download
 			const url = window.URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
@@ -149,7 +565,6 @@
 			document.body.removeChild(a);
 			window.URL.revokeObjectURL(url);
 
-			// Attempt to delete the file from the server
 			try {
 				const deleteResponse = await fetch(`/api/delete/${fileId}`, {
 					method: 'DELETE',
@@ -159,28 +574,21 @@
 					}
 				});
 
-				// Clear sensitive data
 				encryptionKey = '';
 				manualKeyInput = '';
 
-				// Check if deletion was successful
 				if (deleteResponse.ok) {
 					isDownloadComplete = true;
 					deletionError = null;
 				} else {
 					deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
-					console.error('Error deleting file:', deleteResponse.status, deleteResponse.statusText);
 				}
 			} catch (err) {
-				console.error('Error deleting file:', err);
 				deletionError =
 					'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
 			}
 
-			// Clean the URL in the browser
-			if (browser) {
-				window.history.replaceState({}, '', '/');
-			}
+			if (browser) window.history.replaceState({}, '', '/');
 		} catch (error) {
 			console.error('Download error:', error);
 			downloadError = (error as Error).message;
@@ -195,19 +603,28 @@
 		if (!browser) return;
 
 		try {
-			// const { initWasm } = await import('$lib/utils/wasm-loader');
 			await initWasm();
+
+			const fileId = getCurrentFileId();
+
+			const storedKey = sessionStorage.getItem('paste_key_' + fileId);
+			if (storedKey) {
+				sessionStorage.removeItem('paste_key_' + fileId);
+				setEncryptionKey(storedKey);
+				await getMetadata();
+				return;
+			}
+
 			if (window.location.hash) {
-				// Check if a hash exists
 				const urlParams = new URLSearchParams(window.location.hash.slice(1));
 				const key = urlParams.get('key');
 				if (key) {
 					const validatedKey = validateAndExtractKey(key);
 					if (validatedKey) {
 						setEncryptionKey(validatedKey);
-						await getMetadata(); // Get metadata on mount as well
+						await getMetadata();
 					} else {
-						keyError = 'Ugyldig nøkkel eller URL'; // More generic
+						keyError = 'Ugyldig nøkkel eller URL';
 					}
 				}
 			}
@@ -219,112 +636,280 @@
 		}
 	});
 
+	onDestroy(() => {
+		resetPreviews();
+	});
+
 	$: canDownload = !!(
 		metadata &&
-		!metadata.error && // Ensure metadata is available and has no errors
+		!metadata.error &&
 		!isDownloading &&
 		!isDownloadComplete &&
 		encryptionKey
 	);
 
-	// Reset keyError whenever manualKeyInput changes
-	$: manualKeyInput, (keyError = null);
+	$: (manualKeyInput, (keyError = null));
 </script>
 
-<div class="container">
-	<div class="download-container">
-		<h1><a href="/"><span>Sikker</span></a> fildeling</h1>
-		<p class="intro-text">
-			Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt
-			delt med deg. Alle filer er ende-til-ende-kryptert, som betyr at bare du med riktig
-			dekrypteringsnøkkel kan få tilgang til innholdet. Etter vellykket nedlasting blir filen
-			automatisk slettet fra våre servere.
-		</p>
+<div class="page-container">
+	<div class="container">
+		<div class="download-section">
+			<h1><a href="/"><span>Sikker</span></a> fildeling</h1>
+			<p class="description">
+				Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt
+				delt med deg. Alle filer er ende-til-ende-kryptert. Etter vellykket nedlasting blir filen
+				automatisk slettet fra våre servere.
+			</p>
 
-		{#if isLoading}
-			<LoadingSpinner message="" />
-		{/if}
+			{#if isLoading}
+				<LoadingSpinner message="" />
+			{/if}
 
-		{#if downloadError}
-			<ErrorMessage message={downloadError} />
-		{:else if metadata?.error}
-			<ErrorMessage message={metadata.error} />
-		{:else}
-			{#if metadata?.filename && !isDownloadComplete && !isDownloading}
-				<FileInfo fileName={metadata.filename} {fileSize} />
-			{/if}
-			{#if metadata?.filename && !isDownloadComplete}
-				{#if !isDownloading}
-					<button class="button" on:click={initiateDownload} disabled={!canDownload}>
-						{isDownloading ? 'Laster ned...' : 'Last ned'}
-					</button>
-				{/if}
-			{/if}
-			{#if isDownloading || isDownloadComplete}
-				<ProgressBar
-					progress={downloadProgress}
-					message={downloadMessage}
-					isVisible={isDownloading}
-					fileName={metadata?.filename || ''}
-					{fileSize}
-				/>
-			{/if}
-			{#if isDownloadComplete}
-				{#if deletionError}
-					<ErrorMessage message={deletionError} />
-				{:else}
-					<SuccessMessage
-						message="Filen er lastet ned og sikkert slettet fra serveren vår. Takk for at du bruker vår sikre fildelingstjeneste!"
-					/>
-				{/if}
-			{/if}
-		{/if}
+			{#if downloadError}
+				<ErrorMessage message={downloadError} />
+			{:else if metadata?.error}
+				<ErrorMessage message={metadata.error} />
+			{:else if metadata?.filename}
+				{#if isImagePreviewable(metadata)}
+					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+						<div class="preview-header">
+							<h2>Forhåndsvisning</h2>
+							<span class="preview-badge">Bilde</span>
+						</div>
 
-		{#if !encryptionKey && !isDownloadComplete && !isLoading}
-			<form class="key-prompt" on:submit|preventDefault={handleManualKeySubmit}>
-				<h2>Dekrypteringsnøkkel kreves</h2>
-				<p>
-					Du trenger en dekrypteringsnøkkel for å få tilgang til denne filen. Vennligst lim inn hele
-					lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut. Alternativt kan du lime
-					inn dekrypteringsnøkkelen direkte under.
-				</p>
-				<div class="input-group">
-					<input
-						type="text"
-						class="key-input"
-						placeholder="Lim inn dekrypteringsnøkkel eller hele URL-en"
-						bind:value={manualKeyInput}
-						disabled={isDownloading}
-					/>
-					<button
-						type="submit"
-						class="decrypt-button"
-						disabled={!manualKeyInput.trim() || isDownloading}
-					>
-						Dekrypter
-					</button>
-				</div>
-				{#if keyError}
-					<div class="error-message">
-						{keyError}
+						{#if isLoadingImagePreview}
+							<div class="preview-loading">
+								<LoadingSpinner message="Laster bildeforhåndsvisning..." />
+							</div>
+						{:else if imagePreviewUrl}
+							<img
+								class="image-preview"
+								src={imagePreviewUrl}
+								alt={`Forhåndsvisning av ${metadata.filename}`}
+								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 48, minHeight: 200 }}
+							/>
+						{:else if imagePreviewError}
+							<p class="preview-note">{imagePreviewError}</p>
+						{/if}
 					</div>
 				{/if}
-			</form>
-		{/if}
+
+				{#if isTextPreviewable(metadata)}
+					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+						<div class="preview-header">
+							<h2>Forhåndsvisning</h2>
+							<span class="preview-badge">Tekst</span>
+						</div>
+
+						{#if isLoadingTextPreview}
+							<div class="preview-loading">
+								<LoadingSpinner message="Laster tekstforhåndsvisning..." />
+							</div>
+						{:else if textPreview !== null}
+							{#if textPreview.length > 0}
+								<div class="text-preview-wrap">
+									<button
+										type="button"
+										class="copy-preview-btn"
+										class:copied={copyState === 'copied'}
+										class:error={copyState === 'error'}
+										on:click={copyTextPreview}
+										aria-label="Kopier tekst"
+										title="Kopier tekst"
+									>
+										{#if copyState === 'copied'}
+											Kopiert
+										{:else if copyState === 'error'}
+											Feil
+										{:else}
+											<svg
+												width="14"
+												height="14"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="2"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												aria-hidden="true"
+											>
+												<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+												<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+											</svg>
+											<span>Kopier</span>
+										{/if}
+									</button>
+									{#if textPreviewMode === 'table'}
+										<div
+											class="table-preview"
+											use:fitViewport={{
+												reserveSelector: '.file-row',
+												bottomGap: 48,
+												minHeight: 200
+											}}
+										>
+											{@html textPreviewHtml}
+										</div>
+									{:else}
+										<pre
+											class="text-preview syntax-preview"
+											use:fitViewport={{
+												reserveSelector: '.file-row',
+												bottomGap: 48,
+												minHeight: 200
+											}}>{@html textPreviewHtml}</pre>
+									{/if}
+								</div>
+							{:else}
+								<p class="preview-note">Denne tekstfilen er tom.</p>
+							{/if}
+
+							{#if isTextPreviewTruncated}
+								<p class="preview-note">
+									Forhåndsvisningen er avkortet. Last ned filen for å se hele innholdet.
+								</p>
+							{/if}
+						{:else if textPreviewError}
+							<p class="preview-note">{textPreviewError}</p>
+						{/if}
+					</div>
+				{/if}
+
+				<!-- Unified 3-column file row -->
+				<div class="file-row" in:fly={{ y: 16, duration: 280 }}>
+					<!-- Left: file icon -->
+					<div class="col-icon">
+						<svg
+							width="32"
+							height="32"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+							<polyline points="13 2 13 9 20 9" />
+						</svg>
+					</div>
+
+					<!-- Middle: name · size · eta · progress -->
+					<div class="col-info">
+						<div class="file-name">{metadata.filename}</div>
+						<div class="file-meta">
+							<div class="meta-left">
+								{#if fileSize}
+									<span class="size">{fileSize}</span>
+								{/if}
+								{#if eta && isDownloading}
+									<span class="dot">·</span>
+									<span class="eta">{eta}</span>
+								{/if}
+							</div>
+							{#if isDownloading || isDownloadComplete}
+								<span class="pct">{Math.round(displayProgress)}%</span>
+							{/if}
+						</div>
+						{#if isDownloading || isDownloadComplete}
+							<div class="progress-track">
+								<div
+									class="progress-fill"
+									class:complete={isDownloadComplete}
+									style="width: {displayProgress}%"
+								/>
+							</div>
+						{/if}
+					</div>
+
+					<!-- Right: download button → spinner → checkmark -->
+					<div class="col-action">
+						{#if isDownloadComplete}
+							<div class="checkmark" title="Nedlasting fullført">
+								<svg
+									fill="currentColor"
+									width="28"
+									height="28"
+									viewBox="-2.4 -2.4 28.80 28.80"
+									xmlns="http://www.w3.org/2000/svg"
+								>
+									<g data-name="Layer 2">
+										<g data-name="checkmark-circle-2">
+											<rect width="24" height="24" opacity="0"></rect>
+											<path
+												d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm4.3 7.61l-4.57 6a1 1 0 0 1-.79.39 1 1 0 0 1-.79-.38l-2.44-3.11a1 1 0 0 1 1.58-1.23l1.63 2.08 3.78-5a1 1 0 1 1 1.6 1.22z"
+											></path>
+										</g>
+									</g>
+								</svg>
+							</div>
+						{:else if isDownloading}
+							<div class="spinner" aria-label="Laster ned..."></div>
+						{:else}
+							<button class="download-btn" on:click={initiateDownload} disabled={!canDownload}>
+								Last ned
+							</button>
+						{/if}
+					</div>
+				</div>
+
+				{#if isDownloadComplete}
+					<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
+						Filen er slettet fra serveren.
+					</p>
+				{/if}
+
+				{#if deletionError}
+					<ErrorMessage message={deletionError} />
+				{/if}
+			{/if}
+
+			{#if !encryptionKey && !isDownloadComplete && !isLoading}
+				<form class="key-prompt" on:submit|preventDefault={handleManualKeySubmit}>
+					<h3>Dekrypteringsnøkkel kreves</h3>
+					<p class="hint">
+						Lim inn hele lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut.
+						Alternativt kan du lime inn dekrypteringsnøkkelen direkte.
+					</p>
+					<div class="input-group">
+						<input
+							type="text"
+							class="key-input"
+							placeholder="Lim inn dekrypteringsnøkkel eller hele URL-en"
+							bind:value={manualKeyInput}
+							disabled={isDownloading}
+						/>
+						<button type="submit" class="button" disabled={!manualKeyInput.trim() || isDownloading}>
+							Dekrypter
+						</button>
+					</div>
+					{#if keyError}
+						<p class="key-error">{keyError}</p>
+					{/if}
+				</form>
+			{/if}
+		</div>
 	</div>
 </div>
 
 <style>
+	.page-container {
+		min-height: 90vh;
+		display: flex;
+		margin: 0;
+		padding: 0;
+	}
+
 	.container {
 		flex: 1;
-		max-width: 1200px;
+		max-width: 860px;
 		margin: 0 auto;
-		padding: 2rem;
+		padding: 1rem 2rem;
 		display: flex;
 		flex-direction: column;
 	}
 
-	.download-container {
+	.download-section {
 		flex: 1;
 		display: flex;
 		flex-direction: column;
@@ -333,7 +918,8 @@
 	h1 {
 		font-size: 2.5rem;
 		font-weight: 500;
-		margin-bottom: 1.5rem;
+		margin-top: 0;
+		margin-bottom: 0.75rem;
 	}
 
 	h1 a {
@@ -350,38 +936,383 @@
 		text-decoration: underline;
 	}
 
+	.description {
+		font-size: 1rem;
+		line-height: 1.6;
+		color: #555;
+		/* margin-bottom: 1.5rem; */
+	}
+
+	/* ── Unified 3-column file row ── */
+	.file-row {
+		display: grid;
+		grid-template-columns: 52px 1fr auto;
+		align-items: center;
+		gap: 1rem;
+		background: #fff;
+		/* border: 1px solid #e5e7eb; */
+		border-radius: 10px;
+		padding: 1rem 1.25rem;
+		/* box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); */
+	}
+
+	.preview-card {
+		margin-top: 1rem;
+		padding: 1rem 1.25rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 10px;
+		background: #fff;
+	}
+
+	.preview-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.875rem;
+	}
+
+	.preview-header h2 {
+		margin: 0;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: #111827;
+	}
+
+	.preview-badge {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: #166534;
+		background: rgba(34, 197, 94, 0.12);
+		border-radius: 999px;
+		padding: 0.25rem 0.625rem;
+	}
+
+	.preview-loading {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 8rem;
+	}
+
+	.text-preview {
+		margin: 0;
+		padding: 1rem;
+		border-radius: 8px;
+		background: #f8fafc;
+		border: 1px solid #e5e7eb;
+		color: #111827;
+		font-size: 0.875rem;
+		line-height: 1.6;
+		font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow: auto;
+	}
+
+	.text-preview-wrap {
+		position: relative;
+	}
+
+	.copy-preview-btn {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		z-index: 2;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.3rem 0.6rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #1f2937;
+		background: rgba(255, 255, 255, 0.92);
+		border: 1px solid #e5e7eb;
+		border-radius: 6px;
+		cursor: pointer;
+		backdrop-filter: blur(2px);
+		transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+	}
+
+	.copy-preview-btn:hover {
+		background: #fff;
+		border-color: #cbd5e1;
+	}
+
+	.copy-preview-btn:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 2px;
+	}
+
+	.copy-preview-btn.copied {
+		color: #166534;
+		border-color: rgba(34, 197, 94, 0.5);
+		background: rgba(34, 197, 94, 0.12);
+	}
+
+	.copy-preview-btn.error {
+		color: #b91c1c;
+		border-color: rgba(239, 68, 68, 0.5);
+		background: rgba(239, 68, 68, 0.1);
+	}
+
+	:global(.syntax-preview .tok-key),
+	:global(.syntax-preview .tok-attr) {
+		color: #0f766e;
+	}
+
+	:global(.syntax-preview .tok-string) {
+		color: #9a3412;
+	}
+
+	:global(.syntax-preview .tok-number) {
+		color: #7c3aed;
+	}
+
+	:global(.syntax-preview .tok-bool),
+	:global(.syntax-preview .tok-null) {
+		color: #b45309;
+	}
+
+	:global(.syntax-preview .tok-comment) {
+		color: #6b7280;
+		font-style: italic;
+	}
+
+	:global(.syntax-preview .tok-keyword),
+	:global(.syntax-preview .tok-tag) {
+		color: #1d4ed8;
+	}
+
+	:global(.syntax-preview .tok-punct) {
+		color: #475569;
+	}
+
+	.image-preview {
+		display: block;
+		width: 100%;
+		object-fit: contain;
+		border-radius: 8px;
+		border: 1px solid #e5e7eb;
+		background: #f8fafc;
+	}
+
+	.table-preview {
+		overflow: auto;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		background: #f8fafc;
+	}
+
+	.table-preview :global(.preview-table) {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.875rem;
+		line-height: 1.45;
+	}
+
+	.table-preview :global(th),
+	.table-preview :global(td) {
+		padding: 0.625rem 0.75rem;
+		border-bottom: 1px solid #e5e7eb;
+		border-right: 1px solid #e5e7eb;
+		text-align: left;
+		vertical-align: top;
+		white-space: nowrap;
+	}
+
+	.table-preview :global(th) {
+		position: sticky;
+		top: 0;
+		background: #eef2ff;
+		color: #1f2937;
+		font-weight: 600;
+	}
+
+	.table-preview :global(tr:last-child td) {
+		border-bottom: none;
+	}
+
+	.table-preview :global(th:last-child),
+	.table-preview :global(td:last-child) {
+		border-right: none;
+	}
+
+	.preview-note {
+		margin: 0;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: #6b7280;
+	}
+
+	.text-preview + .preview-note {
+		margin-top: 0.75rem;
+	}
+
+	.col-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: #9ca3af;
+	}
+
+	.col-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+	}
+
+	.file-name {
+		font-weight: 600;
+		font-size: 0.9375rem;
+		color: #111827;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.file-meta {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.8125rem;
+		color: #6b7280;
+	}
+
+	.meta-left {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+	}
+
+	.dot {
+		color: #d1d5db;
+	}
+
+	.pct {
+		font-variant-numeric: tabular-nums;
+		font-weight: 500;
+		color: #374151;
+	}
+
+	.progress-track {
+		width: 100%;
+		height: 5px;
+		background: #e5e7eb;
+		border-radius: 99px;
+		overflow: hidden;
+		margin-top: 0.1rem;
+	}
+
+	.progress-fill {
+		height: 100%;
+		background: var(--primary-green);
+		border-radius: 99px;
+		transition: width 0.15s ease;
+		background-image: linear-gradient(
+			90deg,
+			rgba(255, 255, 255, 0) 0%,
+			rgba(255, 255, 255, 0.22) 50%,
+			rgba(255, 255, 255, 0) 100%
+		);
+		background-size: 200% 100%;
+		animation: shimmer 1.5s linear infinite;
+	}
+
+	.progress-fill.complete {
+		animation: none;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.progress-track {
+			background: #374151;
+		}
+	}
+
+	@keyframes shimmer {
+		to {
+			background-position: 200% 0;
+		}
+	}
+
+	.col-action {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.checkmark {
+		color: var(--primary-green, #22c55e);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.spinner {
+		width: 28px;
+		height: 28px;
+		border: 3px solid #e5e7eb;
+		border-top-color: var(--primary-green);
+		border-radius: 50%;
+		animation: spin 0.75s linear infinite;
+		flex-shrink: 0;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.download-btn {
+		background-color: var(--primary-green);
+		color: white;
+		border: none;
+		border-radius: 8px;
+		padding: 0.625rem 1.25rem;
+		font-size: 0.9375rem;
+		font-weight: 500;
+		font-family: inherit;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: all 0.2s ease;
+	}
+
+	.download-btn:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+	}
+
+	.download-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+		transform: none;
+		box-shadow: none;
+	}
+
+	/* ── Key prompt ── */
 	.key-prompt {
 		background: #fff;
-		padding: 1rem;
-		border-radius: var(--border-radius);
-		border: 1px solid #e0e0e0;
-		margin-bottom: 1rem;
+		padding: 1.25rem;
+		border-radius: 10px;
+		border: 1px solid #e5e7eb;
+		margin-top: 1.5rem;
 	}
 
-	.key-prompt h2 {
-		font-size: 1.25rem;
-		margin: 0 0 1rem 0;
-		font-weight: 500;
+	.key-prompt h3 {
+		font-size: 0.9375rem;
+		margin: 0 0 0.375rem 0;
+		font-weight: 600;
+		color: #111827;
 	}
 
-	.key-prompt p {
-		margin-bottom: 1rem;
-		color: #666;
-	}
-
-	.key-input {
-		width: 100%;
-		padding: 0.75rem;
-		border: 1px solid #e0e0e0;
-		border-radius: var(--border-radius);
-		font-family: inherit;
-		background: #f5f5f5;
-	}
-
-	.key-input:focus {
-		outline: none;
-		border-color: var(--primary-green);
-		box-shadow: 0 0 0 2px rgba(64, 184, 123, 0.2);
+	.hint {
+		font-size: 0.8125rem;
+		color: #6b7280;
+		margin-bottom: 0.875rem;
 	}
 
 	.input-group {
@@ -389,44 +1320,42 @@
 		gap: 0.5rem;
 	}
 
-	.decrypt-button {
-		white-space: nowrap;
-		padding: 0.75rem 1.5rem;
-		background-color: var(--primary-green);
-		color: white;
-		border: none;
-		border-radius: var(--border-radius);
-		cursor: pointer;
-		font-weight: 500;
+	.key-input {
+		flex: 1;
+		padding: 0.625rem 0.875rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		font-family: inherit;
+		font-size: 0.9375rem;
+		background: #f9fafb;
+		min-width: 0;
+		color: #111827;
 	}
 
-	.decrypt-button:disabled {
-		background-color: #ccc;
-		cursor: not-allowed;
+	.key-input:focus {
+		outline: none;
+		border-color: var(--primary-green);
+		box-shadow: 0 0 0 3px rgba(64, 184, 123, 0.15);
+		background: #fff;
 	}
 
-	.error-message {
+	.key-error {
+		font-size: 0.8125rem;
 		color: var(--error-red, #dc3545);
-		margin-top: 0.5rem;
-		font-size: 0.875rem;
-	}
-	.intro-text {
-		color: #666;
-		margin: 1rem 0 2rem 0;
-		line-height: 1.5;
-		max-width: 800px;
+		margin: 0.5rem 0 0 0;
 	}
 
 	.button {
 		background-color: var(--primary-green);
 		color: white;
 		border: none;
-		border-radius: 6px;
-		padding: 0.75rem 1.5rem;
-		font-size: 1rem;
+		border-radius: 8px;
+		padding: 0.625rem 1.25rem;
+		font-size: 0.9375rem;
+		font-weight: 500;
 		cursor: pointer;
 		transition: all 0.2s ease;
-		max-width: 8em;
+		white-space: nowrap;
 	}
 
 	.button:hover {
@@ -435,38 +1364,48 @@
 	}
 
 	.button:disabled {
-		opacity: 0.7;
+		opacity: 0.6;
 		cursor: not-allowed;
+		transform: none;
+		box-shadow: none;
 	}
 
-	/* Responsive styles */
-	@media (max-width: 768px) {
+	.deleted-notice {
+		font-size: 0.8125rem;
+		color: #6b7280;
+		margin: 0.625rem 0 0 0;
+		text-align: center;
+	}
+
+	/* ── Mobile ── */
+	@media (max-width: 640px) {
 		.container {
 			padding: 1rem;
 		}
 
 		h1 {
-			font-size: 2rem;
-			margin-bottom: 1rem;
-		}
-
-		.intro-text {
-			font-size: 1rem;
-			margin: 1rem 0 1.5rem 0;
-		}
-
-		.key-prompt {
-			padding: 1.5rem;
-			margin-top: 1.5rem;
+			font-size: 1.75rem;
 		}
 
 		.input-group {
 			flex-direction: column;
-			gap: 0.75rem;
 		}
 
-		.decrypt-button {
+		.button {
 			width: 100%;
+		}
+
+		.key-input {
+			font-size: 16px;
+		}
+
+		.preview-card {
+			padding: 0.875rem;
+		}
+
+		.preview-header {
+			align-items: flex-start;
+			flex-direction: column;
 		}
 	}
 </style>

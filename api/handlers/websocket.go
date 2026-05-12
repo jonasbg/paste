@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -13,9 +14,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/jonasbg/paste/m/v2/db"
-	"github.com/jonasbg/paste/m/v2/types"
-	"github.com/jonasbg/paste/m/v2/utils"
+	"github.com/jonasbg/paste/m/v2/telemetry"
+)
+
+const (
+	// pingInterval is how often the server sends a WebSocket ping frame to keep
+	// reverse proxies (nginx, caddy, …) from timing out idle connections.
+	pingInterval = 25 * time.Second
+	// pongWait is the maximum time we wait for the next client message or pong.
+	// Any read deadline is extended to now+pongWait after each received message.
+	pongWait = 60 * time.Second
+	// writeWait is the maximum time we allow for a single write to complete.
+	writeWait = 10 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
@@ -27,9 +37,45 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
+// startPingLoop sends periodic WebSocket pings so reverse proxies do not cut
+// idle connections during large uploads/downloads. The goroutine exits when ctx
+// is cancelled or a write fails. The caller must configure ws.SetPongHandler to
+// reset the read deadline on each pong received.
+//
+// IMPORTANT: pings are sent via WriteControl, not WriteMessage.
+// Gorilla WebSocket allows only one concurrent writer, but WriteControl is
+// explicitly documented as safe to call concurrently with all other methods.
+// Using WriteMessage here would race with the main goroutine's data writes and
+// silently corrupt frames.
+func startPingLoop(ctx context.Context, ws *websocket.Conn) {
+	go func() {
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := ws.WriteControl(
+					websocket.PingMessage,
+					nil,
+					time.Now().Add(writeWait),
+				); err != nil {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// wsWriteJSON sets a write deadline and then serialises v as JSON to ws.
+func wsWriteJSON(ws *websocket.Conn, v any) error {
+	ws.SetWriteDeadline(time.Now().Add(writeWait))
+	return ws.WriteJSON(v)
+}
+
+func HandleWSDownload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		start := time.Now()
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
@@ -37,14 +83,27 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 		defer ws.Close()
 
-		hashedIP := utils.HashIP(utils.GetRealIP(c))
+		// Download clients only send small JSON control messages.
+		ws.SetReadLimit(64 * 1024)
+
+		// Keepalive: extend read deadline on every pong.
+		ws.SetReadDeadline(time.Now().Add(pongWait))
+		ws.SetPongHandler(func(string) error {
+			ws.SetReadDeadline(time.Now().Add(pongWait))
+			return nil
+		})
+
+		ctx, cancelPing := context.WithCancel(context.Background())
+		defer cancelPing()
+		startPingLoop(ctx, ws)
 
 		// Get initial request with fileId and token
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
-			sendError(ws, "Failed to read initial message")
+			sendWSError(ws, "Failed to read initial message")
 			return
 		}
+		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		var request struct {
 			Type   string `json:"type"`
@@ -53,29 +112,29 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		if err := json.Unmarshal(msg, &request); err != nil {
-			sendError(ws, "Invalid message format")
+			sendWSError(ws, "Invalid message format")
 			return
 		}
 
 		if request.Type != "download_init" {
-			sendError(ws, "Invalid message type: expected 'download_init'")
+			sendWSError(ws, "Invalid message type: expected 'download_init'")
 			return
 		}
 
 		// Validate fileId format
 		if len(request.FileId) != 16 && len(request.FileId) != 24 && len(request.FileId) != 32 {
-			sendError(ws, "Invalid file ID format")
+			sendWSError(ws, "Invalid file ID format")
 			return
 		}
 
 		if !validateID(request.FileId) {
-			sendError(ws, "Invalid file ID format")
+			sendWSError(ws, "Invalid file ID format")
 			return
 		}
 
 		// Validate token format
 		if !validateToken(request.Token) {
-			sendError(ws, "Invalid token format")
+			sendWSError(ws, "Invalid token format")
 			return
 		}
 
@@ -84,14 +143,14 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		filePath := filepath.Join(uploadDir, request.FileId+"."+request.Token)
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			// Return generic error to prevent token enumeration
-			sendError(ws, "Access denied")
+			sendWSError(ws, "Access denied")
 			return
 		}
 
 		file, err := os.Open(filePath)
 		if err != nil {
 			log.Printf("Error: Failed to open file: %v", err)
-			sendError(ws, "Server error: Cannot open file")
+			sendWSError(ws, "Server error: Cannot open file")
 			return
 		}
 		defer file.Close()
@@ -100,12 +159,12 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		fileInfo, err := file.Stat()
 		if err != nil {
 			log.Printf("Error: Failed to get file info: %v", err)
-			sendError(ws, "Server error: Cannot get file info")
+			sendWSError(ws, "Server error: Cannot get file info")
 			return
 		}
 
 		// Send file size info
-		if err := ws.WriteJSON(gin.H{
+		if err := wsWriteJSON(ws, gin.H{
 			"type": "file_info",
 			"size": fileInfo.Size(),
 		}); err != nil {
@@ -119,6 +178,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			log.Printf("Failed to read ready message: %v", err)
 			return
 		}
+		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		var readyResp struct {
 			Type  string `json:"type"`
@@ -145,6 +205,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		for {
 			n, err := file.Read(buffer)
 			if n > 0 {
+				ws.SetWriteDeadline(time.Now().Add(writeWait))
 				if err := ws.WriteMessage(websocket.BinaryMessage, buffer[:n]); err != nil {
 					log.Printf("Error sending chunk: %v", err)
 					return
@@ -159,6 +220,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 						log.Printf("Error receiving ack: %v", err)
 						return
 					}
+					ws.SetReadDeadline(time.Now().Add(pongWait))
 					var ack struct {
 						Type string `json:"type"`
 						Size int    `json:"size"`
@@ -179,6 +241,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 						log.Printf("Error receiving final batch ack: %v", err)
 						return
 					}
+					ws.SetReadDeadline(time.Now().Add(pongWait))
 					var ack struct {
 						Type string `json:"type"`
 					}
@@ -188,7 +251,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 					}
 				}
 
-				if err := ws.WriteJSON(gin.H{"type": "complete", "size": totalSent}); err != nil {
+				if err := wsWriteJSON(ws, gin.H{"type": "complete", "size": totalSent}); err != nil {
 					log.Printf("Failed to send complete message: %v", err)
 					return
 				}
@@ -197,6 +260,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 					log.Printf("Error receiving final ack: %v", err)
 					return
 				}
+				ws.SetReadDeadline(time.Now().Add(pongWait))
 				var complete struct {
 					Type     string `json:"type"`
 					Complete bool   `json:"complete"`
@@ -211,7 +275,7 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 
 			if err != nil {
 				log.Printf("Error reading file: %v", err)
-				sendError(ws, "Error reading file")
+				sendWSError(ws, "Error reading file")
 				return
 			}
 			if n == 0 {
@@ -220,54 +284,21 @@ func HandleWSDownload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		// Calculate duration of download
-		duration := time.Since(start)
-
 		// Only delete file if download was completed successfully
 		if isComplete {
 			if err := os.Remove(filePath); err != nil {
 				log.Printf("Failed to remove file: %v", err)
 			}
 
-			// Log successful transaction
-			tx := &types.TransactionLog{
-				Timestamp:  start,
-				Action:     "download",
-				Method:     "websocket",
-				IP:         hashedIP,
-				FileID:     request.FileId,
-				Duration:   duration.Milliseconds(),
-				Size:       totalSent,
-				Success:    true,
-				StatusCode: 200,
-			}
-
-			if err = db.LogTransaction(tx); err != nil {
-				log.Printf("Failed to create transaction log: %v", err)
-			}
+			metrics.RecordTransfer(c.Request.Context(), "download", totalSent, true, "websocket")
 		} else {
-			// Log incomplete transaction
-			tx := &types.TransactionLog{
-				Timestamp:  start,
-				Action:     "download_incomplete",
-				Method:     "websocket",
-				IP:         hashedIP,
-				FileID:     request.FileId,
-				Duration:   duration.Milliseconds(),
-				Size:       totalSent,
-				Success:    false,
-				StatusCode: 500,
-			}
-
-			if err = db.LogTransaction(tx); err != nil {
-				log.Printf("Failed to create transaction log: %v", err)
-			}
+			metrics.RecordTransfer(c.Request.Context(), "download", totalSent, false, "websocket")
 		}
 	}
 }
 
-func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
+func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		start := time.Now()
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
@@ -275,14 +306,30 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 		defer ws.Close()
 
-		hashedIP := utils.HashIP(utils.GetRealIP(c))
+		// Limit inbound frame size to one encrypted chunk + GCM tag + small headroom.
+		// This prevents a malicious client from forcing gorilla to allocate a huge buffer
+		// before the application-level chunk-size validation can fire.
+		maxFrameBytes := int64(GlobalConfig.ChunkSize)*1024*1024 + 16 + 1024
+		ws.SetReadLimit(maxFrameBytes)
+
+		// Keepalive: extend read deadline whenever a pong arrives.
+		ws.SetReadDeadline(time.Now().Add(pongWait))
+		ws.SetPongHandler(func(string) error {
+			ws.SetReadDeadline(time.Now().Add(pongWait))
+			return nil
+		})
+
+		ctx, cancelPing := context.WithCancel(context.Background())
+		defer cancelPing()
+		startPingLoop(ctx, ws)
 
 		// 1. Initial Message: Size Check
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
-			sendError(ws, "Failed to read initial message")
+			sendWSError(ws, "Failed to read initial message")
 			return
 		}
+		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		var init struct {
 			Type   string `json:"type"`
@@ -290,17 +337,17 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			FileID string `json:"fileId,omitempty"` // Optional: for passphrase-based uploads
 		}
 		if err := json.Unmarshal(msg, &init); err != nil {
-			sendError(ws, "Invalid initial message format")
+			sendWSError(ws, "Invalid initial message format")
 			return
 		}
 
 		if init.Type != "init" {
-			sendError(ws, "Invalid message type: expected 'init'")
+			sendWSError(ws, "Invalid message type: expected 'init'")
 			return
 		}
 
 		if init.Size > int64(GlobalConfig.MaxFileSizeBytes) {
-			sendError(ws, "File too large")
+			sendWSError(ws, "File too large")
 			return
 		}
 
@@ -310,22 +357,22 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			// Client provided a custom fileID (passphrase mode)
 			// Validate format
 			if len(init.FileID) != 16 && len(init.FileID) != 24 && len(init.FileID) != 32 {
-				sendError(ws, "Invalid custom file ID length")
+				sendWSError(ws, "Invalid custom file ID length")
 				return
 			}
 			if !validateID(init.FileID) {
-				sendError(ws, "Invalid custom file ID format")
+				sendWSError(ws, "Invalid custom file ID format")
 				return
 			}
 
 			// Check for collision: reject if any file with this ID already exists
 			matches, err := filepath.Glob(filepath.Join(uploadDir, init.FileID+".*"))
 			if err != nil {
-				sendError(ws, "Failed to check for existing files")
+				sendWSError(ws, "Failed to check for existing files")
 				return
 			}
 			if len(matches) > 0 {
-				sendError(ws, "Share code already in use, please try again with a different passphrase")
+				sendWSError(ws, "Share code already in use, please try again with a different passphrase")
 				return
 			}
 
@@ -334,22 +381,23 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 			// Generate random ID as usual
 			id, err = generateID(GlobalConfig.IDSize)
 			if err != nil {
-				sendError(ws, "Failed to generate ID")
+				sendWSError(ws, "Failed to generate ID")
 				return
 			}
 		}
 
-		if err := ws.WriteJSON(gin.H{"id": id}); err != nil {
-			sendError(ws, "Failed to send ID")
+		if err := wsWriteJSON(ws, gin.H{"type": "id", "id": id}); err != nil {
+			sendWSError(ws, "Failed to send ID")
 			return
 		}
 
 		// 3. Token Message and Validation
 		_, tokenMsg, err := ws.ReadMessage()
 		if err != nil {
-			sendError(ws, "Failed to read token")
+			sendWSError(ws, "Failed to read token")
 			return
 		}
+		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		var tokenData struct {
 			Type  string `json:"type"`
@@ -357,18 +405,18 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		}
 
 		if err := json.Unmarshal(tokenMsg, &tokenData); err != nil {
-			sendError(ws, "Invalid token message")
+			sendWSError(ws, "Invalid token message")
 			return
 		}
 
 		if tokenData.Type != "token" || !validateToken(tokenData.Token) {
-			sendError(ws, "Invalid token")
+			sendWSError(ws, "Invalid token")
 			return
 		}
 
 		// Send token accepted
-		if err := ws.WriteJSON(gin.H{"token_accepted": true}); err != nil {
-			sendError(ws, "Failed to acknowledge token")
+		if err := wsWriteJSON(ws, gin.H{"type": "token_accepted"}); err != nil {
+			sendWSError(ws, "Failed to acknowledge token")
 			return
 		}
 
@@ -377,11 +425,12 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		tmpPath := finalPath + ".tmp" // Use a temporary file
 		file, err := os.Create(tmpPath)
 		if err != nil {
-			sendError(ws, "Failed to create file")
+			sendWSError(ws, "Failed to create file")
 			return
 		}
-		// Buffered writer to minimize syscalls; buffer ~2 chunks
-		bufWriter := bufio.NewWriterSize(file, (GlobalConfig.ChunkSize*1024*1024+16)*2)
+		// 512 KB buffer is enough to smooth out syscall bursts; the OS page cache
+		// handles larger sequential writes efficiently without a huge userspace buffer.
+		bufWriter := bufio.NewWriterSize(file, 512*1024)
 		defer func() {
 			bufWriter.Flush()
 			file.Close()
@@ -390,9 +439,10 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		// 5. Read and Validate Encrypted Metadata Header
 		_, header, err := ws.ReadMessage()
 		if err != nil || len(header) < headerSize {
-			cleanup(ws, tmpPath, "Invalid header: incorrect size")
+			wsCleanup(ws, tmpPath, "Invalid header: incorrect size")
 			return
 		}
+		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		// Basic structural checks on the header (before we even try processing)
 		metadataIV := header[:12] // first 12 is the IV
@@ -400,57 +450,59 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 		metadataEncryptedDataIV := header[16:28]
 
 		if len(metadataIV) != 12 {
-			cleanup(ws, tmpPath, "Invalid metadata IV size") //Check Metadata IV size
+			wsCleanup(ws, tmpPath, "Invalid metadata IV size")
 			return
 		}
 
 		if len(metadataEncryptedDataIV) != 12 {
-			cleanup(ws, tmpPath, "Invalid metadata encrypted data IV size") //Check Metadata IV size
+			wsCleanup(ws, tmpPath, "Invalid metadata encrypted data IV size")
 			return
 		}
 
 		if metadataLength > 65535 { // Example limit: 64KB metadata
-			cleanup(ws, tmpPath, "Metadata size too large")
+			wsCleanup(ws, tmpPath, "Metadata size too large")
 			return
 		}
 
 		if int(16+metadataLength) > len(header) {
-			cleanup(ws, tmpPath, "Incomplete metadata in header")
+			wsCleanup(ws, tmpPath, "Incomplete metadata in header")
 			return
 		}
 
 		if _, err := bufWriter.Write(header); err != nil {
-			cleanup(ws, tmpPath, "Failed to write header")
+			wsCleanup(ws, tmpPath, "Failed to write header")
 			return
 		}
 
 		// Send ready signal after successfully processing the header
-		if err := ws.WriteJSON(gin.H{"ready": true}); err != nil {
+		if err := wsWriteJSON(ws, gin.H{"type": "ready"}); err != nil {
 			log.Printf("Failed to send ready signal: %v", err)
-			cleanup(ws, tmpPath, "Failed to send ready signal")
+			wsCleanup(ws, tmpPath, "Failed to send ready signal")
 			return
 		}
 
 		// 6. Read and Validate IV
 		_, iv, err := ws.ReadMessage()
 		if err != nil || len(iv) != 12 {
-			cleanup(ws, tmpPath, "Invalid IV: incorrect size")
+			wsCleanup(ws, tmpPath, "Invalid IV: incorrect size")
 			return
 		}
+		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		if _, err := bufWriter.Write(iv); err != nil {
-			cleanup(ws, tmpPath, "Failed to write IV")
+			wsCleanup(ws, tmpPath, "Failed to write IV")
 			return
 		}
 
-		// 7.  Chunk Processing Loop (Key Changes)
+		// 7. Chunk Processing Loop
 		var totalBytes int64 = int64(len(header) + len(iv)) // Initialize with header + IV
 		for {
 			_, chunk, err := ws.ReadMessage()
 			if err != nil {
-				cleanup(ws, tmpPath, "Failed to read chunk")
+				wsCleanup(ws, tmpPath, "Failed to read chunk")
 				return
 			}
+			ws.SetReadDeadline(time.Now().Add(pongWait))
 
 			// End signal (single byte 0)
 			if len(chunk) == 1 && chunk[0] == 0 {
@@ -459,97 +511,81 @@ func HandleWSUpload(uploadDir string, db *db.DB) gin.HandlerFunc {
 
 			// Validate size
 			if len(chunk) > (GlobalConfig.ChunkSize*1024*1024 + 16) {
-				cleanup(ws, tmpPath, "Chunk size exceeds maximum")
+				wsCleanup(ws, tmpPath, "Chunk size exceeds maximum")
 				return
 			}
 			if len(chunk) < 16 { // must at least contain GCM tag
-				cleanup(ws, tmpPath, "Chunk size too small")
+				wsCleanup(ws, tmpPath, "Chunk size too small")
 				return
 			}
 
 			chunkSize := int64(len(chunk))
 			projectedTotal := totalBytes + chunkSize
 			if projectedTotal > int64(GlobalConfig.MaxFileSizeBytes) {
-				cleanup(ws, tmpPath, "File too large")
+				wsCleanup(ws, tmpPath, "File too large")
 				return
 			}
 
-			// EARLY ACK: send acknowledgement BEFORE disk write to let client pipeline faster
-			if err := ws.WriteJSON(gin.H{"ack": chunkSize}); err != nil {
-				log.Printf("Failed to send acknowledgement: %v", err)
-				cleanup(ws, tmpPath, "Failed to send acknowledgement")
-				return
-			}
-
-			// Now persist chunk
+			// Persist chunk to disk BEFORE acknowledging.
+			// An ACK sent before the write succeeds would make a disk error look like a
+			// sudden connection drop to the client, because the server close frame races
+			// the in-flight next chunk from the client.
 			if _, err := bufWriter.Write(chunk); err != nil {
-				cleanup(ws, tmpPath, "Failed to write chunk")
+				wsCleanup(ws, tmpPath, "Failed to write chunk")
 				return
 			}
 			totalBytes = projectedTotal
+
+			// ACK only after the chunk is safely written to the buffer
+			if err := wsWriteJSON(ws, gin.H{"type": "ack", "ack": chunkSize}); err != nil {
+				log.Printf("Failed to send acknowledgement: %v", err)
+				wsCleanup(ws, tmpPath, "Failed to send acknowledgement")
+				return
+			}
 		}
 
 		// 8. Finalization
 		// Ensure all buffered data is flushed before closing/renaming
 		if err := bufWriter.Flush(); err != nil {
-			cleanup(ws, tmpPath, "Error flushing buffer")
+			wsCleanup(ws, tmpPath, "Error flushing buffer")
 			return
 		}
 		if err := file.Close(); err != nil { // Close before rename
-			cleanup(ws, tmpPath, "Error closing file")
+			wsCleanup(ws, tmpPath, "Error closing file")
 			return
 		}
 
 		if err := os.Rename(tmpPath, finalPath); err != nil {
 			os.Remove(tmpPath) // Clean up temp file if rename fails
-			sendError(ws, "Failed to save file")
+			sendWSError(ws, "Failed to save file")
 			return
 		}
 
-		duration := time.Since(start)
+		metrics.RecordTransfer(c.Request.Context(), "upload", totalBytes, true, "websocket")
+		metrics.RecordUpload(c.Request.Context(), totalBytes, true, "websocket")
 
-		// 9. Log Transaction (Your existing code)
-		tx := &types.TransactionLog{
-			Timestamp:  start,
-			Action:     "upload",
-			Method:     "websocket",
-			IP:         hashedIP,
-			FileID:     id,
-			Duration:   duration.Milliseconds(),
-			Size:       totalBytes,
-			Success:    true,
-			StatusCode: 200,
-		}
-
-		if err = db.LogTransaction(tx); err != nil {
-			log.Printf("Failed to create transaction log: %v", err)
-		}
-
-		// 10.  Send Completion Message (Your existing code)
-		if err := ws.WriteJSON(gin.H{
-			"id":       id,
-			"size":     totalBytes,
-			"complete": true,
+		// 10. Send Completion Message
+		if err := wsWriteJSON(ws, gin.H{
+			"type": "complete",
+			"id":   id,
+			"size": totalBytes,
 		}); err != nil {
 			log.Printf("Failed to send complete message: %v", err)
 		}
 	}
 }
 
-// Helper functions (Modified for consistency)
-
-func sendError(ws *websocket.Conn, message string) {
-	log.Printf("Sending error: %s", message)     // Log the error
-	err := ws.WriteJSON(gin.H{"error": message}) //Consistent JSON error
-	if err != nil {
-		log.Printf("Failed to send error message: %v", err)
-	}
-	ws.Close() // Always close the connection on error
+// sendWSError sends a typed error JSON frame and closes the connection.
+func sendWSError(ws *websocket.Conn, message string) {
+	log.Printf("WebSocket error: %s", message)
+	_ = wsWriteJSON(ws, gin.H{"type": "error", "error": message})
+	ws.Close()
 }
 
-func cleanup(ws *websocket.Conn, tmpPath string, message string) {
-	sendError(ws, message)                      // Send the error message first
-	if _, err := os.Stat(tmpPath); err == nil { // Check if file exists
+// wsCleanup sends an error, closes the connection, and removes any partial temp file.
+func wsCleanup(ws *websocket.Conn, tmpPath string, message string) {
+	sendWSError(ws, message)
+	if _, err := os.Stat(tmpPath); err == nil {
 		if err := os.Remove(tmpPath); err != nil {
 			log.Printf("Failed to remove temporary file: %v", err)
 		}

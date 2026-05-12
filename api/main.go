@@ -1,18 +1,20 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/jonasbg/paste/m/v2/cleanup"
-	"github.com/jonasbg/paste/m/v2/db"
 	"github.com/jonasbg/paste/m/v2/handlers"
 	"github.com/jonasbg/paste/m/v2/middleware"
+	"github.com/jonasbg/paste/m/v2/telemetry"
 	"github.com/jonasbg/paste/m/v2/utils"
 	"golang.org/x/time/rate"
 )
@@ -29,23 +31,15 @@ func getUploadDir() string {
 	return "./uploads"
 }
 
-func getDatabaseDir() string {
-	if dir := os.Getenv("DATABASE_DIR"); dir != "" {
-		return filepath.Join(dir, "paste.db")
-	}
-	return filepath.Join("./uploads", "paste.db")
-}
-
 func main() {
 	uploadDir := getUploadDir()
 	if err := os.MkdirAll(uploadDir, 0750); err != nil {
 		log.Fatalf("Failed to create upload directory: %v", err)
 	}
 
-	dbPath := getDatabaseDir()
-	database, err := db.NewDB(dbPath)
+	telemetryProvider, err := telemetry.Init(context.Background())
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatalf("Failed to initialize telemetry: %v", err)
 	}
 
 	handlers.InitConfig()
@@ -57,13 +51,12 @@ func main() {
 	r.TrustedPlatform = "X-Forwarded-For"
 
 	r.Use(middleware.PrivacyLogger(), gin.Recovery())
+	r.Use(telemetryProvider.Middleware())
 
 	// Add compression middleware with custom options
 	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{".pdf", ".mp4", ".avi", ".mov"}),
 		// Exclude websocket endpoints and raw download endpoint (already encrypted/compressed data)
 		gzip.WithExcludedPaths([]string{"/api/ws", "/api/download"})))
-
-	r.Use(middleware.Logger(database))
 
 	api := r.Group("/api")
 	api.Use(middleware.RateLimit(limiter))
@@ -73,21 +66,12 @@ func main() {
 		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
 		api.DELETE("/delete/:id", handlers.HandleDelete(uploadDir))
 
-		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, database))
-		api.GET("/ws/download", handlers.HandleWSDownload(uploadDir, database))
+		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, telemetryProvider))
+		api.GET("/ws/download", handlers.HandleWSDownload(uploadDir, telemetryProvider))
 	}
 
-	allowedMetricsIPs := utils.GetEnv("METRICS_ALLOWED_IPS", "127.0.0.1/8,::1/128")
-
-	// Replace the metrics API group with this:
-	metricsAPI := api.Group("")
-	metricsAPI.Use(middleware.IPSourceRestriction(allowedMetricsIPs))
-	{
-		metricsAPI.GET("/metrics/activity", handlers.HandleActivity(database))
-		metricsAPI.GET("/metrics/storage", handlers.HandleStorage(database, uploadDir))
-		metricsAPI.GET("/metrics/requests", handlers.HandleRequestMetrics(database))
-		metricsAPI.GET("/metrics/security", handlers.HandleSecurityMetrics(database))
-		metricsAPI.GET("/metrics/upload-history", handlers.HandleUploadHistory(database))
+	if err := telemetry.MountPrometheusRoute(r, telemetryProvider.PrometheusHandler()); err != nil {
+		log.Fatalf("Failed to mount telemetry endpoint: %v", err)
 	}
 
 	spaDirectory := utils.GetEnv("WEB_DIR", "../web")
@@ -107,7 +91,6 @@ func main() {
 
 	r.Use(middleware.Middleware("/", spaDirectory))
 
-	cleanup.StartLogRotation(database)
 	cleanup.StartFileCleanup(uploadDir)
 
 	go func() {
@@ -116,9 +99,12 @@ func main() {
 		<-c
 		log.Println("Shutting down server...")
 
-		// Flush logs before exit
-		middleware.CloseLogManager()
-		log.Println("Logs flushed, shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Telemetry shutdown failed: %v", err)
+		}
+		log.Println("Server shutdown complete")
 		os.Exit(0)
 	}()
 

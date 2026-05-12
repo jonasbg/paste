@@ -39,7 +39,7 @@ No database required for file storage. No server-side encryption keys. Upload an
                     │  - REST API      │
                     │  - Static UI     │
                     │  - File Storage  │
-                    │  - SQLite Logs   │
+                    │  - OTEL Metrics  │
                     └──────────────────┘
 
 Client-side encryption flow:
@@ -152,11 +152,7 @@ Base path: `/api`
 | DELETE | `/delete/:id` | Delete a file |
 | GET | `/ws/upload` | WebSocket upload for large files |
 | GET | `/ws/download` | WebSocket download for large files |
-| GET | `/metrics/activity` | Server activity statistics |
-| GET | `/metrics/storage` | Storage usage statistics |
-| GET | `/metrics/requests` | Request statistics |
-| GET | `/metrics/security` | Security-related metrics |
-| GET | `/metrics/upload-history` | Upload history statistics |
+| GET | `/metrics` | Prometheus-compatible OTEL metrics endpoint |
 
 Notes:
 - All file data is encrypted client-side before reaching the server
@@ -170,17 +166,22 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UPLOAD_DIR` | `./uploads` | Directory where uploaded files are stored |
-| `DATABASE_DIR` | `./uploads` | Directory where the SQLite database is stored |
 | `WEB_DIR` | `../web` | Directory containing static web files |
 | `FILES_RETENTION_DAYS` | `7` | Number of days to keep uploaded files before deletion |
-| `LOGS_RETENTION_DAYS` | `180` | Number of days to keep logs (negative for infinite) |
 | `MAX_FILE_SIZE` | `100MB` | Maximum allowed size for uploaded files |
 | `ID_SIZE` | `64` | Size of the generated IDs (64, 128, 192, 256 bit) |
 | `KEY_SIZE` | `128` | Size of the encryption keys (128, 192, 256 bit) |
 | `CHUNK_SIZE` | `4` | Size of chunks in MB for transmission |
-| `METRICS_ALLOWED_IPS` | `127.0.0.1/8,::1/128` | IP addresses allowed to access metrics endpoints |
+| `OTEL_PROMETHEUS_ENABLED` | `true` | Expose a Prometheus-compatible OTEL scrape endpoint |
+| `OTEL_PROMETHEUS_PATH` | `/metrics` | Path for the Prometheus-compatible OTEL scrape endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP HTTP endpoint for pushing runtime metrics |
 | `TRUSTED_PROXIES` | `10.0.0.0/8` | IP ranges of trusted proxies for correct client IP detection |
 | `LOG_HASH_SALT` | (empty) | Optional per-instance salt used when hashing client IPs. Setting it changes stored hashes; keep it secret.
+
+Current OTEL metrics include request counts and latency plus upload-focused metrics:
+- `paste.upload.size.bytes`
+- `paste.upload.bytes.total`
+- `paste.upload.files.total`
 
 ## Security Implementation
 

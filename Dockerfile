@@ -11,7 +11,7 @@ COPY wasm/ .
 # Install dependencies and download TinyGo
 RUN apk add --no-cache wget ca-certificates
 
-# Use TinyGo 0.40.1 with Go 1.25 support
+# Use TinyGo 0.40.1 with Go 1.26 support
 # Map Docker TARGETARCH to TinyGo's architecture naming
 RUN TINYGO_ARCH=$(case ${TARGETARCH} in \
         amd64) echo "amd64" ;; \
@@ -45,7 +45,7 @@ COPY web .
 RUN NODE_ENV=production npm run build
 
 # Stage 3: Build the Go backend
-FROM golang:1.25-alpine AS backend-builder
+FROM golang:1.26-alpine AS backend-builder
 
 # Docker buildx automatically provides these
 ARG TARGETOS

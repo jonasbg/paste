@@ -11,14 +11,35 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall/js"
 
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
+)
+
+// v2 format constants. Bumping these strings is a wire-format break.
+const (
+	chunkAAD    = "paste-v2-chunk"
+	metadataAAD = "paste-v2-metadata"
+
+	argon2Salt   = "paste-v2-argon2id"
+	argon2Time   = 3
+	argon2Memory = 64 * 1024 // 64 MiB
+	argon2Par    = 4
+	argon2Out    = 32
+
+	hkdfFileIDInfo = "paste-v2-file-id"
+	hkdfKeyInfo    = "paste-v2-encryption-key"
+	hkdfHMACInfo   = "paste:hmac-token"
+
+	// streamFinalBit marks the final chunk in the STREAM nonce counter.
+	// 31-bit counter + 1 final-marker bit gives 2^31 chunks per file.
+	streamFinalBit uint32 = 0x80000000
+	streamCounterMask uint32 = 0x7FFFFFFF
 )
 
 type Metadata struct {
@@ -28,9 +49,13 @@ type Metadata struct {
 }
 
 type StreamingCipher struct {
-	gcm   cipher.AEAD
-	iv    []byte
-	chunk int
+	gcm      cipher.AEAD
+	iv       []byte
+	chunk    uint32
+	nonce    [12]byte
+	plainBuf []byte
+	sealBuf  []byte
+	openBuf  []byte
 }
 
 type CipherRegistry struct {
@@ -56,8 +81,98 @@ func main() {
 		"decryptMetadata":        js.FuncOf(decryptMetadata),
 		"encrypt":                js.FuncOf(encrypt),
 		"generateHmacToken":      js.FuncOf(generateHmacToken),
+		"deriveFromPassphrase":   js.FuncOf(deriveFromPassphrase),
 	})
 	<-c
+}
+
+func zero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+// decodeKey decodes a base64 URL-safe key. Accepts both raw (unpadded) and
+// padded forms for compatibility with older share URLs.
+func decodeKey(s string) ([]byte, error) {
+	if k, err := base64.RawURLEncoding.DecodeString(s); err == nil {
+		return k, nil
+	}
+	if pad := len(s) % 4; pad != 0 {
+		s += strings.Repeat("=", 4-pad)
+	}
+	return base64.URLEncoding.DecodeString(s)
+}
+
+func newAEAD(key []byte) (cipher.AEAD, error) {
+	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
+		return nil, errors.New("invalid key length")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func deriveFromPassphrase(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return handleError(errors.New("passphrase required"))
+	}
+	passphrase := args[0].String()
+	keySizeBits := 128
+	if len(args) >= 2 && args[1].Type() == js.TypeNumber {
+		keySizeBits = args[1].Int()
+	}
+	var keySize int
+	switch keySizeBits {
+	case 192:
+		keySize = 24
+	case 256:
+		keySize = 32
+	case 128:
+		keySize = 16
+	default:
+		return handleError(errors.New("invalid key size, must be 128, 192, or 256"))
+	}
+
+	// Argon2id provides the work factor; HKDF provides labeled domain separation
+	// for the file ID and the encryption key.
+	stretched := argon2.IDKey([]byte(passphrase), []byte(argon2Salt),
+		argon2Time, argon2Memory, argon2Par, argon2Out)
+	defer zero(stretched)
+
+	fileIDReader := hkdf.New(sha256.New, stretched, nil, []byte(hkdfFileIDInfo))
+	fileIDBytes := make([]byte, 16)
+	if _, err := io.ReadFull(fileIDReader, fileIDBytes); err != nil {
+		return handleError(err)
+	}
+
+	keyReader := hkdf.New(sha256.New, stretched, nil, []byte(hkdfKeyInfo))
+	key := make([]byte, keySize)
+	if _, err := io.ReadFull(keyReader, key); err != nil {
+		return handleError(err)
+	}
+
+	fileID := hex(fileIDBytes)
+	keyBase64 := base64.RawURLEncoding.EncodeToString(key)
+	zero(key)
+
+	return js.ValueOf(map[string]interface{}{
+		"fileId": fileID,
+		"key":    keyBase64,
+	})
+}
+
+// hex avoids fmt.Sprintf to keep WASM size down and avoid allocator pressure.
+func hex(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = digits[v>>4]
+		out[i*2+1] = digits[v&0x0f]
+	}
+	return string(out)
 }
 
 func generateHmacToken(_ js.Value, args []js.Value) interface{} {
@@ -66,20 +181,11 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 	}
 
 	fileId := args[0].String()
-	keyBase64 := args[1].String()
-
-	// Try decoding without padding first (new format)
-	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
+	key, err := decodeKey(args[1].String())
 	if err != nil {
-		// Fallback: try with padding (old format)
-		if len(keyBase64)%4 != 0 {
-			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
-		}
-		key, err = base64.URLEncoding.DecodeString(keyBase64)
-		if err != nil {
-			return handleError(err)
-		}
+		return handleError(err)
 	}
+	defer zero(key)
 
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
 		return handleError(errors.New("invalid key length"))
@@ -89,24 +195,21 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 	if err != nil {
 		return handleError(err)
 	}
+	defer zero(hmacKey)
 
-	// Create HMAC with derived key
 	h := hmac.New(sha256.New, hmacKey)
 	h.Write([]byte(fileId))
 	signature := h.Sum(nil)
 
-	// Truncate signature to match key size in bytes (16, 24, or 32)
 	tokenLength := len(key)
 	if tokenLength > len(signature) {
 		tokenLength = len(signature)
 	}
-	tokenBytes := signature[:tokenLength]
-	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
+	token := base64.RawURLEncoding.EncodeToString(signature[:tokenLength])
 
-	// Validate the token is filename safe
-	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-	for _, char := range token {
-		if !strings.ContainsRune(safeChars, char) {
+	const safeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+	for _, c := range token {
+		if !strings.ContainsRune(safeChars, c) {
 			return handleError(errors.New("generated token contains unsafe characters"))
 		}
 	}
@@ -115,9 +218,7 @@ func generateHmacToken(_ js.Value, args []js.Value) interface{} {
 }
 
 func deriveHMACKey(baseKey []byte, fileID string) ([]byte, error) {
-	info := []byte("paste:hmac-token")
-	reader := hkdf.New(sha256.New, baseKey, []byte(fileID), info)
-
+	reader := hkdf.New(sha256.New, baseKey, []byte(fileID), []byte(hkdfHMACInfo))
 	derived := make([]byte, len(baseKey))
 	if _, err := io.ReadFull(reader, derived); err != nil {
 		return nil, err
@@ -130,49 +231,27 @@ func encrypt(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	// Decode the key using base64 URL-safe encoding (raw, without padding)
-	keyBase64 := args[0].String()
-
-	// Try decoding without padding first (new format)
-	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
+	key, err := decodeKey(args[0].String())
 	if err != nil {
-		// Fallback: try with padding (old format)
-		if len(keyBase64)%4 != 0 {
-			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
-		}
-		key, err = base64.URLEncoding.DecodeString(keyBase64)
-		if err != nil {
-			return handleError(err)
-		}
+		return handleError(err)
+	}
+	defer zero(key)
+
+	aead, err := newAEAD(key)
+	if err != nil {
+		return handleError(err)
 	}
 
-	// Validate key length (must be 16, 24, or 32 bytes)
-	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return handleError(errors.New("invalid key length"))
-	}
-
-	// Copy the data into a byte slice
 	data := make([]byte, args[1].Length())
 	js.CopyBytesToGo(data, args[1])
+	defer zero(data)
 
-	// Generate a 12-byte IV for GCM mode
 	iv := make([]byte, 12)
 	if _, err := rand.Read(iv); err != nil {
 		return handleError(err)
 	}
 
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return handleError(err)
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return handleError(err)
-	}
-
-	encrypted := aead.Seal(nil, iv, data, nil)
-
+	encrypted := aead.Seal(nil, iv, data, []byte(metadataAAD))
 	result := append(iv, encrypted...)
 
 	uint8Array := js.Global().Get("Uint8Array").New(len(result))
@@ -185,27 +264,13 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	keyBase64 := args[0].String()
-
-	// Try decoding without padding first (new format)
-	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
-	if err != nil {
-		// Fallback: try with padding (old format for backward compatibility)
-		if len(keyBase64)%4 != 0 {
-			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
-		}
-		key, err = base64.URLEncoding.DecodeString(keyBase64)
-		if err != nil {
-			return handleError(err)
-		}
-	}
-
-	block, err := aes.NewCipher(key)
+	key, err := decodeKey(args[0].String())
 	if err != nil {
 		return handleError(err)
 	}
+	defer zero(key)
 
-	aead, err := cipher.NewGCM(block)
+	aead, err := newAEAD(key)
 	if err != nil {
 		return handleError(err)
 	}
@@ -215,20 +280,14 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(err)
 	}
 
-	cipher := &StreamingCipher{
-		gcm:   aead,
-		iv:    iv,
-		chunk: 0,
-	}
+	sc := &StreamingCipher{gcm: aead, iv: iv}
 
-	// Register cipher and get ID
 	registry.mu.Lock()
 	cipherID := registry.nextID
 	registry.nextID++
-	registry.ciphers[cipherID] = cipher
+	registry.ciphers[cipherID] = sc
 	registry.mu.Unlock()
 
-	// Return both cipher ID and IV
 	uint8Array := js.Global().Get("Uint8Array").New(len(iv))
 	js.CopyBytesToJS(uint8Array, iv)
 
@@ -243,47 +302,44 @@ func createDecryptionStream(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	keyBase64 := args[0].String()
-	iv := make([]byte, args[1].Length())
+	if args[1].Length() != 12 {
+		return handleError(errors.New("invalid IV size"))
+	}
+	iv := make([]byte, 12)
 	js.CopyBytesToGo(iv, args[1])
 
-	// Try decoding without padding first (new format)
-	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
+	key, err := decodeKey(args[0].String())
 	if err != nil {
-		// Fallback: try with padding (old format)
-		if len(keyBase64)%4 != 0 {
-			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
-		}
-		key, err = base64.URLEncoding.DecodeString(keyBase64)
-		if err != nil {
-			return handleError(err)
-		}
+		return handleError(err)
 	}
+	defer zero(key)
 
-	block, err := aes.NewCipher(key)
+	aead, err := newAEAD(key)
 	if err != nil {
 		return handleError(err)
 	}
 
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return handleError(err)
-	}
+	sc := &StreamingCipher{gcm: aead, iv: iv}
 
-	cipher := &StreamingCipher{
-		gcm:   aead,
-		iv:    iv,
-		chunk: 0,
-	}
-
-	// Register cipher and get ID
 	registry.mu.Lock()
 	cipherID := registry.nextID
 	registry.nextID++
-	registry.ciphers[cipherID] = cipher
+	registry.ciphers[cipherID] = sc
 	registry.mu.Unlock()
 
 	return js.ValueOf(cipherID)
+}
+
+// buildChunkNonce writes the STREAM nonce for chunkIdx into dst.
+// dst must be 12 bytes. The high bit of the 32-bit counter encodes isFinal,
+// so reordering, truncation, or extension all fail GCM authentication.
+func buildChunkNonce(dst []byte, iv []byte, chunkIdx uint32, isFinal bool) {
+	copy(dst, iv[:8])
+	counter := chunkIdx & streamCounterMask
+	if isFinal {
+		counter |= streamFinalBit
+	}
+	binary.LittleEndian.PutUint32(dst[8:], counter)
 }
 
 func encryptChunk(_ js.Value, args []js.Value) interface{} {
@@ -292,40 +348,38 @@ func encryptChunk(_ js.Value, args []js.Value) interface{} {
 	}
 
 	cipherID := args[0].Int()
-	data := make([]byte, args[1].Length())
-	js.CopyBytesToGo(data, args[1])
-	isLastChunk := args[2].Bool()
+	isLast := args[2].Bool()
 
-	// Get cipher from registry
 	registry.mu.Lock()
-	cipher, exists := registry.ciphers[cipherID]
+	sc, exists := registry.ciphers[cipherID]
 	registry.mu.Unlock()
 
 	if !exists {
 		return handleError(errors.New("invalid cipher ID"))
 	}
 
-	nonce := make([]byte, 12)
-	copy(nonce, cipher.iv)
-	binary.LittleEndian.PutUint32(nonce[8:], uint32(cipher.chunk))
-	cipher.chunk++
+	if sc.chunk&streamFinalBit != 0 || sc.chunk >= streamCounterMask {
+		return handleError(errors.New("chunk counter exhausted"))
+	}
 
-	encrypted := cipher.gcm.Seal(nil, nonce, data, nil)
+	n := args[1].Length()
+	if n > len(sc.plainBuf) {
+		sc.plainBuf = make([]byte, n)
+	}
+	data := sc.plainBuf[:n]
+	js.CopyBytesToGo(data, args[1])
 
-	uint8Array := js.Global().Get("Uint8Array").New(len(encrypted))
-	js.CopyBytesToJS(uint8Array, encrypted)
+	buildChunkNonce(sc.nonce[:], sc.iv, sc.chunk, isLast)
+	sc.chunk++
 
-	// If this is the last chunk, clean up the cipher
-	if isLastChunk {
-		registry.mu.Lock()
-		if c, exists := registry.ciphers[cipherID]; exists {
-			// Clear the IV for security
-			for i := range c.iv {
-				c.iv[i] = 0
-			}
-			delete(registry.ciphers, cipherID)
-		}
-		registry.mu.Unlock()
+	sc.sealBuf = sc.gcm.Seal(sc.sealBuf[:0], sc.nonce[:], data, []byte(chunkAAD))
+	zero(data)
+
+	uint8Array := js.Global().Get("Uint8Array").New(len(sc.sealBuf))
+	js.CopyBytesToJS(uint8Array, sc.sealBuf)
+
+	if isLast {
+		disposeByID(cipherID)
 	}
 
 	return uint8Array
@@ -337,128 +391,110 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 	}
 
 	cipherID := args[0].Int()
-	data := make([]byte, args[1].Length())
-	js.CopyBytesToGo(data, args[1])
-	isLastChunk := args[2].Bool()
+	isLast := args[2].Bool()
 
-	// Get cipher from registry
 	registry.mu.Lock()
-	cipher, exists := registry.ciphers[cipherID]
+	sc, exists := registry.ciphers[cipherID]
 	registry.mu.Unlock()
 
 	if !exists {
 		return handleError(errors.New("invalid cipher ID"))
 	}
 
-	nonce := make([]byte, 12)
-	copy(nonce, cipher.iv)
-	binary.LittleEndian.PutUint32(nonce[8:], uint32(cipher.chunk))
+	if sc.chunk >= streamCounterMask {
+		return handleError(errors.New("chunk counter exhausted"))
+	}
 
-	decrypted, err := cipher.gcm.Open(nil, nonce, data, nil)
+	n := args[1].Length()
+	if n > len(sc.plainBuf) {
+		sc.plainBuf = make([]byte, n)
+	}
+	data := sc.plainBuf[:n]
+	js.CopyBytesToGo(data, args[1])
+
+	buildChunkNonce(sc.nonce[:], sc.iv, sc.chunk, isLast)
+
+	var err error
+	sc.openBuf, err = sc.gcm.Open(sc.openBuf[:0], sc.nonce[:], data, []byte(chunkAAD))
+	zero(data)
 	if err != nil {
-		fmt.Printf("Decryption error: %v\n", err)
 		return handleError(err)
 	}
 
-	cipher.chunk++
+	sc.chunk++
 
-	uint8Array := js.Global().Get("Uint8Array").New(len(decrypted))
-	js.CopyBytesToJS(uint8Array, decrypted)
+	uint8Array := js.Global().Get("Uint8Array").New(len(sc.openBuf))
+	js.CopyBytesToJS(uint8Array, sc.openBuf)
 
-	// If this is the last chunk, clean up the cipher
-	if isLastChunk {
-		registry.mu.Lock()
-		if c, exists := registry.ciphers[cipherID]; exists {
-			// Clear the IV for security
-			for i := range c.iv {
-				c.iv[i] = 0
-			}
-			delete(registry.ciphers, cipherID)
-		}
-		registry.mu.Unlock()
+	if isLast {
+		disposeByID(cipherID)
 	}
 
 	return uint8Array
 }
 
-// disposeCipher manually cleans up a cipher when no longer needed
+func disposeByID(cipherID int) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	c, ok := registry.ciphers[cipherID]
+	if !ok {
+		return
+	}
+	zero(c.iv)
+	zero(c.nonce[:])
+	zero(c.plainBuf)
+	zero(c.sealBuf)
+	zero(c.openBuf)
+	delete(registry.ciphers, cipherID)
+}
+
 func disposeCipher(_ js.Value, args []js.Value) interface{} {
 	if len(args) != 1 {
 		return handleError(errors.New("invalid arguments"))
 	}
-
-	cipherID := args[0].Int()
-
-	registry.mu.Lock()
-	defer registry.mu.Unlock()
-
-	if cipher, exists := registry.ciphers[cipherID]; exists {
-		// Clear the IV for security
-		for i := range cipher.iv {
-			cipher.iv[i] = 0
-		}
-		delete(registry.ciphers, cipherID)
-	}
-
+	disposeByID(args[0].Int())
 	return js.ValueOf(true)
 }
 
-// generateKey generates a cryptographically secure random key of a specified size (in bits).
-// It supports key sizes of 128, 192, and 256 bits.  It accepts an optional argument
-// specifying the key size.  If no argument is provided, it defaults to 128 bits.
-// The argument can be either a number or a string that can be parsed as an integer.
-// If an invalid key size is provided (either not one of the supported sizes or a non-numeric string),
-// it defaults to 128 bits and prints an error message to the console.  The generated key
-// is returned as a URL-safe base64 encoded string.
-//
-// Args:
-//
-//	_ (js.Value): The "this" value (unused).
-//	args ([]js.Value): An array of JavaScript values.  args[0], if present, should be
-//	  the desired key size in bits (either as a number or a string).
-//
-// Returns:
-//
-//	interface{}: A URL-safe base64 encoded string representing the generated key, or
-//	  an error object if key generation fails.
 func generateKey(_ js.Value, args []js.Value) interface{} {
-	keySizeBits := 128 // Default key size
+	keySizeBits := 128
 
-	// Check if an argument was provided and attempt to parse it.
 	if len(args) > 0 {
-		if args[0].Type() == js.TypeNumber { //Verify it is a number
+		switch args[0].Type() {
+		case js.TypeNumber:
 			keySizeBits = args[0].Int()
-		} else if args[0].Type() == js.TypeString { //Try to parse a string
-			parsedSize, err := strconv.Atoi(args[0].String())
+		case js.TypeString:
+			parsed, err := strconv.Atoi(args[0].String())
 			if err != nil {
-				fmt.Println("Invalid key size provided, defaulting to 128 bits. Error:", err)
-			} else {
-				keySizeBits = parsedSize
+				return handleError(errors.New("invalid key size: not a number"))
 			}
-		} else {
-			fmt.Println("Invalid type provided for key size (expected number or string), defaulting to 128 bits.")
+			keySizeBits = parsed
+		case js.TypeUndefined, js.TypeNull:
+			// keep default
+		default:
+			return handleError(errors.New("invalid key size: must be number or numeric string"))
 		}
-
 	}
 
 	var keySize int
 	switch keySizeBits {
 	case 128:
-		keySize = 16 // 128 bits / 8 bits per byte = 16 bytes
+		keySize = 16
 	case 192:
-		keySize = 24 // 192 bits / 8 bits per byte = 24 bytes
+		keySize = 24
 	case 256:
-		keySize = 32 // 256 bits / 8 bits per byte = 32 bytes
+		keySize = 32
 	default:
-		fmt.Printf("Invalid key size (%d bits), defaulting to 128 bits.\n", keySizeBits)
-		keySize = 16 // Default to 128 bits if invalid size provided
+		return handleError(errors.New("invalid key size: must be 128, 192, or 256"))
 	}
 
 	key := make([]byte, keySize)
 	if _, err := rand.Read(key); err != nil {
-		return handleError(err) // Assuming handleError is defined elsewhere
+		return handleError(err)
 	}
-	return base64.RawURLEncoding.EncodeToString(key)
+	encoded := base64.RawURLEncoding.EncodeToString(key)
+	zero(key)
+	return encoded
 }
 
 func decryptMetadata(_ js.Value, args []js.Value) interface{} {
@@ -466,7 +502,12 @@ func decryptMetadata(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("invalid arguments"))
 	}
 
-	keyBase64 := args[0].String()
+	key, err := decodeKey(args[0].String())
+	if err != nil {
+		return handleError(err)
+	}
+	defer zero(key)
+
 	data := make([]byte, args[1].Length())
 	js.CopyBytesToGo(data, args[1])
 
@@ -476,38 +517,21 @@ func decryptMetadata(_ js.Value, args []js.Value) interface{} {
 
 	iv := data[:12]
 	metadataLen := binary.LittleEndian.Uint32(data[12:16])
-	if len(data) < 16+int(metadataLen) {
+	if uint64(len(data)) < uint64(16)+uint64(metadataLen) {
 		return handleError(errors.New("incomplete metadata"))
 	}
 	encryptedMetadata := data[16 : 16+metadataLen]
 
-	// Try decoding without padding first (new format)
-	key, err := base64.RawURLEncoding.DecodeString(keyBase64)
-	if err != nil {
-		// Fallback: try with padding (old format)
-		if len(keyBase64)%4 != 0 {
-			keyBase64 += strings.Repeat("=", 4-len(keyBase64)%4)
-		}
-		key, err = base64.URLEncoding.DecodeString(keyBase64)
-		if err != nil {
-			return handleError(err)
-		}
-	}
-
-	block, err := aes.NewCipher(key)
+	aead, err := newAEAD(key)
 	if err != nil {
 		return handleError(err)
 	}
 
-	aead, err := cipher.NewGCM(block)
+	decrypted, err := aead.Open(nil, iv, encryptedMetadata, []byte(metadataAAD))
 	if err != nil {
 		return handleError(err)
 	}
-
-	decrypted, err := aead.Open(nil, iv, encryptedMetadata, nil)
-	if err != nil {
-		return handleError(err)
-	}
+	defer zero(decrypted)
 
 	var metadata Metadata
 	if err := json.NewDecoder(bytes.NewReader(decrypted)).Decode(&metadata); err != nil {
@@ -518,7 +542,6 @@ func decryptMetadata(_ js.Value, args []js.Value) interface{} {
 	result["filename"] = metadata.Filename
 	result["contentType"] = metadata.ContentType
 	result["size"] = metadata.Size
-
 	return js.ValueOf(result)
 }
 

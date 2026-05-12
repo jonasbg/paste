@@ -13,6 +13,7 @@ interface GoEncryption {
 	decryptMetadata?: (key: string, data: Uint8Array) => any;
 	generateKey?: (keySize: number) => string;
 	generateHmacToken?: (fileId: string, key: string) => string;
+	deriveFromPassphrase?: (passphrase: string, keySizeBits: number) => { fileId: string; key: string } | Error;
 }
 
 declare global {
@@ -27,7 +28,7 @@ const WASM_CACHE_NAME = 'paste-wasm-cache-v2';
 const WASM_PATH = '/encryption.wasm';
 const WASM_VERSION_KEY = 'wasm-version';
 // Update this when your WASM file changes
-const CURRENT_WASM_VERSION = '1.2.1-base64-fix-backward-compat';
+const CURRENT_WASM_VERSION = '2.0.0-v2-format';
 
 let wasmInstance: GoEncryption | null = null;
 let wasmInitPromise: Promise<GoEncryption> | null = null;
@@ -38,7 +39,7 @@ async function loadWasmExecutor() {
 
 	return new Promise<typeof window.Go>((resolve, reject) => {
 		const script = document.createElement('script');
-		script.src = '/wasm_exec.js';
+		script.src = `/wasm_exec.js?v=${CURRENT_WASM_VERSION}`;
 		script.type = 'application/javascript';
 		script.setAttribute('crossorigin', 'anonymous');
 
