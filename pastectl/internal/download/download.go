@@ -219,31 +219,49 @@ func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key [
 
 	var totalRead int64
 
-	// Read and decrypt chunks in a streaming fashion
+	// One-chunk lookahead: a full ReadFull may still be the final chunk if the
+	// file size is an exact multiple of chunkSize. The v2 STREAM nonce binds
+	// the isFinal flag, so we must know it before calling DecryptChunk.
+	var pending []byte
+	hasPending := false
+
+	decryptAndWrite := func(data []byte, isFinal bool) error {
+		decrypted, err := streamCipher.DecryptChunk(data, isFinal)
+		if err != nil {
+			return fmt.Errorf("decryption failed: %w", err)
+		}
+		if _, err := writer.Write(decrypted); err != nil {
+			return err
+		}
+		totalRead += int64(len(data))
+		if bar != nil {
+			bar.Update(totalRead)
+		}
+		return nil
+	}
+
 	for {
 		n, err := io.ReadFull(resp.Body, buffer)
 
 		if err == io.EOF {
+			if hasPending {
+				if dErr := decryptAndWrite(pending, true); dErr != nil {
+					return dErr
+				}
+			}
 			break
 		}
 
 		if err == io.ErrUnexpectedEOF {
-			if n == 0 {
-				break
+			if hasPending {
+				if dErr := decryptAndWrite(pending, false); dErr != nil {
+					return dErr
+				}
 			}
-
-			totalRead += int64(n)
-			if bar != nil {
-				bar.Update(totalRead)
-			}
-
-			decrypted, decryptErr := streamCipher.DecryptChunk(buffer[:n])
-			if decryptErr != nil {
-				return fmt.Errorf("decryption failed on final chunk: %w", decryptErr)
-			}
-
-			if _, err := writer.Write(decrypted); err != nil {
-				return err
+			if n > 0 {
+				if dErr := decryptAndWrite(append([]byte(nil), buffer[:n]...), true); dErr != nil {
+					return dErr
+				}
 			}
 			break
 		}
@@ -252,21 +270,13 @@ func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key [
 			return fmt.Errorf("failed to read chunk: %w", err)
 		}
 
-		totalRead += int64(n)
-		if bar != nil {
-			bar.Update(totalRead)
+		if hasPending {
+			if dErr := decryptAndWrite(pending, false); dErr != nil {
+				return dErr
+			}
 		}
-
-		// Decrypt the chunk
-		decrypted, decryptErr := streamCipher.DecryptChunk(buffer[:n])
-		if decryptErr != nil {
-			return fmt.Errorf("decryption failed: %w", decryptErr)
-		}
-
-		// Write decrypted data
-		if _, err := writer.Write(decrypted); err != nil {
-			return err
-		}
+		pending = append(pending[:0], buffer[:n]...)
+		hasPending = true
 	}
 
 	if bar != nil {

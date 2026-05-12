@@ -168,46 +168,74 @@ func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentTyp
 		return "", fmt.Errorf("failed to send IV: %w", err)
 	}
 
-	// Step 5: Stream encrypted chunks
+	// Step 5: Stream encrypted chunks. We keep one chunk buffered ahead so we
+	// can mark the final chunk's isFinal=true at encrypt time — required by
+	// the v2 STREAM nonce construction. Without lookahead, a file whose size
+	// is an exact multiple of chunkSize would have its last chunk encrypted
+	// with isFinal=false and the receiver would (correctly) reject it.
 	chunkSize := h.config.ChunkSize * 1024 * 1024
 	buffer := make([]byte, chunkSize)
+	var pending []byte
+	hasPending := false
 
-	// Create progress bar
 	bar := ui.NewProgressBar(fileSize, "Uploading")
+
+	sendChunk := func(data []byte, isFinal bool) error {
+		encryptedChunk, err := streamCipher.EncryptChunk(data, isFinal)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt chunk: %w", err)
+		}
+		if err := conn.WriteMessage(websocket.BinaryMessage, encryptedChunk); err != nil {
+			return fmt.Errorf("failed to send chunk: %w", err)
+		}
+		var ackResp map[string]interface{}
+		if err := conn.ReadJSON(&ackResp); err != nil {
+			return fmt.Errorf("failed to read ack: %w", err)
+		}
+		return nil
+	}
 
 	var totalRead int64
 	for {
-		n, err := reader.Read(buffer)
-		if err != nil && err != io.EOF {
+		n, err := io.ReadFull(reader, buffer)
+		if err == io.EOF {
+			if hasPending {
+				if sendErr := sendChunk(pending, true); sendErr != nil {
+					return "", sendErr
+				}
+				totalRead += int64(len(pending))
+				bar.Update(totalRead)
+			}
+			break
+		}
+		if err == io.ErrUnexpectedEOF {
+			if hasPending {
+				if sendErr := sendChunk(pending, false); sendErr != nil {
+					return "", sendErr
+				}
+				totalRead += int64(len(pending))
+				bar.Update(totalRead)
+			}
+			if sendErr := sendChunk(buffer[:n], true); sendErr != nil {
+				return "", sendErr
+			}
+			totalRead += int64(n)
+			bar.Update(totalRead)
+			break
+		}
+		if err != nil {
 			return "", fmt.Errorf("failed to read data: %w", err)
 		}
-		if n == 0 {
-			break
+
+		if hasPending {
+			if sendErr := sendChunk(pending, false); sendErr != nil {
+				return "", sendErr
+			}
+			totalRead += int64(len(pending))
+			bar.Update(totalRead)
 		}
-
-		totalRead += int64(n)
-
-		// Encrypt chunk
-		encryptedChunk, err := streamCipher.EncryptChunk(buffer[:n])
-		if err != nil {
-			return "", fmt.Errorf("failed to encrypt chunk: %w", err)
-		}
-
-		if err := conn.WriteMessage(websocket.BinaryMessage, encryptedChunk); err != nil {
-			return "", fmt.Errorf("failed to send chunk: %w", err)
-		}
-
-		var ackResp map[string]interface{}
-		if err := conn.ReadJSON(&ackResp); err != nil {
-			return "", fmt.Errorf("failed to read ack: %w", err)
-		}
-
-		// Update progress bar
-		bar.Update(totalRead)
-
-		if err == io.EOF {
-			break
-		}
+		pending = append(pending[:0], buffer[:n]...)
+		hasPending = true
 	}
 	bar.Finish()
 

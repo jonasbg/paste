@@ -110,13 +110,13 @@ export async function downloadAndDecryptFile(
 		}
 
 		if (decryptionInitialized && bufferedData.length > 0 && cipherId !== null) {
-			// Process buffered data in chunks
-			const chunkSize = config.chunkSize * 1024 * 1024 + 16; // 1MB + GCM tag
-			while (bufferedData.length >= chunkSize) {
+			// Use strict `>` so the last chunk always reaches the final-chunk
+			// branch below. The v2 STREAM nonce binds isFinal, so a chunk
+			// encrypted as final must be decrypted as final.
+			const chunkSize = config.chunkSize * 1024 * 1024 + 16; // plaintext + GCM tag
+			while (bufferedData.length > chunkSize) {
 				const chunk = bufferedData.slice(0, chunkSize);
-				const isLastChunk = false; // We don't know yet
-
-				const decrypted = decryptChunk(cipherId, chunk, isLastChunk);
+				const decrypted = decryptChunk(cipherId, chunk, false);
 				if (!decrypted) {
 					throw new Error('Failed to decrypt chunk');
 				}
@@ -131,7 +131,6 @@ export async function downloadAndDecryptFile(
 		}
 	}
 
-	// Process any remaining data
 	if (bufferedData.length > 0 && cipherId !== null) {
 		const decrypted = decryptChunk(cipherId, bufferedData, true);
 		if (!decrypted) {
@@ -336,13 +335,13 @@ export async function streamDownloadAndDecrypt(
       }
 
       if (decryptionInitialized && bufferedData.length > 0 && cipherId !== null) {
-        // Process buffered data in chunks
-        const chunkSize =  config.chunkSize*1024 * 1024 + 16; // 1MB + GCM tag
-        while (bufferedData.length >= chunkSize) {
+        // Use strict `>` so the last chunk always reaches the flush branch.
+        // The v2 STREAM nonce binds isFinal; decrypting the final chunk with
+        // isFinal=false would fail GCM authentication.
+        const chunkSize =  config.chunkSize*1024 * 1024 + 16; // plaintext + GCM tag
+        while (bufferedData.length > chunkSize) {
           const dataChunk = bufferedData.slice(0, chunkSize);
-          const isLastChunk = false; // We don't know yet
-
-          const decrypted = decryptChunk(cipherId, dataChunk, isLastChunk);
+          const decrypted = decryptChunk(cipherId, dataChunk, false);
           if (!decrypted) {
             controller.error(new Error('Failed to decrypt chunk'));
             return;
@@ -355,10 +354,8 @@ export async function streamDownloadAndDecrypt(
     },
 
     flush: async (controller) => {
-      // Final progress update with 100%
       await onProgress(100, 'Download complete');
-      
-      // Process any remaining data
+
       if (bufferedData.length > 0 && decryptionInitialized && cipherId !== null) {
         const decrypted = decryptChunk(cipherId, bufferedData, true);
         if (!decrypted) {
@@ -367,8 +364,8 @@ export async function streamDownloadAndDecrypt(
         }
         controller.enqueue(decrypted);
       }
-      
-      // Cleanup cipher
+
+      // decryptChunk(isLast=true) auto-disposes in WASM; this is belt-and-suspenders.
       if (cipherId !== null && wasmInstance.disposeCipher) {
         wasmInstance.disposeCipher(cipherId);
       }
