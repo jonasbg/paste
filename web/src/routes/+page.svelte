@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
@@ -97,7 +97,6 @@
 	let fileInput: HTMLInputElement;
 	let dropZoneEl: HTMLDivElement | null = null;
 	let passphraseInputEl: HTMLInputElement | null = null;
-	let uploadButtonEl: HTMLButtonElement | null = null;
 	let selectedFile: File | null = null;
 	let isUploading = false;
 	let uploadProgress = 0;
@@ -492,7 +491,6 @@
 		}
 		selectedFile = file;
 		fileSizeError = '';
-		tick().then(() => uploadButtonEl?.focus());
 		return true;
 	}
 
@@ -895,15 +893,14 @@
 
 		generatedPassphrase = generatePassphrase();
 		window.addEventListener('paste', handlePaste);
+		window.addEventListener('keydown', handleGlobalEnter);
 		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
-
-		await tick();
-		passphraseInputEl?.focus();
 	});
 
 	onDestroy(() => {
 		if (browser) {
 			window.removeEventListener('paste', handlePaste);
+			window.removeEventListener('keydown', handleGlobalEnter);
 			document.removeEventListener('dragover', preventBrowserFileDrop);
 			document.removeEventListener('drop', handlePageDrop);
 			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
@@ -998,6 +995,27 @@
 		}
 	}
 
+	function handleGlobalEnter(event: KeyboardEvent) {
+		if (event.key !== 'Enter' || event.defaultPrevented) return;
+		if (!selectedFile || isUploading || sharePassphrase) return;
+		const target = event.target as HTMLElement | null;
+		if (target) {
+			const tag = target.tagName;
+			if (
+				tag === 'INPUT' ||
+				tag === 'TEXTAREA' ||
+				tag === 'BUTTON' ||
+				tag === 'SELECT' ||
+				tag === 'A' ||
+				target.isContentEditable
+			) {
+				return;
+			}
+		}
+		event.preventDefault();
+		handleUpload();
+	}
+
 	function processClipboardFile(file: File) {
 		if (!$configStore.data) {
 			fileSizeError = 'Unable to validate file size: configuration not loaded';
@@ -1011,7 +1029,6 @@
 		}
 		selectedFile = file;
 		fileSizeError = '';
-		tick().then(() => uploadButtonEl?.focus());
 	}
 </script>
 
@@ -1189,7 +1206,7 @@
 						<div class="file-pre-size">{FileProcessor.formatFileSize(selectedFile.size)}</div>
 					</div>
 					<div class="selected-col-action">
-						<button class="btn-upload-now" bind:this={uploadButtonEl} on:click={handleUpload}>Last opp</button>
+						<button class="btn-upload-now" on:click={handleUpload}>Last opp</button>
 						<button class="btn-remove-file" on:click={removeFile} aria-label="Fjern fil">
 							<svg
 								width="15"
