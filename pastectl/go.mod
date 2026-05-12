@@ -8,8 +8,8 @@ require (
 )
 
 require (
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 )
 
 replace github.com/jonasbg/paste/crypto => ../crypto
