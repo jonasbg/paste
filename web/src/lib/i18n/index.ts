@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { browser } from '$lib/env';
 import { derived, get, writable } from 'svelte/store';
 import en from './en';
 import no from './no';

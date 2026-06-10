@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
+	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 
 	interface Props {

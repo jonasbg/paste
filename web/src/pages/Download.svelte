@@ -2,8 +2,7 @@
 	import { run, preventDefault } from 'svelte/legacy';
 
 	import { onDestroy, onMount } from 'svelte';
-	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
+	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { initWasm } from '$lib/utils/wasm-loader';
 	import {
@@ -12,7 +11,6 @@
 		fetchMetadata
 	} from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import { renderTextPreview } from '$lib/utils/textPreview';
@@ -116,6 +114,8 @@
 		error?: string;
 	};
 
+	let { fileId }: { fileId: string } = $props();
+
 	let encryptionKey: string = $state('');
 	let manualKeyInput: string = $state('');
 	let metadata = $state<FileMetadata | null>(null);
@@ -212,7 +212,6 @@
 	}
 
 	function getCurrentFileId(): string {
-		const fileId = $page.params.fileId;
 		if (!fileId) {
 			throw new Error('Missing file ID');
 		}
@@ -540,7 +539,7 @@
 	function setEncryptionKey(key: string) {
 		encryptionKey = key;
 		resetPreviews();
-		if (browser) replaceState('', window.location.pathname);
+		if (browser) window.history.replaceState(null, '', window.location.pathname);
 	}
 
 	async function handleManualKeySubmit() {

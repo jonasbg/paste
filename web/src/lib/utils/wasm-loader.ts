@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { browser } from '$lib/env';
 
 // Type definitions
 interface GoEncryption {

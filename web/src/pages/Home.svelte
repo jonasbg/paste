@@ -3,7 +3,7 @@
 
 	const bubble = createBubbler();
 	import { onMount, onDestroy } from 'svelte';
-	import { browser } from '$app/environment';
+	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
