@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -9,6 +10,17 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+)
+
+// Passphrase-mode entropy floor. Passphrase-derived shares turn the passphrase
+// into the *entire* secret (fileID, key, and token are all derivable from it),
+// so the generated passphrase must clear a minimum entropy bar. The word count
+// is configurable via PASSPHRASE_WORDS but clamped to [min,max]: operators can
+// raise it for more entropy but cannot weaken it below the safe baseline.
+const (
+	defaultPassphraseWords = 4
+	minPassphraseWords     = 4
+	maxPassphraseWords     = 8
 )
 
 var GlobalConfig Config
@@ -21,6 +33,7 @@ type Config struct {
 	KeySize          int    `json:"key_size"`
 	ChunkSize        int    `json:"chunk_size"`
 	TokenMinLength   int    `json:"token_min_length"`
+	PassphraseWords  int    `json:"passphrase_words"`
 }
 
 func InitConfig() error {
@@ -57,6 +70,8 @@ func InitConfig() error {
 		return fmt.Errorf("invalid CHUNK_SIZE. Must be an integer")
 	}
 
+	passphraseWords := parsePassphraseWords(getEnv("PASSPHRASE_WORDS", strconv.Itoa(defaultPassphraseWords)))
+
 	GlobalConfig = Config{
 		MaxFileSize:      maxFileSize,
 		MaxFileSizeBytes: int(maxFileSizeBytes),
@@ -64,9 +79,31 @@ func InitConfig() error {
 		KeySize:          keySize,
 		ChunkSize:        chunkSize,
 		TokenMinLength:   calculateTokenMinLength(keySize),
+		PassphraseWords:  passphraseWords,
 	}
 
 	return nil
+}
+
+// parsePassphraseWords reads the configured passphrase word count and enforces
+// the entropy floor by clamping to [minPassphraseWords, maxPassphraseWords].
+// Invalid or out-of-range values are corrected with a warning rather than
+// failing startup, so a misconfiguration can never silently weaken security.
+func parsePassphraseWords(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		log.Printf("Invalid PASSPHRASE_WORDS %q, using default of %d", s, defaultPassphraseWords)
+		return defaultPassphraseWords
+	}
+	if n < minPassphraseWords {
+		log.Printf("PASSPHRASE_WORDS=%d is below the minimum of %d; clamping to %d", n, minPassphraseWords, minPassphraseWords)
+		return minPassphraseWords
+	}
+	if n > maxPassphraseWords {
+		log.Printf("PASSPHRASE_WORDS=%d exceeds the maximum of %d; clamping to %d", n, maxPassphraseWords, maxPassphraseWords)
+		return maxPassphraseWords
+	}
+	return n
 }
 
 func calculateTokenMinLength(keyBits int) int {
