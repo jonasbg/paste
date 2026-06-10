@@ -1,20 +1,35 @@
 <script lang="ts">
+	import { run } from 'svelte/legacy';
+
 	import { onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
 
-	export let progress: number = 0;
-	export let message: string = '';
-	export let isVisible: boolean = false;
-	export let isComplete: boolean = false;
-	export let fileName: string = '';
-	export let fileSize: string = '';
-	export let fileSizeBytes: number = 0;
-	export let onCancel: (() => void) | undefined = undefined;
+	interface Props {
+		progress?: number;
+		message?: string;
+		isVisible?: boolean;
+		isComplete?: boolean;
+		fileName?: string;
+		fileSize?: string;
+		fileSizeBytes?: number;
+		onCancel?: (() => void) | undefined;
+	}
 
-	let displayProgress: number = 0;
-	let animationFrame: number;
-	let uploadStartTime: number = 0;
-	let eta: string = '';
+	let {
+		progress = 0,
+		message = '',
+		isVisible = false,
+		isComplete = false,
+		fileName = '',
+		fileSize = '',
+		fileSizeBytes = 0,
+		onCancel = undefined
+	}: Props = $props();
+
+	let displayProgress: number = $state(0);
+	let animationFrame: number | undefined = $state();
+	let uploadStartTime: number = $state(0);
+	let eta: string = $state('');
 
 	function formatEta(seconds: number): string {
 		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
@@ -47,18 +62,22 @@
 		}
 	}
 
-	$: if (progress !== displayProgress) {
-		if (uploadStartTime === 0 && progress > 0) {
-			uploadStartTime = Date.now();
+	run(() => {
+		if (progress !== displayProgress) {
+			if (uploadStartTime === 0 && progress > 0) {
+				uploadStartTime = Date.now();
+			}
+			if (animationFrame) cancelAnimationFrame(animationFrame);
+			animationFrame = requestAnimationFrame(updateDisplayProgress);
 		}
-		if (animationFrame) cancelAnimationFrame(animationFrame);
-		animationFrame = requestAnimationFrame(updateDisplayProgress);
-	}
+	});
 
-	$: if (isComplete) {
-		displayProgress = 100;
-		eta = '';
-	}
+	run(() => {
+		if (isComplete) {
+			displayProgress = 100;
+			eta = '';
+		}
+	});
 
 	onMount(() => {
 		displayProgress = progress;
@@ -102,7 +121,7 @@
 				<span class="pct">{Math.round(displayProgress)}%</span>
 			</div>
 			<div class="progress-track">
-				<div class="progress-fill" class:complete={isComplete} style="width: {displayProgress}%" />
+				<div class="progress-fill" class:complete={isComplete} style="width: {displayProgress}%"></div>
 			</div>
 		</div>
 
