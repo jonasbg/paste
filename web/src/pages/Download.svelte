@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { run, preventDefault } from 'svelte/legacy';
 
-	import { onDestroy, onMount } from 'svelte';
-	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
+	import { onDestroy, onMount, untrack } from 'svelte';
+	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { initWasm } from '$lib/utils/wasm-loader';
 	import {
@@ -12,7 +11,6 @@
 		fetchMetadata
 	} from '$lib/services/fileService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import { replaceState } from '$app/navigation';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import { renderTextPreview } from '$lib/utils/textPreview';
@@ -116,6 +114,8 @@
 		error?: string;
 	};
 
+	let { fileId }: { fileId: string } = $props();
+
 	let encryptionKey: string = $state('');
 	let manualKeyInput: string = $state('');
 	let metadata = $state<FileMetadata | null>(null);
@@ -178,14 +178,20 @@
 		}
 	}
 
-	run(() => {
-		if (downloadProgress !== displayProgress) {
-			if (downloadStartTime === 0 && downloadProgress > 0) {
-				downloadStartTime = Date.now();
+	// Kick off the smoothing animation when the incoming progress changes. Only
+	// `downloadProgress` is tracked; the animation bookkeeping is read/written
+	// untracked so this effect never re-triggers itself (the rAF loop self-schedules).
+	$effect(() => {
+		const next = downloadProgress;
+		untrack(() => {
+			if (next !== displayProgress) {
+				if (downloadStartTime === 0 && next > 0) {
+					downloadStartTime = Date.now();
+				}
+				if (animationFrame) cancelAnimationFrame(animationFrame);
+				animationFrame = requestAnimationFrame(animateProgress);
 			}
-			if (animationFrame) cancelAnimationFrame(animationFrame);
-			animationFrame = requestAnimationFrame(animateProgress);
-		}
+		});
 	});
 
 	run(() => {
@@ -212,7 +218,6 @@
 	}
 
 	function getCurrentFileId(): string {
-		const fileId = $page.params.fileId;
 		if (!fileId) {
 			throw new Error('Missing file ID');
 		}
@@ -540,7 +545,7 @@
 	function setEncryptionKey(key: string) {
 		encryptionKey = key;
 		resetPreviews();
-		if (browser) replaceState('', window.location.pathname);
+		if (browser) window.history.replaceState(null, '', window.location.pathname);
 	}
 
 	async function handleManualKeySubmit() {
@@ -1059,7 +1064,7 @@
 	.copy-preview-btn {
 		position: absolute;
 		top: 0.5rem;
-		right: 0.5rem;
+		right: calc(0.5rem + 25px);
 		z-index: 2;
 		display: inline-flex;
 		align-items: center;

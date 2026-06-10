@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { run } from 'svelte/legacy';
 
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { tr } from '$lib/i18n';
 
@@ -63,14 +63,20 @@
 		}
 	}
 
-	run(() => {
-		if (progress !== displayProgress) {
-			if (uploadStartTime === 0 && progress > 0) {
-				uploadStartTime = Date.now();
+	// Kick off the smoothing animation when the incoming progress changes. Only
+	// `progress` is tracked; the animation bookkeeping is read/written untracked so
+	// this effect never re-triggers itself (the rAF loop self-schedules).
+	$effect(() => {
+		const next = progress;
+		untrack(() => {
+			if (next !== displayProgress) {
+				if (uploadStartTime === 0 && next > 0) {
+					uploadStartTime = Date.now();
+				}
+				if (animationFrame) cancelAnimationFrame(animationFrame);
+				animationFrame = requestAnimationFrame(updateDisplayProgress);
 			}
-			if (animationFrame) cancelAnimationFrame(animationFrame);
-			animationFrame = requestAnimationFrame(updateDisplayProgress);
-		}
+		});
 	});
 
 	run(() => {

@@ -2,8 +2,8 @@
 	import { run, preventDefault, createBubbler, stopPropagation } from 'svelte/legacy';
 
 	const bubble = createBubbler();
-	import { onMount, onDestroy } from 'svelte';
-	import { browser } from '$app/environment';
+	import { onMount, onDestroy, untrack } from 'svelte';
+	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
@@ -493,14 +493,20 @@
 		}
 	}
 
-	run(() => {
-		if (passphraseDownloadProgress !== passphraseDisplayProgress) {
-			if (passphraseDownloadStartTime === 0 && passphraseDownloadProgress > 0) {
-				passphraseDownloadStartTime = Date.now();
+	// Kick off the smoothing animation when the incoming progress changes. Only
+	// `passphraseDownloadProgress` is tracked; the animation bookkeeping is read/written
+	// untracked so this effect never re-triggers itself (the rAF loop self-schedules).
+	$effect(() => {
+		const next = passphraseDownloadProgress;
+		untrack(() => {
+			if (next !== passphraseDisplayProgress) {
+				if (passphraseDownloadStartTime === 0 && next > 0) {
+					passphraseDownloadStartTime = Date.now();
+				}
+				if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
+				passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
 			}
-			if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
-			passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
-		}
+		});
 	});
 
 	run(() => {
@@ -889,6 +895,21 @@
 		}
 	}
 
+	async function tryPassphraseFromHash(): Promise<boolean> {
+		if (!browser || !window.location.hash) return false;
+		const hashParams = new URLSearchParams(window.location.hash.slice(1));
+		const passphrase = hashParams.get('passphrase');
+		if (!passphrase) return false;
+		history.replaceState(null, '', window.location.pathname);
+		passphraseInput = passphrase;
+		await handlePassphraseDownload();
+		return true;
+	}
+
+	function handleHashChange() {
+		void tryPassphraseFromHash();
+	}
+
 	onMount(async () => {
 		if (!browser) return;
 
@@ -911,16 +932,14 @@
 			fileSizeError = `Failed to load configuration: ${$configStore.error}`;
 		}
 
+		// Re-run passphrase handling on every hash change, not just on mount: editing
+		// the URL to /#passphrase=... while already on the page fires `hashchange`
+		// without reloading, so the on-mount check alone would never see it.
+		window.addEventListener('hashchange', handleHashChange);
+
 		// Handle #passphrase=... in URL — resolve inline and auto-start download
-		if (window.location.hash) {
-			const hashParams = new URLSearchParams(window.location.hash.slice(1));
-			const passphrase = hashParams.get('passphrase');
-			if (passphrase) {
-				history.replaceState(null, '', window.location.pathname);
-				passphraseInput = passphrase;
-				await handlePassphraseDownload();
-				return;
-			}
+		if (await tryPassphraseFromHash()) {
+			return;
 		}
 
 		generatedPassphrase = generatePassphrase(passphraseWordCount);
@@ -933,6 +952,7 @@
 		if (browser) {
 			window.removeEventListener('paste', handlePaste);
 			window.removeEventListener('keydown', handleGlobalEnter);
+			window.removeEventListener('hashchange', handleHashChange);
 			document.removeEventListener('dragover', preventBrowserFileDrop);
 			document.removeEventListener('drop', handlePageDrop);
 			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
@@ -1869,7 +1889,7 @@
 	.copy-preview-btn {
 		position: absolute;
 		top: 0.5rem;
-		right: 0.5rem;
+		right: calc(0.5rem + 25px);
 		z-index: 2;
 		display: inline-flex;
 		align-items: center;
