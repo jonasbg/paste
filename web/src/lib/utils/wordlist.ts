@@ -1,6 +1,7 @@
 // Wordlist for client-side passphrase generation.
 // Mirror of crypto/wordlist.go — keep both in sync when adding words.
-// With 4 words + 4-char alphanumeric suffix: ~59.0 bits of entropy (log2(760^4 * 36^4))
+// Entropy per generated passphrase: log2(WORDLIST^words * 36^4).
+// At the 4-word floor that is ~59 bits; each extra word adds ~9.6 bits.
 const WORDLIST: readonly string[] = [
 	'able', 'acid', 'aged', 'also', 'area', 'army', 'away', 'baby',
 	'back', 'ball', 'band', 'bank', 'base', 'bath', 'bear', 'beat',
@@ -103,6 +104,14 @@ const WORDLIST: readonly string[] = [
 const ALPHANUMERIC = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const DIGITS = '0123456789';
 
+// Passphrase-mode entropy floor. The word count is configurable (server-driven
+// via PASSPHRASE_WORDS), but generation is clamped to this range so a generated
+// passphrase can never fall below the safe baseline, regardless of caller input.
+// Mirrors the [4,8] contract enforced in crypto/wordlist.go and api/handlers/config.go.
+export const MIN_PASSPHRASE_WORDS = 4;
+export const MAX_PASSPHRASE_WORDS = 8;
+export const DEFAULT_PASSPHRASE_WORDS = 4;
+
 function generateSuffix(length = 4): string {
 	const rnd = crypto.getRandomValues(new Uint32Array(length));
 	const chars = Array.from(rnd, (n) => ALPHANUMERIC[n % ALPHANUMERIC.length]);
@@ -121,9 +130,15 @@ function generateSuffix(length = 4): string {
  * Generate a random passphrase entirely in the browser using crypto.getRandomValues().
  * Format: word-word-word-word-x7k3
  * Matches the format produced by crypto.GeneratePassphrase() in Go.
+ *
+ * The word count is clamped to [MIN_PASSPHRASE_WORDS, MAX_PASSPHRASE_WORDS] so the
+ * generated passphrase can never carry less than the baseline entropy, even if the
+ * caller (or a tampered server config) requests fewer words.
  */
-export function generatePassphrase(numWords = 4): string {
-	const indices = crypto.getRandomValues(new Uint32Array(numWords));
+export function generatePassphrase(numWords: number = DEFAULT_PASSPHRASE_WORDS): string {
+	const requested = Math.floor(numWords) || DEFAULT_PASSPHRASE_WORDS;
+	const wordCount = Math.min(MAX_PASSPHRASE_WORDS, Math.max(MIN_PASSPHRASE_WORDS, requested));
+	const indices = crypto.getRandomValues(new Uint32Array(wordCount));
 	const words = Array.from(indices, (n) => WORDLIST[n % WORDLIST.length]);
 	return [...words, generateSuffix()].join('-');
 }
