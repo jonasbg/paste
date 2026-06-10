@@ -5,6 +5,7 @@ interface Config {
     id_size: string;
     key_size: string;
     chunk_size: number;
+    passphrase_words: number;
 }
 
 interface ConfigStore {
