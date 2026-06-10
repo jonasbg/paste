@@ -4,6 +4,7 @@
 	const bubble = createBubbler();
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
+	import { t, tr } from '$lib/i18n';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
 	import {
@@ -179,10 +180,10 @@
 
 	function formatEta(seconds: number): string {
 		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
-		if (seconds < 60) return `${Math.ceil(seconds)}s igjen`;
+		if (seconds < 60) return `${Math.ceil(seconds)}s ${tr('common.remaining')}`;
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.ceil(seconds % 60);
-		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} igjen`;
+		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} ${tr('common.remaining')}`;
 	}
 
 	function formatPreviewLimit(bytes: number): string {
@@ -358,7 +359,9 @@
 		if (!isTextPreviewable(fileMetadata)) return;
 
 		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
-			passphraseTextPreviewError = `Forhåndsvisning er bare tilgjengelig for tekstfiler opptil ${formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)}.`;
+			passphraseTextPreviewError = tr('preview.textOnlyLimit', {
+				limit: formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)
+			});
 			return;
 		}
 
@@ -384,7 +387,7 @@
 				passphraseFileMetadata = { error: unavailableMessage };
 				return;
 			}
-			passphraseTextPreviewError = 'Kunne ikke laste forhåndsvisning av tekstfilen.';
+			passphraseTextPreviewError = tr('preview.textLoadError');
 		} finally {
 			if (requestId === passphrasePreviewRequestId) {
 				isLoadingPassphraseTextPreview = false;
@@ -402,7 +405,9 @@
 		if (!isImagePreviewable(fileMetadata)) return;
 
 		if ((fileMetadata.size || 0) > IMAGE_PREVIEW_MAX_BYTES) {
-			passphraseImagePreviewError = `Forhåndsvisning er bare tilgjengelig for bildefiler opptil ${formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)}.`;
+			passphraseImagePreviewError = tr('preview.imageOnlyLimit', {
+				limit: formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)
+			});
 			return;
 		}
 
@@ -431,7 +436,7 @@
 				passphraseFileMetadata = { error: unavailableMessage };
 				return;
 			}
-			passphraseImagePreviewError = 'Kunne ikke laste forhåndsvisning av bildefilen.';
+			passphraseImagePreviewError = tr('preview.imageLoadError');
 		} finally {
 			if (requestId === passphrasePreviewRequestId) {
 				isLoadingPassphraseImagePreview = false;
@@ -513,7 +518,7 @@
 		const fp = new FileProcessor();
 		const max = fp.getMaxFileSize();
 		if (file.size > max) {
-			fileSizeError = `Filen er for stor. Maksimal filstørrelse er ${FileProcessor.formatFileSize(max)}.`;
+			fileSizeError = tr('upload.fileTooLarge', { size: FileProcessor.formatFileSize(max) });
 			return false;
 		}
 		selectedFile = file;
@@ -553,7 +558,7 @@
 		const fp = new FileProcessor();
 		const max = fp.getMaxFileSize();
 		if (selectedFile.size > max) {
-			fileSizeError = `Filen er for stor. Maksimal filstørrelse er ${FileProcessor.formatFileSize(max)}`;
+			fileSizeError = tr('upload.fileTooLarge', { size: FileProcessor.formatFileSize(max) });
 			return;
 		}
 
@@ -633,7 +638,7 @@
 			passphraseFileSizeStr = response.size?.toString() ?? '';
 			void loadPassphrasePreviews(fileId, key, hmacToken, response.metadata, previewRequestId);
 		} catch (err) {
-			passphraseError = 'Ugyldig delingskode eller filen finnes ikke. Prøv igjen.';
+			passphraseError = tr('passphrase.invalidCode');
 			resetPassphrasePreviews();
 			console.error('Passphrase resolve error:', err);
 		} finally {
@@ -1051,7 +1056,7 @@
 		const fp = new FileProcessor();
 		const max = fp.getMaxFileSize();
 		if (file.size > max) {
-			fileSizeError = `Filen er for stor. Maksimal filstørrelse er ${FileProcessor.formatFileSize(max)}.`;
+			fileSizeError = tr('upload.fileTooLarge', { size: FileProcessor.formatFileSize(max) });
 			return;
 		}
 		selectedFile = file;
@@ -1062,12 +1067,15 @@
 <div class="page-container">
 	<div class="container">
 		<div class="upload-section">
-			<h1>Vi <a href="/" onclick={preventDefault(resetAll)}>deler</a> filer sikkert</h1>
+			<h1>
+				{$t('home.titleBefore')}<a href="/" onclick={preventDefault(resetAll)}
+					>{$t('home.titleLink')}</a
+				>{$t('home.titleAfter')}
+			</h1>
 
 			{#if !sharePassphrase}
 				<p class="description">
-					Del filer sikkert med ende-til-ende-kryptering. Filene krypteres i nettleseren din før de
-					lastes opp, og dekrypteres først når mottakeren laster dem ned.
+					{$t('home.description')}
 				</p>
 
 				{#if fileSizeError}
@@ -1097,8 +1105,12 @@
 							</div>
 						</div>
 						<div class="retry-actions">
-							<button class="btn-retry" onclick={handleUpload}>Prøv igjen</button>
-							<button class="btn-dismiss-retry" onclick={dismissUploadError} aria-label="Avbryt">
+							<button class="btn-retry" onclick={handleUpload}>{$t('common.retry')}</button>
+							<button
+								class="btn-dismiss-retry"
+								onclick={dismissUploadError}
+								aria-label={$t('common.cancel')}
+							>
 								<svg
 									width="16"
 									height="16"
@@ -1133,7 +1145,7 @@
 						role="button"
 						tabindex="0"
 						onkeydown={handleDropZoneKeydown}
-						aria-label="Velg fil for opplasting"
+						aria-label={$t('upload.dropzoneAria')}
 						out:slide={{ duration: 350, easing: cubicOut }}
 					>
 						{#if showPasteAffordance}
@@ -1166,13 +1178,13 @@
 									</svg>
 									<span>
 										{#if pasteAffordanceState === 'reading'}
-											Leser utklippstavlen...
+											{$t('paste.reading')}
 										{:else if pasteAffordanceState === 'denied'}
-											Tilgang nektet
+											{$t('paste.denied')}
 										{:else if pasteAffordanceState === 'empty'}
-											Utklippstavlen er tom
+											{$t('paste.empty')}
 										{:else}
-											Lim inn fra utklippstavlen
+											{$t('paste.idle')}
 										{/if}
 									</span>
 								</button>
@@ -1203,9 +1215,9 @@
 						</div>
 
 						<p class="drop-primary">
-							Klikk her for å velge fil — eller dra og slipp for å laste opp
+							{$t('upload.dropPrimary')}
 						</p>
-						<p class="drop-secondary">Maksimum filstørrelse {maxFileSizeLabel}</p>
+						<p class="drop-secondary">{$t('upload.maxFileSize', { size: maxFileSizeLabel })}</p>
 					</div>
 				{/if}
 			{/if}
@@ -1233,8 +1245,12 @@
 						<div class="file-pre-size">{FileProcessor.formatFileSize(selectedFile.size)}</div>
 					</div>
 					<div class="selected-col-action">
-						<button class="btn-upload-now" onclick={handleUpload}>Last opp</button>
-						<button class="btn-remove-file" onclick={removeFile} aria-label="Fjern fil">
+						<button class="btn-upload-now" onclick={handleUpload}>{$t('upload.uploadNow')}</button>
+						<button
+							class="btn-remove-file"
+							onclick={removeFile}
+							aria-label={$t('upload.removeFile')}
+						>
 							<svg
 								width="15"
 								height="15"
@@ -1276,13 +1292,13 @@
 					<!-- "eller" separator fades away once a file is resolved -->
 					{#if !passphraseFileMetadata && !selectedFile}
 						<div class="horizontal-separator" out:fade={{ duration: 200 }}>
-							<span>eller</span>
+							<span>{$t('common.or')}</span>
 						</div>
 					{/if}
 
 					{#if !passphraseFileMetadata && !selectedFile}
 						<div class="copy-section" out:slide={{ duration: 250, easing: cubicOut }}>
-							<p class="hint">Skriv inn delingskoden du har mottatt for å laste ned filen.</p>
+							<p class="hint">{$t('passphrase.hint')}</p>
 							{#if passphraseError}
 								<p class="passphrase-error">{passphraseError}</p>
 							{/if}
@@ -1291,7 +1307,7 @@
 									<input
 										type="text"
 										class="url-field"
-										placeholder="Skriv inn delingskoden din"
+										placeholder={$t('passphrase.placeholder')}
 										bind:value={passphraseInput}
 										bind:this={passphraseInputEl}
 										onkeydown={handlePassphraseKeydown}
@@ -1302,7 +1318,7 @@
 										class="button"
 										disabled={!passphraseInput.trim() || isDerivingPassphrase}
 									>
-										{isDerivingPassphrase ? 'Laster...' : 'Finn fil'}
+										{isDerivingPassphrase ? $t('common.loadingShort') : $t('passphrase.findFile')}
 									</button>
 								</div>
 							</form>
@@ -1316,19 +1332,19 @@
 							{#if isImagePreviewable(passphraseFileMetadata)}
 								<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
 									<div class="preview-header">
-										<h2>Forhåndsvisning</h2>
-										<span class="preview-badge">Bilde</span>
+										<h2>{$t('preview.title')}</h2>
+										<span class="preview-badge">{$t('preview.image')}</span>
 									</div>
 
 									{#if isLoadingPassphraseImagePreview}
 										<div class="preview-loading">
-											<LoadingSpinner message="Laster bildeforhåndsvisning..." />
+											<LoadingSpinner message={$t('preview.loadingImage')} />
 										</div>
 									{:else if passphraseImagePreviewUrl}
 										<img
 											class="image-preview"
 											src={passphraseImagePreviewUrl}
-											alt={`Forhåndsvisning av ${passphraseFileMetadata.filename}`}
+											alt={$t('preview.imageAlt', { filename: passphraseFileMetadata.filename })}
 											use:fitViewport={{
 												reserveSelector: '.file-row',
 												bottomGap: 48,
@@ -1344,13 +1360,13 @@
 							{#if isTextPreviewable(passphraseFileMetadata)}
 								<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
 									<div class="preview-header">
-										<h2>Forhåndsvisning</h2>
-										<span class="preview-badge">Tekst</span>
+										<h2>{$t('preview.title')}</h2>
+										<span class="preview-badge">{$t('preview.text')}</span>
 									</div>
 
 									{#if isLoadingPassphraseTextPreview}
 										<div class="preview-loading">
-											<LoadingSpinner message="Laster tekstforhåndsvisning..." />
+											<LoadingSpinner message={$t('preview.loadingText')} />
 										</div>
 									{:else if passphraseTextPreview !== null}
 										{#if passphraseTextPreview.length > 0}
@@ -1361,13 +1377,13 @@
 													class:copied={passphraseCopyState === 'copied'}
 													class:error={passphraseCopyState === 'error'}
 													onclick={copyPassphrasePreview}
-													aria-label="Kopier tekst"
-													title="Kopier tekst"
+													aria-label={$t('preview.copyAria')}
+													title={$t('preview.copyAria')}
 												>
 													{#if passphraseCopyState === 'copied'}
-														Kopiert
+														{$t('common.copied')}
 													{:else if passphraseCopyState === 'error'}
-														Feil
+														{$t('common.error')}
 													{:else}
 														<svg
 															width="14"
@@ -1383,7 +1399,7 @@
 															<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
 															<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 														</svg>
-														<span>Kopier</span>
+														<span>{$t('common.copy')}</span>
 													{/if}
 												</button>
 												{#if passphraseTextPreviewMode === 'table'}
@@ -1408,13 +1424,11 @@
 												{/if}
 											</div>
 										{:else}
-											<p class="preview-note">Denne tekstfilen er tom.</p>
+											<p class="preview-note">{$t('preview.emptyTextFile')}</p>
 										{/if}
 
 										{#if isPassphraseTextPreviewTruncated}
-											<p class="preview-note">
-												Forhåndsvisningen er avkortet. Last ned filen for å se hele innholdet.
-											</p>
+											<p class="preview-note">{$t('preview.truncated')}</p>
 										{/if}
 									{:else if passphraseTextPreviewError}
 										<p class="preview-note">{passphraseTextPreviewError}</p>
@@ -1472,7 +1486,7 @@
 								<!-- Right: download button → spinner → checkmark -->
 								<div class="col-action">
 									{#if passphraseDownloadComplete}
-										<div class="checkmark" title="Nedlasting fullført">
+										<div class="checkmark" title={$t('download.completeTitle')}>
 											<svg
 												fill="currentColor"
 												width="28"
@@ -1491,10 +1505,10 @@
 											</svg>
 										</div>
 									{:else if isPassphraseDownloading}
-										<div class="spinner" aria-label="Laster ned..."></div>
+										<div class="spinner" aria-label={$t('download.downloadingAria')}></div>
 									{:else}
 										<button class="btn-last-ned" onclick={initiatePassphraseDownload}>
-											Last ned
+											{$t('common.download')}
 										</button>
 									{/if}
 								</div>
@@ -1502,7 +1516,7 @@
 
 							{#if passphraseDownloadComplete}
 								<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
-									Filen er slettet fra serveren.
+									{$t('download.fileDeleted')}
 								</p>
 							{/if}
 
