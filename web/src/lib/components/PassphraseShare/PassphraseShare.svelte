@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	export let passphrase: string = '';
-	export let secureUrl: string = '';
-	export let isVisible: boolean = false;
+	interface Props {
+		passphrase?: string;
+		secureUrl?: string;
+		isVisible?: boolean;
+	}
 
-	$: passphraseLink = browser ? `${window.location.origin}/#passphrase=${passphrase}` : '';
+	let { passphrase = '', secureUrl = '', isVisible = false }: Props = $props();
+
+	let passphraseLink = $derived(browser ? `${window.location.origin}/#passphrase=${passphrase}` : '');
 
 	// Parse the secure URL into base + key parts
-	$: secureBase = (() => {
+	let secureBase = $derived((() => {
 		if (!secureUrl) return '';
 		try {
 			const u = new URL(secureUrl);
@@ -16,8 +20,8 @@
 		} catch {
 			return '';
 		}
-	})();
-	$: secureKey = (() => {
+	})());
+	let secureKey = $derived((() => {
 		if (!secureUrl) return '';
 		try {
 			const u = new URL(secureUrl);
@@ -25,9 +29,9 @@
 		} catch {
 			return '';
 		}
-	})();
+	})());
 
-	let copyMessage: string = '';
+	let copyMessage: string = $state('');
 	let messageTimeout: number;
 
 	function fitScale(node: HTMLElement) {
@@ -114,7 +118,7 @@
 				<label class="field-label">Lenke</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={passphraseLink} readonly />
-					<button class="button" on:click={() => copy(passphraseLink, 'Lenke')}>Kopier</button>
+					<button class="button" onclick={() => copy(passphraseLink, 'Lenke')}>Kopier</button>
 				</div>
 			</div>
 
@@ -122,7 +126,7 @@
 				<label class="field-label">Kun kode</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={passphrase} readonly />
-					<button class="button" on:click={() => copy(passphrase, 'Delingskode')}>Kopier</button>
+					<button class="button" onclick={() => copy(passphrase, 'Delingskode')}>Kopier</button>
 				</div>
 			</div>
 		</div>
@@ -141,7 +145,7 @@
 				<label class="field-label">Komplett lenke</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={secureUrl} readonly />
-					<button class="button" on:click={() => copy(secureUrl, 'Lenke')}>Kopier</button>
+					<button class="button" onclick={() => copy(secureUrl, 'Lenke')}>Kopier</button>
 				</div>
 			</div>
 
@@ -151,7 +155,7 @@
 				<label class="field-label">Nettadresse</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={secureBase} readonly />
-					<button class="button" on:click={() => copy(secureBase, 'Nettadresse')}>Kopier</button>
+					<button class="button" onclick={() => copy(secureBase, 'Nettadresse')}>Kopier</button>
 				</div>
 			</div>
 
@@ -159,7 +163,7 @@
 				<label class="field-label">Nøkkel</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={secureKey} readonly />
-					<button class="button" on:click={() => copy(secureKey, 'Nøkkel')}>Kopier</button>
+					<button class="button" onclick={() => copy(secureKey, 'Nøkkel')}>Kopier</button>
 				</div>
 			</div>
 		</div>

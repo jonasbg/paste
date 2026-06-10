@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { run, preventDefault, createBubbler, stopPropagation } from 'svelte/legacy';
+
+	const bubble = createBubbler();
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import { FileProcessor } from '$lib/services/fileProcessor';
@@ -9,7 +12,7 @@
 		streamDownloadAndDecrypt
 	} from '$lib/services/fileService';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
-	import { generatePassphrase } from '$lib/utils/wordlist';
+	import { generatePassphrase, DEFAULT_PASSPHRASE_WORDS } from '$lib/utils/wordlist';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
 	import PassphraseShare from '$lib/components/PassphraseShare/PassphraseShare.svelte';
 	import { fade, fly, slide } from 'svelte/transition';
@@ -117,58 +120,62 @@
 		error?: string;
 	};
 
-	let fileInput: HTMLInputElement;
-	let dropZoneEl: HTMLDivElement | null = null;
-	let passphraseInputEl: HTMLInputElement | null = null;
-	let selectedFile: File | null = null;
-	let isUploading = false;
-	let uploadProgress = 0;
-	let uploadMessage = '';
-	let sharePassphrase = '';
-	let shareUrl = '';
-	let fileSizeError = '';
-	let uploadError = '';
+	let fileInput: HTMLInputElement | undefined = $state();
+	let dropZoneEl: HTMLDivElement | null = $state(null);
+	let passphraseInputEl: HTMLInputElement | null = $state(null);
+	let selectedFile: File | null = $state(null);
+	let isUploading = $state(false);
+	let uploadProgress = $state(0);
+	let uploadMessage = $state('');
+	let sharePassphrase = $state('');
+	let shareUrl = $state('');
+	let fileSizeError = $state('');
+	let uploadError = $state('');
 	let generatedPassphrase = '';
 
 	// Passphrase download form
-	let passphraseInput = '';
-	let passphraseError = '';
-	let isDerivingPassphrase = false;
+	let passphraseInput = $state('');
+	let passphraseError = $state('');
+	let isDerivingPassphrase = $state(false);
 
 	// Inline passphrase download state
 	let passphraseFileId = '';
 	let passphraseKey = '';
-	let passphraseFileMetadata: any = null;
-	let passphraseFileSizeStr = '';
-	let isPassphraseDownloading = false;
-	let passphraseDownloadProgress = 0;
-	let passphraseDisplayProgress = 0;
-	let passphraseDownloadComplete = false;
-	let passphraseDownloadError = '';
-	let passphraseDownloadStartTime = 0;
-	let passphraseEta = '';
-	let passphraseAnimFrame: number;
-	let passphraseTextPreview: string | null = null;
-	let passphraseTextPreviewHtml = '';
-	let passphraseTextPreviewMode: 'pre' | 'table' = 'pre';
-	let passphraseTextPreviewError = '';
-	let isLoadingPassphraseTextPreview = false;
-	let isPassphraseTextPreviewTruncated = false;
-	let showPasteAffordance = false;
-	let pasteAffordanceState: 'idle' | 'reading' | 'denied' | 'empty' = 'idle';
+	let passphraseFileMetadata: any = $state(null);
+	let passphraseFileSizeStr = $state('');
+	let isPassphraseDownloading = $state(false);
+	let passphraseDownloadProgress = $state(0);
+	let passphraseDisplayProgress = $state(0);
+	let passphraseDownloadComplete = $state(false);
+	let passphraseDownloadError = $state('');
+	let passphraseDownloadStartTime = $state(0);
+	let passphraseEta = $state('');
+	let passphraseAnimFrame: number | undefined = $state();
+	let passphraseTextPreview: string | null = $state(null);
+	let passphraseTextPreviewHtml = $state('');
+	let passphraseTextPreviewMode: 'pre' | 'table' = $state('pre');
+	let passphraseTextPreviewError = $state('');
+	let isLoadingPassphraseTextPreview = $state(false);
+	let isPassphraseTextPreviewTruncated = $state(false);
+	let showPasteAffordance = $state(false);
+	let pasteAffordanceState: 'idle' | 'reading' | 'denied' | 'empty' = $state('idle');
 	let pasteAffordanceTimer: ReturnType<typeof setTimeout> | null = null;
-	let passphraseCopyState: 'idle' | 'copied' | 'error' = 'idle';
+	let passphraseCopyState: 'idle' | 'copied' | 'error' = $state('idle');
 	let passphraseCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
-	let passphraseImagePreviewUrl: string | null = null;
-	let passphraseImagePreviewError = '';
-	let isLoadingPassphraseImagePreview = false;
+	let passphraseImagePreviewUrl: string | null = $state(null);
+	let passphraseImagePreviewError = $state('');
+	let isLoadingPassphraseImagePreview = $state(false);
 	let passphrasePreviewRequestId = 0;
 
 	// Drag state
 	let dragCounter = 0;
-	let isDragging = false;
+	let isDragging = $state(false);
 
-	$: maxFileSizeLabel = $configStore.data?.max_file_size ?? '–';
+	let maxFileSizeLabel = $derived($configStore.data?.max_file_size ?? '–');
+
+	// Server-configured passphrase word count (PASSPHRASE_WORDS); generatePassphrase
+	// clamps this to the safe [4,8] range, so the fallback only matters before config loads.
+	let passphraseWordCount = $derived($configStore.data?.passphrase_words ?? DEFAULT_PASSPHRASE_WORDS);
 
 	function formatEta(seconds: number): string {
 		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
@@ -481,18 +488,22 @@
 		}
 	}
 
-	$: if (passphraseDownloadProgress !== passphraseDisplayProgress) {
-		if (passphraseDownloadStartTime === 0 && passphraseDownloadProgress > 0) {
-			passphraseDownloadStartTime = Date.now();
+	run(() => {
+		if (passphraseDownloadProgress !== passphraseDisplayProgress) {
+			if (passphraseDownloadStartTime === 0 && passphraseDownloadProgress > 0) {
+				passphraseDownloadStartTime = Date.now();
+			}
+			if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
+			passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
 		}
-		if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
-		passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
-	}
+	});
 
-	$: if (passphraseDownloadComplete) {
-		passphraseDisplayProgress = 100;
-		passphraseEta = '';
-	}
+	run(() => {
+		if (passphraseDownloadComplete) {
+			passphraseDisplayProgress = 100;
+			passphraseEta = '';
+		}
+	});
 
 	function validateAndSetFile(file: File): boolean {
 		if (!$configStore.data) {
@@ -552,7 +563,7 @@
 			const { initWasm, getWasmInstance } = await import('$lib/utils/wasm-loader');
 			await initWasm();
 
-			if (!generatedPassphrase) generatedPassphrase = generatePassphrase();
+			if (!generatedPassphrase) generatedPassphrase = generatePassphrase(passphraseWordCount);
 
 			const wasm = getWasmInstance();
 			if (!wasm || !wasm.deriveFromPassphrase) throw new Error('WASM not initialized');
@@ -580,7 +591,7 @@
 			uploadError = error instanceof Error ? error.message : String(error);
 			uploadProgress = 0;
 			uploadMessage = '';
-			generatedPassphrase = generatePassphrase(); // fresh passphrase → new fileId avoids server-side collision
+			generatedPassphrase = generatePassphrase(passphraseWordCount); // fresh passphrase → new fileId avoids server-side collision
 		} finally {
 			isUploading = false;
 		}
@@ -703,7 +714,7 @@
 		fileSizeError = '';
 		uploadError = '';
 		if (fileInput) fileInput.value = '';
-		generatedPassphrase = generatePassphrase();
+		generatedPassphrase = generatePassphrase(passphraseWordCount);
 	}
 
 	function resetAll() {
@@ -715,7 +726,7 @@
 		shareUrl = '';
 		fileSizeError = '';
 		uploadError = '';
-		generatedPassphrase = generatePassphrase();
+		generatedPassphrase = generatePassphrase(passphraseWordCount);
 		passphraseInput = '';
 		passphraseError = '';
 		passphraseFileId = '';
@@ -739,7 +750,7 @@
 	function dismissUploadError() {
 		uploadError = '';
 		selectedFile = null;
-		generatedPassphrase = generatePassphrase();
+		generatedPassphrase = generatePassphrase(passphraseWordCount);
 		if (fileInput) fileInput.value = '';
 	}
 
@@ -907,7 +918,7 @@
 			}
 		}
 
-		generatedPassphrase = generatePassphrase();
+		generatedPassphrase = generatePassphrase(passphraseWordCount);
 		window.addEventListener('paste', handlePaste);
 		window.addEventListener('keydown', handleGlobalEnter);
 		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
@@ -958,7 +969,7 @@
 	}
 
 	function handleZoneClick() {
-		if (!isUploading && !sharePassphrase) fileInput.click();
+		if (!isUploading && !sharePassphrase) fileInput?.click();
 	}
 
 	async function handlePaste(event: ClipboardEvent) {
@@ -1051,7 +1062,7 @@
 <div class="page-container">
 	<div class="container">
 		<div class="upload-section">
-			<h1>Vi <a href="/" on:click|preventDefault={resetAll}>deler</a> filer sikkert</h1>
+			<h1>Vi <a href="/" onclick={preventDefault(resetAll)}>deler</a> filer sikkert</h1>
 
 			{#if !sharePassphrase}
 				<p class="description">
@@ -1086,8 +1097,8 @@
 							</div>
 						</div>
 						<div class="retry-actions">
-							<button class="btn-retry" on:click={handleUpload}>Prøv igjen</button>
-							<button class="btn-dismiss-retry" on:click={dismissUploadError} aria-label="Avbryt">
+							<button class="btn-retry" onclick={handleUpload}>Prøv igjen</button>
+							<button class="btn-dismiss-retry" onclick={dismissUploadError} aria-label="Avbryt">
 								<svg
 									width="16"
 									height="16"
@@ -1113,15 +1124,15 @@
 						class:dragging={isDragging}
 						class:uploading={isUploading}
 						bind:this={dropZoneEl}
-						on:click={handleZoneClick}
-						on:contextmenu={handleDropZoneContextMenu}
-						on:dragenter={handleDragEnter}
-						on:dragleave={handleDragLeave}
-						on:dragover={handleDragOver}
-						on:drop={handleDrop}
+						onclick={handleZoneClick}
+						oncontextmenu={handleDropZoneContextMenu}
+						ondragenter={handleDragEnter}
+						ondragleave={handleDragLeave}
+						ondragover={handleDragOver}
+						ondrop={handleDrop}
 						role="button"
 						tabindex="0"
-						on:keydown={handleDropZoneKeydown}
+						onkeydown={handleDropZoneKeydown}
 						aria-label="Velg fil for opplasting"
 						out:slide={{ duration: 350, easing: cubicOut }}
 					>
@@ -1129,14 +1140,14 @@
 							<div
 								class="paste-affordance"
 								role="menu"
-								on:click|stopPropagation
-								on:contextmenu|preventDefault|stopPropagation
+								onclick={stopPropagation(bubble('click'))}
+								oncontextmenu={stopPropagation(preventDefault(bubble('contextmenu')))}
 								transition:fade={{ duration: 120 }}
 							>
 								<button
 									type="button"
 									class="paste-affordance-btn"
-									on:click|stopPropagation={pasteFromClipboard}
+									onclick={stopPropagation(pasteFromClipboard)}
 									disabled={pasteAffordanceState === 'reading'}
 								>
 									<svg
@@ -1170,7 +1181,7 @@
 						<input
 							type="file"
 							bind:this={fileInput}
-							on:change={handleFileSelect}
+							onchange={handleFileSelect}
 							class="file-input"
 							disabled={isUploading}
 						/>
@@ -1222,8 +1233,8 @@
 						<div class="file-pre-size">{FileProcessor.formatFileSize(selectedFile.size)}</div>
 					</div>
 					<div class="selected-col-action">
-						<button class="btn-upload-now" on:click={handleUpload}>Last opp</button>
-						<button class="btn-remove-file" on:click={removeFile} aria-label="Fjern fil">
+						<button class="btn-upload-now" onclick={handleUpload}>Last opp</button>
+						<button class="btn-remove-file" onclick={removeFile} aria-label="Fjern fil">
 							<svg
 								width="15"
 								height="15"
@@ -1275,7 +1286,7 @@
 							{#if passphraseError}
 								<p class="passphrase-error">{passphraseError}</p>
 							{/if}
-							<form on:submit|preventDefault={handlePassphraseDownload}>
+							<form onsubmit={preventDefault(handlePassphraseDownload)}>
 								<div class="input-group">
 									<input
 										type="text"
@@ -1283,7 +1294,7 @@
 										placeholder="Skriv inn delingskoden din"
 										bind:value={passphraseInput}
 										bind:this={passphraseInputEl}
-										on:keydown={handlePassphraseKeydown}
+										onkeydown={handlePassphraseKeydown}
 										disabled={isDerivingPassphrase}
 									/>
 									<button
@@ -1349,7 +1360,7 @@
 													class="copy-preview-btn"
 													class:copied={passphraseCopyState === 'copied'}
 													class:error={passphraseCopyState === 'error'}
-													on:click={copyPassphrasePreview}
+													onclick={copyPassphrasePreview}
 													aria-label="Kopier tekst"
 													title="Kopier tekst"
 												>
@@ -1453,7 +1464,7 @@
 												class="progress-fill"
 												class:complete={passphraseDownloadComplete}
 												style="width: {passphraseDisplayProgress}%"
-											/>
+											></div>
 										</div>
 									{/if}
 								</div>
@@ -1482,7 +1493,7 @@
 									{:else if isPassphraseDownloading}
 										<div class="spinner" aria-label="Laster ned..."></div>
 									{:else}
-										<button class="btn-last-ned" on:click={initiatePassphraseDownload}>
+										<button class="btn-last-ned" onclick={initiatePassphraseDownload}>
 											Last ned
 										</button>
 									{/if}

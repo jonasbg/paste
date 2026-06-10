@@ -1,9 +1,18 @@
 <script lang="ts">
 	import { fade, fly } from 'svelte/transition';
-	export let fileName: string = '';
-	export let fileSize: string = '';
-	export let isVisible: boolean = true;
-	export let onRemove: (() => void) | undefined = undefined;
+	interface Props {
+		fileName?: string;
+		fileSize?: string;
+		isVisible?: boolean;
+		onRemove?: (() => void) | undefined;
+	}
+
+	let {
+		fileName = '',
+		fileSize = '',
+		isVisible = true,
+		onRemove = undefined
+	}: Props = $props();
 
 	// Helper function to format file size
 	function formatFileSize(bytes: number): string {
@@ -24,7 +33,7 @@
 {#if isVisible}
 	<div class="file-info" in:fly={{ y: 20, duration: 300 }} out:fade={{ duration: 200 }}>
 		{#if onRemove}
-			<button class="remove-button" on:click={onRemove} aria-label="Remove file">
+			<button class="remove-button" onclick={onRemove} aria-label="Remove file">
 				<svg
 					width="20"
 					height="20"

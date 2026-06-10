@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { run, preventDefault } from 'svelte/legacy';
+
 	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
@@ -113,36 +115,36 @@
 		error?: string;
 	};
 
-	let encryptionKey: string = '';
-	let manualKeyInput: string = '';
-	let metadata: FileMetadata | null = null;
-	let fileSize: string | undefined;
-	let downloadProgress = 0;
+	let encryptionKey: string = $state('');
+	let manualKeyInput: string = $state('');
+	let metadata = $state<FileMetadata | null>(null);
+	let fileSize: string | undefined = $state();
+	let downloadProgress = $state(0);
 	let downloadMessage = '';
-	let isDownloading = false;
-	let downloadError: string | null = null;
-	let isDownloadComplete = false;
-	let keyError: string | null = null;
-	let isLoading = true;
-	let deletionError: string | null = null;
-	let textPreview: string | null = null;
-	let textPreviewHtml = '';
-	let textPreviewMode: 'pre' | 'table' = 'pre';
-	let textPreviewError: string | null = null;
-	let isLoadingTextPreview = false;
-	let isTextPreviewTruncated = false;
-	let copyState: 'idle' | 'copied' | 'error' = 'idle';
+	let isDownloading = $state(false);
+	let downloadError: string | null = $state(null);
+	let isDownloadComplete = $state(false);
+	let keyError: string | null = $state(null);
+	let isLoading = $state(true);
+	let deletionError: string | null = $state(null);
+	let textPreview: string | null = $state(null);
+	let textPreviewHtml = $state('');
+	let textPreviewMode: 'pre' | 'table' = $state('pre');
+	let textPreviewError: string | null = $state(null);
+	let isLoadingTextPreview = $state(false);
+	let isTextPreviewTruncated = $state(false);
+	let copyState: 'idle' | 'copied' | 'error' = $state('idle');
 	let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
-	let imagePreviewUrl: string | null = null;
-	let imagePreviewError: string | null = null;
-	let isLoadingImagePreview = false;
+	let imagePreviewUrl: string | null = $state(null);
+	let imagePreviewError: string | null = $state(null);
+	let isLoadingImagePreview = $state(false);
 	let previewRequestId = 0;
 
 	// Smooth progress animation
-	let displayProgress = 0;
-	let animationFrame: number;
-	let downloadStartTime = 0;
-	let eta = '';
+	let displayProgress = $state(0);
+	let animationFrame: number | undefined = $state();
+	let downloadStartTime = $state(0);
+	let eta = $state('');
 
 	function formatEta(seconds: number): string {
 		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
@@ -175,18 +177,22 @@
 		}
 	}
 
-	$: if (downloadProgress !== displayProgress) {
-		if (downloadStartTime === 0 && downloadProgress > 0) {
-			downloadStartTime = Date.now();
+	run(() => {
+		if (downloadProgress !== displayProgress) {
+			if (downloadStartTime === 0 && downloadProgress > 0) {
+				downloadStartTime = Date.now();
+			}
+			if (animationFrame) cancelAnimationFrame(animationFrame);
+			animationFrame = requestAnimationFrame(animateProgress);
 		}
-		if (animationFrame) cancelAnimationFrame(animationFrame);
-		animationFrame = requestAnimationFrame(animateProgress);
-	}
+	});
 
-	$: if (isDownloadComplete) {
-		displayProgress = 100;
-		eta = '';
-	}
+	run(() => {
+		if (isDownloadComplete) {
+			displayProgress = 100;
+			eta = '';
+		}
+	});
 
 	function validateAndExtractKey(input: string): string | null {
 		input = input.trim();
@@ -671,15 +677,18 @@
 		resetPreviews();
 	});
 
-	$: canDownload = !!(
+	let canDownload = $derived(!!(
 		metadata &&
 		!metadata.error &&
 		!isDownloading &&
 		!isDownloadComplete &&
 		encryptionKey
-	);
+	));
 
-	$: (manualKeyInput, (keyError = null));
+	run(() => {
+		void manualKeyInput;
+		keyError = null;
+	});
 </script>
 
 <div class="page-container">
@@ -744,7 +753,7 @@
 										class="copy-preview-btn"
 										class:copied={copyState === 'copied'}
 										class:error={copyState === 'error'}
-										on:click={copyTextPreview}
+										onclick={copyTextPreview}
 										aria-label="Kopier tekst"
 										title="Kopier tekst"
 									>
@@ -848,7 +857,7 @@
 									class="progress-fill"
 									class:complete={isDownloadComplete}
 									style="width: {displayProgress}%"
-								/>
+								></div>
 							</div>
 						{/if}
 					</div>
@@ -877,7 +886,7 @@
 						{:else if isDownloading}
 							<div class="spinner" aria-label="Laster ned..."></div>
 						{:else}
-							<button class="download-btn" on:click={initiateDownload} disabled={!canDownload}>
+							<button class="download-btn" onclick={initiateDownload} disabled={!canDownload}>
 								Last ned
 							</button>
 						{/if}
@@ -896,7 +905,7 @@
 			{/if}
 
 			{#if !encryptionKey && !isDownloadComplete && !isLoading}
-				<form class="key-prompt" on:submit|preventDefault={handleManualKeySubmit}>
+				<form class="key-prompt" onsubmit={preventDefault(handleManualKeySubmit)}>
 					<h3>Dekrypteringsnøkkel kreves</h3>
 					<p class="hint">
 						Lim inn hele lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut.

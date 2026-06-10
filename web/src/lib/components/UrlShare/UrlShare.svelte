@@ -1,9 +1,15 @@
 <script lang="ts">
-	export let url: string = '';
-	export let isVisible: boolean = false;
+	import { run } from 'svelte/legacy';
+
+	interface Props {
+		url?: string;
+		isVisible?: boolean;
+	}
+
+	let { url = '', isVisible = false }: Props = $props();
 
 	// Split URL into base and key parts
-	$: {
+	run(() => {
 		if (url) {
 			const urlObj = new URL(url);
 			baseUrl = `${urlObj.origin}${urlObj.pathname}`;
@@ -11,11 +17,11 @@
 			const searchParams = new URLSearchParams(urlObj.hash.slice(1));
 			key = searchParams.get('key') || '';
 		}
-	}
+	});
 
-	let baseUrl: string;
-	let key: string;
-	let copyMessage: string = '';
+	let baseUrl: string = $state('');
+	let key: string = $state('');
+	let copyMessage: string = $state('');
 	let messageTimeout: number;
 
 	function showMessage(message: string) {
@@ -61,7 +67,7 @@
 		<p class="hint">Del denne lenken for direkte tilgang til filen</p>
 		<div class="input-group">
 			<input type="text" class="url-field" value={url} readonly />
-			<button class="button" on:click={copyFullUrl}>Kopier lenke</button>
+			<button class="button" onclick={copyFullUrl}>Kopier lenke</button>
 		</div>
 	</div>
 
@@ -75,12 +81,12 @@
 
 		<div class="input-group">
 			<input type="text" class="url-field" value={baseUrl} readonly />
-			<button class="button" on:click={copyBaseUrl}>Kopier nettadresse</button>
+			<button class="button" onclick={copyBaseUrl}>Kopier nettadresse</button>
 		</div>
 
 		<div class="input-group">
 			<input type="text" class="url-field" value={key} readonly />
-			<button class="button" on:click={copyKey}>Kopier nøkkel</button>
+			<button class="button" onclick={copyKey}>Kopier nøkkel</button>
 		</div>
 	</div>
 

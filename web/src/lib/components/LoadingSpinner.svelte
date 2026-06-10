@@ -1,5 +1,9 @@
 <script lang="ts">
-	export let message = 'Henter filinformasjon...';
+	interface Props {
+		message?: string;
+	}
+
+	let { message = 'Henter filinformasjon...' }: Props = $props();
 </script>
 
 <div class="loading-container">
