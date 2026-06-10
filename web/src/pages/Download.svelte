@@ -1064,7 +1064,7 @@
 	.copy-preview-btn {
 		position: absolute;
 		top: 0.5rem;
-		right: 0.5rem;
+		right: calc(0.5rem + 25px);
 		z-index: 2;
 		display: inline-flex;
 		align-items: center;
