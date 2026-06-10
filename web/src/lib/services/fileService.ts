@@ -2,6 +2,7 @@ import { configStore } from '$lib/stores/config';
 import { getWasmInstance } from '$lib/utils/wasm-loader';
 import type { ProgressCallback } from './fileProcessor';
 import { get } from 'svelte/store';
+import { tr } from '$lib/i18n';
 
 function requireWasmMethod<T>(
 	method: T | undefined,
@@ -30,7 +31,7 @@ export async function downloadAndDecryptFile(
 	);
 	const decryptChunk = requireWasmMethod(wasmInstance.decryptChunk, 'decryptChunk');
 
-	await onProgress(0, 'Laster ned...');
+	await onProgress(0, tr('service.downloading'));
 
 	// First, fetch just the header to get metadata
 	const headerResponse = await fetch(`/api/metadata/${fileId}`, {
@@ -124,7 +125,7 @@ export async function downloadAndDecryptFile(
 				decryptedChunks.push(new Uint8Array(decrypted));
 
 				const progress = Math.round(((decryptedChunks.length * chunkSize) / contentLength) * 100);
-				await onProgress(progress, `Laster ned... `);
+				await onProgress(progress, tr('service.downloading'));
 
 				bufferedData = bufferedData.slice(chunkSize);
 			}
@@ -144,7 +145,7 @@ export async function downloadAndDecryptFile(
 		type: metadata.contentType || 'application/octet-stream'
 	});
 
-	await onProgress(100, 'Nedlasting fullført');
+	await onProgress(100, tr('service.downloadComplete'));
 
 	return { decrypted: blob, metadata };
 }
@@ -162,11 +163,11 @@ export async function fetchMetadata(fileId: string, key: string, token: string):
 		});
 
 		if (response.status === 404) {
-			throw new Error('Filen finnes ikke eller har utløpt');
+			throw new Error(tr('service.fileNotFound'));
 		}
 
 		if (!response.ok) {
-			throw new Error('Kunne ikke hente filinformasjon');
+			throw new Error(tr('service.metadataFetchError'));
 		}
 
 		const fileSize = response.headers.get('X-File-Size');
@@ -221,7 +222,7 @@ export async function streamDownloadAndDecrypt(
   );
   const decryptChunk = requireWasmMethod(wasmInstance.decryptChunk, 'decryptChunk');
 
-  await onProgress(0, 'Starting download...');
+  await onProgress(0, tr('service.startingDownload'));
 
   // First, fetch metadata as before...
   const headerResponse = await fetch(`/api/metadata/${fileId}`, {
@@ -289,7 +290,7 @@ export async function streamDownloadAndDecrypt(
       lastProgressUpdate = currentTime;
       lastProgressValue = progressValue;
       
-      await onProgress(progressValue, `Laster ned...`);
+      await onProgress(progressValue, tr('service.downloading'));
     }
   };
 
@@ -354,7 +355,7 @@ export async function streamDownloadAndDecrypt(
     },
 
     flush: async (controller) => {
-      await onProgress(100, 'Download complete');
+      await onProgress(100, tr('service.downloadComplete'));
 
       if (bufferedData.length > 0 && decryptionInitialized && cipherId !== null) {
         const decrypted = decryptChunk(cipherId, bufferedData, true);

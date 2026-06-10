@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { t, tr } from '$lib/i18n';
 
 	interface Props {
 		passphrase?: string;
@@ -88,10 +89,11 @@
 		}, 3000);
 	}
 
-	async function copy(text: string, label: string) {
+	async function copy(text: string, labelKey: string) {
+		const message = tr('share.copiedToast', { label: tr(labelKey) });
 		try {
 			await navigator.clipboard.writeText(text);
-			showMessage(label + ' kopiert!');
+			showMessage(message);
 		} catch {
 			const el = document.createElement('textarea');
 			el.value = text;
@@ -99,7 +101,7 @@
 			el.select();
 			document.execCommand('copy');
 			document.body.removeChild(el);
-			showMessage(label + ' kopiert!');
+			showMessage(message);
 		}
 	}
 </script>
@@ -109,61 +111,61 @@
 		<!-- Option 1: Passphrase -->
 		<div class="share-block">
 			<div class="block-header">
-				<h3>Del via delingskode</h3>
-				<span class="badge badge-easy">Enklere å dele</span>
+				<h3>{$t('share.viaCode')}</h3>
+				<span class="badge badge-easy">{$t('share.easierBadge')}</span>
 			</div>
-			<p class="hint">En lesbar kode mottakeren skriver inn selv. Litt lavere entropi enn en tilfeldig nøkkel.</p>
+			<p class="hint">{$t('share.codeHint')}</p>
 
 			<div class="field-row">
-				<label class="field-label">Lenke</label>
+				<label class="field-label">{$t('share.link')}</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={passphraseLink} readonly />
-					<button class="button" onclick={() => copy(passphraseLink, 'Lenke')}>Kopier</button>
+					<button class="button" onclick={() => copy(passphraseLink, 'share.link')}>{$t('common.copy')}</button>
 				</div>
 			</div>
 
 			<div class="field-row">
-				<label class="field-label">Kun kode</label>
+				<label class="field-label">{$t('share.codeOnly')}</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={passphrase} readonly />
-					<button class="button" onclick={() => copy(passphrase, 'Delingskode')}>Kopier</button>
+					<button class="button" onclick={() => copy(passphrase, 'share.labelCode')}>{$t('common.copy')}</button>
 				</div>
 			</div>
 		</div>
 
-		<div class="separator"><span>eller</span></div>
+		<div class="separator"><span>{$t('common.or')}</span></div>
 
 		<!-- Option 2: Secure URL with key -->
 		<div class="share-block">
 			<div class="block-header">
-				<h3>Del via sikker lenke</h3>
-				<span class="badge badge-secure">Høyere sikkerhet</span>
+				<h3>{$t('share.viaSecureLink')}</h3>
+				<span class="badge badge-secure">{$t('share.higherSecurityBadge')}</span>
 			</div>
-			<p class="hint">Tilfeldig kryptografisk nøkkel i URL-en. Kan ikke huskes — del hele lenken på én gang.</p>
+			<p class="hint">{$t('share.secureHint')}</p>
 
 			<div class="field-row">
-				<label class="field-label">Komplett lenke</label>
+				<label class="field-label">{$t('share.completeLink')}</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={secureUrl} readonly />
-					<button class="button" onclick={() => copy(secureUrl, 'Lenke')}>Kopier</button>
+					<button class="button" onclick={() => copy(secureUrl, 'share.link')}>{$t('common.copy')}</button>
 				</div>
 			</div>
 
 			<hr class="field-divider" />
 
 			<div class="field-row">
-				<label class="field-label">Nettadresse</label>
+				<label class="field-label">{$t('share.webAddress')}</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={secureBase} readonly />
-					<button class="button" onclick={() => copy(secureBase, 'Nettadresse')}>Kopier</button>
+					<button class="button" onclick={() => copy(secureBase, 'share.webAddress')}>{$t('common.copy')}</button>
 				</div>
 			</div>
 
 			<div class="field-row">
-				<label class="field-label">Nøkkel</label>
+				<label class="field-label">{$t('share.key')}</label>
 				<div class="input-group">
 					<input type="text" class="url-field" value={secureKey} readonly />
-					<button class="button" onclick={() => copy(secureKey, 'Nøkkel')}>Kopier</button>
+					<button class="button" onclick={() => copy(secureKey, 'share.key')}>{$t('common.copy')}</button>
 				</div>
 			</div>
 		</div>

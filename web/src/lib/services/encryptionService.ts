@@ -5,6 +5,7 @@ import { FileProcessor } from './fileProcessor';
 import type { ProgressCallback } from './fileProcessor';
 import { configStore } from '$lib/stores/config';
 import { get } from 'svelte/store';
+import { tr } from '$lib/i18n';
 
 function requireWasmMethod<T>(method: T | undefined, name: string): NonNullable<T> {
     if (!method) {
@@ -154,7 +155,7 @@ export async function uploadEncryptedFile(
         };
 
         ws.onerror = () => {
-            settle(() => reject(new Error('Nettverksfeil under opplasting')));
+            settle(() => reject(new Error(tr('service.uploadNetworkError'))));
         };
 
         ws.onclose = (event: CloseEvent) => {
@@ -164,11 +165,11 @@ export async function uploadEncryptedFile(
             // or network drop.
             settle(() => {
                 if (!event.wasClean) {
-                    reject(new Error('Tilkoblingen ble uventet avbrutt'));
+                    reject(new Error(tr('service.connectionAborted')));
                 } else {
                     // Clean close without a prior resolve is also an error (e.g. server
                     // closed the connection after sending an error frame).
-                    reject(new Error('Tilkoblingen ble lukket'));
+                    reject(new Error(tr('service.connectionClosed')));
                 }
             });
         };
@@ -185,7 +186,7 @@ export async function uploadEncryptedFile(
                         new Error(
                             typeof response.error === 'string'
                                 ? response.error
-                                : 'Ukjent opplastingsfeil'
+                                : tr('service.uploadUnknownError')
                         )
                     )
                 );
@@ -247,7 +248,7 @@ export async function uploadEncryptedFile(
                 // Progress is based on plaintext fileOffset, not the encrypted ack byte
                 // count (which is plaintext + 16 bytes per chunk and would drift > 100%).
                 const progress = Math.min(Math.round((fileOffset / file.size) * 100), 99);
-                await onProgress(progress, 'Laster opp...');
+                await onProgress(progress, tr('service.uploading'));
                 await sendNextChunk();
                 return;
             }
@@ -258,7 +259,7 @@ export async function uploadEncryptedFile(
                 // loop sees progress===100 at the same time isComplete becomes true.
                 // Without this, isComplete sets displayProgress=100 while progress=99,
                 // which triggers the animation loop to run backwards back to 99.
-                await onProgress(100, 'Ferdig!');
+                await onProgress(100, tr('service.done'));
                 settle(() => resolve({ fileId: currentFileId!, token: cachedToken! }));
                 ws.close();
                 return;
@@ -345,7 +346,7 @@ export async function uploadEncryptedFile(
                             Math.round((estimatedBytes / file.size) * 100),
                             99
                         );
-                        await onProgress(progress, 'Laster opp...');
+                        await onProgress(progress, tr('service.uploading'));
                     }, 100);
                 }
             } else {

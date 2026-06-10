@@ -4,6 +4,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
+	import { t, tr } from '$lib/i18n';
 	import { initWasm } from '$lib/utils/wasm-loader';
 	import {
 		downloadAndDecryptFile,
@@ -148,10 +149,10 @@
 
 	function formatEta(seconds: number): string {
 		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
-		if (seconds < 60) return `${Math.ceil(seconds)}s igjen`;
+		if (seconds < 60) return `${Math.ceil(seconds)}s ${tr('common.remaining')}`;
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.ceil(seconds % 60);
-		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} igjen`;
+		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} ${tr('common.remaining')}`;
 	}
 
 	function animateProgress() {
@@ -405,7 +406,9 @@
 		if (!isTextPreviewable(fileMetadata)) return;
 
 		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
-			textPreviewError = `Forhåndsvisning er bare tilgjengelig for tekstfiler opptil ${formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)}.`;
+			textPreviewError = tr('preview.textOnlyLimit', {
+				limit: formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)
+			});
 			return;
 		}
 
@@ -431,7 +434,7 @@
 				metadata = { error: unavailableMessage };
 				return;
 			}
-			textPreviewError = 'Kunne ikke laste forhåndsvisning av tekstfilen.';
+			textPreviewError = tr('preview.textLoadError');
 		} finally {
 			if (requestId === previewRequestId) {
 				isLoadingTextPreview = false;
@@ -449,7 +452,9 @@
 		if (!isImagePreviewable(fileMetadata)) return;
 
 		if ((fileMetadata.size || 0) > IMAGE_PREVIEW_MAX_BYTES) {
-			imagePreviewError = `Forhåndsvisning er bare tilgjengelig for bildefiler opptil ${formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)}.`;
+			imagePreviewError = tr('preview.imageOnlyLimit', {
+				limit: formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)
+			});
 			return;
 		}
 
@@ -478,7 +483,7 @@
 				metadata = { error: unavailableMessage };
 				return;
 			}
-			imagePreviewError = 'Kunne ikke laste forhåndsvisning av bildefilen.';
+			imagePreviewError = tr('preview.imageLoadError');
 		} finally {
 			if (requestId === previewRequestId) {
 				isLoadingImagePreview = false;
@@ -525,7 +530,7 @@
 			manualKeyInput = '';
 			metadata = {
 				error:
-					'Kunne ikke hente filinformasjon. Sjekk at nøkkelen er riktig, eller at filen ikke er slettet.'
+					tr('dl.metadataError')
 			};
 		} finally {
 			isLoading = false;
@@ -545,7 +550,7 @@
 			setEncryptionKey(key);
 			await getMetadata();
 		} else {
-			keyError = 'Ugyldig nøkkel eller URL';
+			keyError = tr('key.invalid');
 		}
 	}
 
@@ -582,7 +587,7 @@
 			}
 
 			if (receivedLength === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+				throw new Error(tr('dl.decryptError'));
 			}
 
 			const blob = new Blob(chunks, {
@@ -590,7 +595,7 @@
 			});
 
 			if (blob.size === 0) {
-				throw new Error('Kunne ikke dekryptere filen - filen er nå slettet fra serveren');
+				throw new Error(tr('dl.decryptError'));
 			}
 
 			const url = window.URL.createObjectURL(blob);
@@ -622,7 +627,7 @@
 				}
 			} catch (err) {
 				deletionError =
-					'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.';
+					tr('dl.deleteNetworkError');
 			}
 
 			if (browser) window.history.replaceState({}, '', '/');
@@ -661,7 +666,7 @@
 						setEncryptionKey(validatedKey);
 						await getMetadata();
 					} else {
-						keyError = 'Ugyldig nøkkel eller URL';
+						keyError = tr('key.invalid');
 					}
 				}
 			}
@@ -694,11 +699,9 @@
 <div class="page-container">
 	<div class="container">
 		<div class="download-section">
-			<h1><a href="/"><span>Sikker</span></a> fildeling</h1>
+			<h1><a href="/"><span>{$t('dl.titleLink')}</span></a>{$t('dl.titleAfter')}</h1>
 			<p class="description">
-				Velkommen til vår sikre fildelingstjeneste. Her kan du trygt laste ned filer som har blitt
-				delt med deg. Alle filer er ende-til-ende-kryptert. Etter vellykket nedlasting blir filen
-				automatisk slettet fra våre servere.
+				{$t('dl.description')}
 			</p>
 
 			{#if isLoading}
@@ -713,19 +716,19 @@
 				{#if isImagePreviewable(metadata)}
 					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
 						<div class="preview-header">
-							<h2>Forhåndsvisning</h2>
-							<span class="preview-badge">Bilde</span>
+							<h2>{$t('preview.title')}</h2>
+							<span class="preview-badge">{$t('preview.image')}</span>
 						</div>
 
 						{#if isLoadingImagePreview}
 							<div class="preview-loading">
-								<LoadingSpinner message="Laster bildeforhåndsvisning..." />
+								<LoadingSpinner message={$t('preview.loadingImage')} />
 							</div>
 						{:else if imagePreviewUrl}
 							<img
 								class="image-preview"
 								src={imagePreviewUrl}
-								alt={`Forhåndsvisning av ${metadata.filename}`}
+								alt={$t('preview.imageAlt', { filename: metadata.filename })}
 								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 48, minHeight: 200 }}
 							/>
 						{:else if imagePreviewError}
@@ -737,13 +740,13 @@
 				{#if isTextPreviewable(metadata)}
 					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
 						<div class="preview-header">
-							<h2>Forhåndsvisning</h2>
-							<span class="preview-badge">Tekst</span>
+							<h2>{$t('preview.title')}</h2>
+							<span class="preview-badge">{$t('preview.text')}</span>
 						</div>
 
 						{#if isLoadingTextPreview}
 							<div class="preview-loading">
-								<LoadingSpinner message="Laster tekstforhåndsvisning..." />
+								<LoadingSpinner message={$t('preview.loadingText')} />
 							</div>
 						{:else if textPreview !== null}
 							{#if textPreview.length > 0}
@@ -754,13 +757,13 @@
 										class:copied={copyState === 'copied'}
 										class:error={copyState === 'error'}
 										onclick={copyTextPreview}
-										aria-label="Kopier tekst"
-										title="Kopier tekst"
+										aria-label={$t('preview.copyAria')}
+										title={$t('preview.copyAria')}
 									>
 										{#if copyState === 'copied'}
-											Kopiert
+											{$t('common.copied')}
 										{:else if copyState === 'error'}
-											Feil
+											{$t('common.error')}
 										{:else}
 											<svg
 												width="14"
@@ -776,7 +779,7 @@
 												<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
 												<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 											</svg>
-											<span>Kopier</span>
+											<span>{$t('common.copy')}</span>
 										{/if}
 									</button>
 									{#if textPreviewMode === 'table'}
@@ -801,13 +804,11 @@
 									{/if}
 								</div>
 							{:else}
-								<p class="preview-note">Denne tekstfilen er tom.</p>
+								<p class="preview-note">{$t('preview.emptyTextFile')}</p>
 							{/if}
 
 							{#if isTextPreviewTruncated}
-								<p class="preview-note">
-									Forhåndsvisningen er avkortet. Last ned filen for å se hele innholdet.
-								</p>
+								<p class="preview-note">{$t('preview.truncated')}</p>
 							{/if}
 						{:else if textPreviewError}
 							<p class="preview-note">{textPreviewError}</p>
@@ -865,7 +866,7 @@
 					<!-- Right: download button → spinner → checkmark -->
 					<div class="col-action">
 						{#if isDownloadComplete}
-							<div class="checkmark" title="Nedlasting fullført">
+							<div class="checkmark" title={$t('download.completeTitle')}>
 								<svg
 									fill="currentColor"
 									width="28"
@@ -884,10 +885,10 @@
 								</svg>
 							</div>
 						{:else if isDownloading}
-							<div class="spinner" aria-label="Laster ned..."></div>
+							<div class="spinner" aria-label={$t('download.downloadingAria')}></div>
 						{:else}
 							<button class="download-btn" onclick={initiateDownload} disabled={!canDownload}>
-								Last ned
+								{$t('common.download')}
 							</button>
 						{/if}
 					</div>
@@ -895,7 +896,7 @@
 
 				{#if isDownloadComplete}
 					<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
-						Filen er slettet fra serveren.
+						{$t('download.fileDeleted')}
 					</p>
 				{/if}
 
@@ -906,21 +907,20 @@
 
 			{#if !encryptionKey && !isDownloadComplete && !isLoading}
 				<form class="key-prompt" onsubmit={preventDefault(handleManualKeySubmit)}>
-					<h3>Dekrypteringsnøkkel kreves</h3>
+					<h3>{$t('key.requiredTitle')}</h3>
 					<p class="hint">
-						Lim inn hele lenken du har mottatt, så vil nøkkelen automatisk bli hentet ut.
-						Alternativt kan du lime inn dekrypteringsnøkkelen direkte.
+						{$t('key.hint')}
 					</p>
 					<div class="input-group">
 						<input
 							type="text"
 							class="key-input"
-							placeholder="Lim inn dekrypteringsnøkkel eller hele URL-en"
+							placeholder={$t('key.placeholder')}
 							bind:value={manualKeyInput}
 							disabled={isDownloading}
 						/>
 						<button type="submit" class="button" disabled={!manualKeyInput.trim() || isDownloading}>
-							Dekrypter
+							{$t('key.decrypt')}
 						</button>
 					</div>
 					{#if keyError}

@@ -3,6 +3,7 @@
 
 	import { onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
+	import { tr } from '$lib/i18n';
 
 	interface Props {
 		progress?: number;
@@ -33,10 +34,10 @@
 
 	function formatEta(seconds: number): string {
 		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
-		if (seconds < 60) return `${Math.ceil(seconds)}s igjen`;
+		if (seconds < 60) return `${Math.ceil(seconds)}s ${tr('common.remaining')}`;
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.ceil(seconds % 60);
-		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} igjen`;
+		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} ${tr('common.remaining')}`;
 	}
 
 	function updateDisplayProgress() {

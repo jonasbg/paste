@@ -1,14 +1,16 @@
 <script lang="ts">
+	import { t } from '$lib/i18n';
+
 	interface Props {
 		message?: string;
 	}
 
-	let { message = 'Henter filinformasjon...' }: Props = $props();
+	let { message }: Props = $props();
 </script>
 
 <div class="loading-container">
 	<div class="spinner"></div>
-	<p>{message}</p>
+	<p>{message ?? $t('loading.fetchingInfo')}</p>
 </div>
 
 <style>
