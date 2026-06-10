@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { run, preventDefault } from 'svelte/legacy';
 
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { initWasm } from '$lib/utils/wasm-loader';
@@ -178,14 +178,20 @@
 		}
 	}
 
-	run(() => {
-		if (downloadProgress !== displayProgress) {
-			if (downloadStartTime === 0 && downloadProgress > 0) {
-				downloadStartTime = Date.now();
+	// Kick off the smoothing animation when the incoming progress changes. Only
+	// `downloadProgress` is tracked; the animation bookkeeping is read/written
+	// untracked so this effect never re-triggers itself (the rAF loop self-schedules).
+	$effect(() => {
+		const next = downloadProgress;
+		untrack(() => {
+			if (next !== displayProgress) {
+				if (downloadStartTime === 0 && next > 0) {
+					downloadStartTime = Date.now();
+				}
+				if (animationFrame) cancelAnimationFrame(animationFrame);
+				animationFrame = requestAnimationFrame(animateProgress);
 			}
-			if (animationFrame) cancelAnimationFrame(animationFrame);
-			animationFrame = requestAnimationFrame(animateProgress);
-		}
+		});
 	});
 
 	run(() => {

@@ -2,7 +2,7 @@
 	import { run, preventDefault, createBubbler, stopPropagation } from 'svelte/legacy';
 
 	const bubble = createBubbler();
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { FileProcessor } from '$lib/services/fileProcessor';
@@ -493,14 +493,20 @@
 		}
 	}
 
-	run(() => {
-		if (passphraseDownloadProgress !== passphraseDisplayProgress) {
-			if (passphraseDownloadStartTime === 0 && passphraseDownloadProgress > 0) {
-				passphraseDownloadStartTime = Date.now();
+	// Kick off the smoothing animation when the incoming progress changes. Only
+	// `passphraseDownloadProgress` is tracked; the animation bookkeeping is read/written
+	// untracked so this effect never re-triggers itself (the rAF loop self-schedules).
+	$effect(() => {
+		const next = passphraseDownloadProgress;
+		untrack(() => {
+			if (next !== passphraseDisplayProgress) {
+				if (passphraseDownloadStartTime === 0 && next > 0) {
+					passphraseDownloadStartTime = Date.now();
+				}
+				if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
+				passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
 			}
-			if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
-			passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
-		}
+		});
 	});
 
 	run(() => {
