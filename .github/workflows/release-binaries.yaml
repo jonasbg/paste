@@ -70,6 +70,7 @@ jobs:
           mkdir -p "${DIST_DIR}" "${BUILD_DIR}"
 
           VERSION="${VERSION:-dev}"
+          VERSION="${VERSION#v}"
 
           # Build binary with simple name
           BINARY_NAME="${APP_NAME}"
@@ -80,7 +81,7 @@ jobs:
           cd pastectl/
 
           GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
-            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "${BUILD_DIR}/${BINARY_NAME}" ./cmd/paste
+            go build -trimpath -ldflags "-s -w -X github.com/jonasbg/paste/pastectl/internal/cli.Version=${VERSION}" -o "${BUILD_DIR}/${BINARY_NAME}" ./cmd/paste
 
           cd "${BUILD_DIR}"
 
