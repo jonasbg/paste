@@ -16,3 +16,23 @@ paste:
   services:
   - name: http
     port: 8080
+
+  # Expose the app through an Ingress, a Gateway API HTTPRoute, or both.
+  # Enable whichever your cluster supports; leaving a block out disables it.
+
+  # ingress:
+  #   ingressClassName: nginx
+  #   exposeMetrics: false          # false blocks /metrics via a server-snippet
+  #   annotations:
+  #     cert-manager.io/cluster-issuer: letsencrypt-prod
+
+  # httpRoute:
+  #   # apiVersion: gateway.networking.k8s.io/v1   # override for older Gateway API installs
+  #   parentRefs:
+  #   - name: my-gateway
+  #     namespace: gateway-system
+  #     sectionName: https          # optional: attach to a specific listener
+  #   # hostnames:                   # defaults to [ .host ] when omitted
+  #   # - chase.example.com
+  #   # annotations: {}
+  #   # rules: []                    # override the default "route / to the service" rule
