@@ -143,7 +143,15 @@ spec:
     metadata:
       name: {{ .name }}
     spec:
-      accessModes: [ "ReadWriteOnce" ]
+      accessModes:
+      {{- with .accessModes }}
+        {{- toYaml . | nindent 8 }}
+      {{- else }}
+        - ReadWriteOnce
+      {{- end }}
+      {{- with .storageClass }}
+      storageClassName: {{ . }}
+      {{- end }}
       resources:
         requests:
           storage: {{ .storage | default "1Gi" }}

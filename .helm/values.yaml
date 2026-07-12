@@ -7,6 +7,9 @@ paste:
     mountPath: /uploads
     readOnly: false
     storage: 10Gi
+    # Optional per-mount overrides (omit to keep current behavior):
+    #   accessModes: [ ReadWriteMany ]   # defaults to [ ReadWriteOnce ]
+    #   storageClass: nfs-client         # omit to use the cluster default class
   host: chase.example.com
   env:
   - name: UPLOAD_DIR
