@@ -8,6 +8,10 @@ metadata:
     app: {{ $key }}
 spec:
   replicas: {{ $value.replicaCount | default 1}}
+  {{- with $value.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       app: {{ $key }}
