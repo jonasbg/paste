@@ -271,3 +271,16 @@ func TestParseFileSize(t *testing.T) {
 		}
 	}
 }
+
+func TestUploadLimiterZeroMeansUnlimited(t *testing.T) {
+	prev := GlobalConfig.UploadsPerIP
+	GlobalConfig.UploadsPerIP = 0
+	defer func() { GlobalConfig.UploadsPerIP = prev }()
+
+	l := NewUploadLimiter(t.TempDir())
+	for i := 0; i < 50; i++ {
+		if u, reason := l.Begin("1.2.3.4", 0); u == nil {
+			t.Fatalf("upload %d rejected with limit disabled: %s", i, reason)
+		}
+	}
+}

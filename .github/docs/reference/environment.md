@@ -105,13 +105,13 @@ Days to keep an uploaded file before it is deleted, whether or not it was downlo
 
 ### MAX_UPLOADS_PER_IP
 
-Maximum number of concurrent uploads from one client IP.
+Maximum number of concurrent uploads from one client IP; `0` disables the limit. Only uploads in progress count, and an upload over the limit is rejected rather than queued. Users behind one NAT or corporate proxy share this limit, and if `TRUSTED_PROXIES` does not include your reverse proxy, *all* users share it (see below).
 
 | Property | Value |
 |----------|-------|
 | Variable | `MAX_UPLOADS_PER_IP` |
-| Default | `4` |
-| Example | `2` |
+| Default | `5` |
+| Example | `10`, `0` (unlimited) |
 
 ### MAX_STORAGE_SIZE
 
@@ -126,6 +126,12 @@ Optional cap on the total size of stored files, using the same format as `MAX_FI
 ### TRUSTED_PROXIES
 
 Comma-separated IPs or CIDR ranges of reverse proxies. `X-Forwarded-For` / `X-Real-IP` are only honoured when the direct peer is in this list; this is what the per-IP rate limit and upload limit key on.
+
+If your ingress or load balancer is not in this list, every user appears as the proxy's IP and shares a single rate limit and upload limit. The server logs a warning when a private-network peer sends forwarding headers without being trusted:
+
+```
+WARNING: request from 172.18.0.5 carries X-Forwarded-For but 172.18.0.5 is not in TRUSTED_PROXIES ...
+```
 
 | Property | Value |
 |----------|-------|

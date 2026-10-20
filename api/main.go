@@ -58,6 +58,7 @@ func main() {
 	}
 
 	r.Use(middleware.PrivacyLogger(), gin.Recovery())
+	r.Use(middleware.UntrustedProxyWarning(utils.GetTrustedProxies()))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(telemetryProvider.Middleware())
 

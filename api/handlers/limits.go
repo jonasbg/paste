@@ -36,7 +36,7 @@ func (l *UploadLimiter) Begin(ip string, size int64) (*Upload, string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.active[ip] >= GlobalConfig.UploadsPerIP {
+	if limit := GlobalConfig.UploadsPerIP; limit > 0 && l.active[ip] >= limit {
 		return nil, "Too many concurrent uploads"
 	}
 	if limit := GlobalConfig.MaxStorageBytes; limit > 0 {

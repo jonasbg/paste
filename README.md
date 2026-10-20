@@ -176,7 +176,7 @@ Environment variables:
 | `OTEL_PROMETHEUS_PATH` | `/metrics` | Path for the Prometheus-compatible OTEL scrape endpoint |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP HTTP endpoint for pushing runtime metrics |
 | `TRUSTED_PROXIES` | `10.0.0.0/8` | IP ranges of trusted proxies for correct client IP detection |
-| `MAX_UPLOADS_PER_IP` | `4` | Maximum concurrent uploads per client IP |
+| `MAX_UPLOADS_PER_IP` | `5` | Maximum concurrent uploads per client IP (`0` = unlimited) |
 | `MAX_STORAGE_SIZE` | (unlimited) | Optional cap on total stored bytes, e.g. `50GB` |
 | `ALLOWED_ORIGINS` | (empty) | Extra browser origins allowed to open WebSockets (default: same host only) |
 

@@ -25,7 +25,7 @@ const (
 	minChunkSizeMB = 1
 	maxChunkSizeMB = 64
 
-	defaultUploadsPerIP = 4
+	defaultUploadsPerIP = 5
 )
 
 var GlobalConfig Config
@@ -42,7 +42,7 @@ type Config struct {
 
 	// Server-side limits, not exposed to clients.
 	MaxStorageBytes int64 `json:"-"` // 0 = unlimited
-	UploadsPerIP    int   `json:"-"`
+	UploadsPerIP    int   `json:"-"` // 0 = unlimited
 	// Extra browser origins allowed to open WebSockets, besides the request host.
 	AllowedOrigins []string `json:"-"`
 }
@@ -84,8 +84,8 @@ func InitConfig() error {
 	}
 
 	uploadsPerIP, err := strconv.Atoi(getEnv("MAX_UPLOADS_PER_IP", strconv.Itoa(defaultUploadsPerIP)))
-	if err != nil || uploadsPerIP < 1 {
-		return fmt.Errorf("invalid MAX_UPLOADS_PER_IP. Must be a positive integer")
+	if err != nil || uploadsPerIP < 0 {
+		return fmt.Errorf("invalid MAX_UPLOADS_PER_IP. Must be 0 (unlimited) or a positive integer")
 	}
 
 	passphraseWords := parsePassphraseWords(getEnv("PASSPHRASE_WORDS", strconv.Itoa(defaultPassphraseWords)))
