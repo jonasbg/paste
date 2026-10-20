@@ -254,3 +254,20 @@ func TestWSUploadPassphraseIDIsExclusive(t *testing.T) {
 		t.Fatalf("want exactly one upload for a shared ID, got %d completed, files %v", completed, matches)
 	}
 }
+
+func TestParseFileSize(t *testing.T) {
+	ok := map[string]int64{
+		"100MB": 100 << 20, "100mb": 100 << 20, "5GiB": 5 << 30, "500Mi": 500 << 20,
+		"1073741824": 1 << 30, "2 GB": 2 << 30, "1.5KB": 1536, "10B": 10, "1T": 1 << 40,
+	}
+	for in, want := range ok {
+		if got, err := parseFileSize(in); err != nil || got != want {
+			t.Errorf("parseFileSize(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "MB", "-1MB", "0", "1PB", "1XB", "abc"} {
+		if got, err := parseFileSize(in); err == nil {
+			t.Errorf("parseFileSize(%q) = %d, want error", in, got)
+		}
+	}
+}

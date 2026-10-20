@@ -53,11 +53,6 @@ func InitConfig() error {
 	keySizeStr := getEnv("KEY_SIZE", "256")
 	chunkSizeStr := getEnv("CHUNK_SIZE", "4")
 
-	// Validate maxFileSize
-	if !isValidFileSize(maxFileSize) {
-		return fmt.Errorf("invalid MAX_FILE_SIZE format. Must be a number followed by B, KB, MB, GB, or TB (case-insensitive)")
-	}
-
 	maxFileSizeBytes, err := parseFileSize(maxFileSize)
 	if err != nil {
 		return fmt.Errorf("failed to parse MAX_FILE_SIZE: %v", err)
@@ -83,9 +78,6 @@ func InitConfig() error {
 
 	var maxStorageBytes int64
 	if v := os.Getenv("MAX_STORAGE_SIZE"); v != "" {
-		if !isValidFileSize(v) {
-			return fmt.Errorf("invalid MAX_STORAGE_SIZE format. Must be a number followed by KB, MB, GB, or TB")
-		}
 		if maxStorageBytes, err = parseFileSize(v); err != nil {
 			return fmt.Errorf("failed to parse MAX_STORAGE_SIZE: %v", err)
 		}
@@ -152,13 +144,14 @@ func calculateTokenMinLength(keyBits int) int {
 	return length
 }
 
-func parseFileSize(size string) (int64, error) {
-	// Regular expression to match number followed by unit
-	re := regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*([KMGT]?B)$`)
-	matches := re.FindStringSubmatch(strings.ToUpper(size))
+var fileSizeRe = regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*(?:([KMGT])(?:I?B|I)?|B)?$`)
 
+// parseFileSize parses sizes such as "100MB", "5GiB", "500Mi" or raw bytes
+// ("1073741824"). Units are binary: KB, KiB and Ki all mean 1024 bytes.
+func parseFileSize(size string) (int64, error) {
+	matches := fileSizeRe.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(size)))
 	if matches == nil {
-		return 0, fmt.Errorf("invalid size format: %s", size)
+		return 0, fmt.Errorf("invalid size %q: use raw bytes or a number followed by KB, MB, GB, TB (or KiB/Ki, ...)", size)
 	}
 
 	num, err := strconv.ParseFloat(matches[1], 64)
@@ -166,20 +159,11 @@ func parseFileSize(size string) (int64, error) {
 		return 0, fmt.Errorf("invalid number: %s", matches[1])
 	}
 
-	multipliers := map[string]int64{
-		"B":  1,
-		"KB": 1 << 10, // 1024
-		"MB": 1 << 20, // 1024 * 1024
-		"GB": 1 << 30, // 1024 * 1024 * 1024
-		"TB": 1 << 40, // 1024 * 1024 * 1024 * 1024
+	shift := map[string]uint{"": 0, "K": 10, "M": 20, "G": 30, "T": 40}[matches[2]]
+	bytes := int64(num * float64(int64(1)<<shift))
+	if bytes <= 0 {
+		return 0, fmt.Errorf("size must be positive: %q", size)
 	}
-
-	multiplier, ok := multipliers[matches[2]]
-	if !ok {
-		return 0, fmt.Errorf("invalid unit: %s", matches[2])
-	}
-
-	bytes := int64(num * float64(multiplier))
 	return bytes, nil
 }
 
@@ -228,18 +212,4 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
-}
-
-// isValidFileSize checks if a given file size string is valid.
-func isValidFileSize(s string) bool {
-	s = strings.ToUpper(s)
-	validSuffixes := []string{"KB", "MB", "GB", "TB"}
-	for _, suffix := range validSuffixes {
-		if strings.HasSuffix(s, suffix) {
-			numPart := s[:len(s)-len(suffix)]
-			_, err := strconv.ParseFloat(numPart, 64) //Accepts floats for flexibility
-			return err == nil
-		}
-	}
-	return false
 }
