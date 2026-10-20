@@ -50,8 +50,6 @@ spec:
           containerPort: {{ .port }}
         {{- end }}
         env:
-        - name: LOG_HASH_SALT
-          value: "{{ $value.logHashSalt | default (randAlphaNum 32) }}"
         {{- range $value.env }}
         - name: {{ .name }}
           value: "{{ .value }}"

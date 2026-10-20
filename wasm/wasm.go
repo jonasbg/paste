@@ -38,8 +38,10 @@ const (
 
 	// streamFinalBit marks the final chunk in the STREAM nonce counter.
 	// 31-bit counter + 1 final-marker bit gives 2^31 chunks per file.
-	streamFinalBit uint32 = 0x80000000
+	streamFinalBit    uint32 = 0x80000000
 	streamCounterMask uint32 = 0x7FFFFFFF
+
+	gcmTagSize = 16
 )
 
 type Metadata struct {
@@ -48,14 +50,15 @@ type Metadata struct {
 	Size        int64  `json:"size"`
 }
 
+// StreamingCipher holds one stream's state. buf is reused for every chunk and
+// AES-GCM seals/opens in place, so a stream needs a single chunk-sized buffer
+// (plus the 16-byte tag) instead of separate input and output buffers.
 type StreamingCipher struct {
-	gcm      cipher.AEAD
-	iv       []byte
-	chunk    uint32
-	nonce    [12]byte
-	plainBuf []byte
-	sealBuf  []byte
-	openBuf  []byte
+	gcm   cipher.AEAD
+	iv    []byte
+	chunk uint32
+	nonce [12]byte
+	buf   []byte
 }
 
 type CipherRegistry struct {
@@ -69,7 +72,37 @@ var registry = &CipherRegistry{
 	nextID:  1,
 }
 
+var (
+	chunkAADBytes    = []byte(chunkAAD)
+	metadataAADBytes = []byte(metadataAAD)
+
+	// uint8ArrayCtor caches the JS Uint8Array constructor so per-chunk calls
+	// skip a global property lookup.
+	uint8ArrayCtor js.Value
+)
+
+// toJS copies b into a new JS Uint8Array.
+func toJS(b []byte) js.Value {
+	arr := uint8ArrayCtor.New(len(b))
+	js.CopyBytesToJS(arr, b)
+	return arr
+}
+
+// loadChunk copies a JS Uint8Array into the stream's reusable buffer, growing
+// it with room for the GCM tag so Seal can work in place without reallocating.
+func (sc *StreamingCipher) loadChunk(v js.Value) []byte {
+	n := v.Length()
+	if cap(sc.buf) < n+gcmTagSize {
+		zero(sc.buf[:cap(sc.buf)])
+		sc.buf = make([]byte, n, n+gcmTagSize)
+	}
+	data := sc.buf[:n]
+	js.CopyBytesToGo(data, v)
+	return data
+}
+
 func main() {
+	uint8ArrayCtor = js.Global().Get("Uint8Array")
 	c := make(chan struct{}, 0)
 	js.Global().Set("goEncryption", map[string]interface{}{
 		"createEncryptionStream": js.FuncOf(createEncryptionStream),
@@ -251,12 +284,11 @@ func encrypt(_ js.Value, args []js.Value) interface{} {
 		return handleError(err)
 	}
 
-	encrypted := aead.Seal(nil, iv, data, []byte(metadataAAD))
-	result := append(iv, encrypted...)
-
-	uint8Array := js.Global().Get("Uint8Array").New(len(result))
-	js.CopyBytesToJS(uint8Array, result)
-	return uint8Array
+	// Output layout: IV(12) || ciphertext+tag, sealed straight after the IV.
+	result := make([]byte, len(iv), len(iv)+len(data)+gcmTagSize)
+	copy(result, iv)
+	result = aead.Seal(result, iv, data, metadataAADBytes)
+	return toJS(result)
 }
 
 func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
@@ -288,12 +320,9 @@ func createEncryptionStream(_ js.Value, args []js.Value) interface{} {
 	registry.ciphers[cipherID] = sc
 	registry.mu.Unlock()
 
-	uint8Array := js.Global().Get("Uint8Array").New(len(iv))
-	js.CopyBytesToJS(uint8Array, iv)
-
 	return js.ValueOf(map[string]interface{}{
 		"id": cipherID,
-		"iv": uint8Array,
+		"iv": toJS(iv),
 	})
 }
 
@@ -362,21 +391,14 @@ func encryptChunk(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("chunk counter exhausted"))
 	}
 
-	n := args[1].Length()
-	if n > len(sc.plainBuf) {
-		sc.plainBuf = make([]byte, n)
-	}
-	data := sc.plainBuf[:n]
-	js.CopyBytesToGo(data, args[1])
+	data := sc.loadChunk(args[1])
 
 	buildChunkNonce(sc.nonce[:], sc.iv, sc.chunk, isLast)
 	sc.chunk++
 
-	sc.sealBuf = sc.gcm.Seal(sc.sealBuf[:0], sc.nonce[:], data, []byte(chunkAAD))
-	zero(data)
-
-	uint8Array := js.Global().Get("Uint8Array").New(len(sc.sealBuf))
-	js.CopyBytesToJS(uint8Array, sc.sealBuf)
+	// Seal in place: the ciphertext overwrites the plaintext in sc.buf.
+	sealed := sc.gcm.Seal(data[:0], sc.nonce[:], data, chunkAADBytes)
+	uint8Array := toJS(sealed)
 
 	if isLast {
 		disposeByID(cipherID)
@@ -405,26 +427,20 @@ func decryptChunk(_ js.Value, args []js.Value) interface{} {
 		return handleError(errors.New("chunk counter exhausted"))
 	}
 
-	n := args[1].Length()
-	if n > len(sc.plainBuf) {
-		sc.plainBuf = make([]byte, n)
-	}
-	data := sc.plainBuf[:n]
-	js.CopyBytesToGo(data, args[1])
+	data := sc.loadChunk(args[1])
 
 	buildChunkNonce(sc.nonce[:], sc.iv, sc.chunk, isLast)
 
-	var err error
-	sc.openBuf, err = sc.gcm.Open(sc.openBuf[:0], sc.nonce[:], data, []byte(chunkAAD))
-	zero(data)
+	// Open in place: the plaintext overwrites the ciphertext in sc.buf.
+	plain, err := sc.gcm.Open(data[:0], sc.nonce[:], data, chunkAADBytes)
 	if err != nil {
 		return handleError(err)
 	}
 
 	sc.chunk++
 
-	uint8Array := js.Global().Get("Uint8Array").New(len(sc.openBuf))
-	js.CopyBytesToJS(uint8Array, sc.openBuf)
+	uint8Array := toJS(plain)
+	zero(plain)
 
 	if isLast {
 		disposeByID(cipherID)
@@ -442,9 +458,7 @@ func disposeByID(cipherID int) {
 	}
 	zero(c.iv)
 	zero(c.nonce[:])
-	zero(c.plainBuf)
-	zero(c.sealBuf)
-	zero(c.openBuf)
+	zero(c.buf[:cap(c.buf)])
 	delete(registry.ciphers, cipherID)
 }
 
@@ -527,7 +541,7 @@ func decryptMetadata(_ js.Value, args []js.Value) interface{} {
 		return handleError(err)
 	}
 
-	decrypted, err := aead.Open(nil, iv, encryptedMetadata, []byte(metadataAAD))
+	decrypted, err := aead.Open(nil, iv, encryptedMetadata, metadataAADBytes)
 	if err != nil {
 		return handleError(err)
 	}
