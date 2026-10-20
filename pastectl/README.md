@@ -31,6 +31,28 @@ go build -ldflags "-s -w" -o pastectl ./cmd/paste
 go install github.com/jonasbg/paste/pastectl/cmd/paste@latest
 ```
 
+### Updating
+
+Binaries installed from a release can update themselves:
+
+```bash
+pastectl update --check            # report whether a newer release exists
+pastectl update                    # install the latest release
+pastectl update --version v1.2.1   # install a specific release (add --force to downgrade)
+```
+
+The updater downloads the archive for your OS and architecture from GitHub
+Releases, verifies its SHA-256 against the release's `SHA256SUMS`, checks that
+the new binary runs, and then replaces the current executable (Windows keeps
+the previous one as `pastectl.exe.old`). If the binary lives in a directory you
+cannot write to, run it with `sudo`. Development builds (`go build`, `go
+install`) report version `dev` and are only replaced with `--force`. Homebrew,
+Nix and Scoop installs are left to their package manager.
+
+The checksum detects corrupted or mismatched downloads. It is published in the
+same release as the archives, so it does not protect against a compromised
+GitHub release.
+
 ## Usage
 
 ### Upload
