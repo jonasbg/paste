@@ -176,7 +176,9 @@ Environment variables:
 | `OTEL_PROMETHEUS_PATH` | `/metrics` | Path for the Prometheus-compatible OTEL scrape endpoint |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP HTTP endpoint for pushing runtime metrics |
 | `TRUSTED_PROXIES` | `10.0.0.0/8` | IP ranges of trusted proxies for correct client IP detection |
-| `LOG_HASH_SALT` | (empty) | Optional per-instance salt used when hashing client IPs. Setting it changes stored hashes; keep it secret.
+| `MAX_UPLOADS_PER_IP` | `4` | Maximum concurrent uploads per client IP |
+| `MAX_STORAGE_SIZE` | (unlimited) | Optional cap on total stored bytes, e.g. `50GB` |
+| `ALLOWED_ORIGINS` | (empty) | Extra browser origins allowed to open WebSockets (default: same host only) |
 
 Current OTEL metrics include request counts and latency plus upload-focused metrics:
 - `paste.upload.size.bytes`

@@ -43,16 +43,6 @@ export PASTE_URL=https://my-paste-server.com
 
 ## Server
 
-### PORT
-
-HTTP server port.
-
-| Property | Value |
-|----------|-------|
-| Variable | `PORT` |
-| Default | `8080` |
-| Example | `3000` |
-
 ### UPLOAD_DIR
 
 Directory for storing uploaded files.
@@ -65,22 +55,22 @@ Directory for storing uploaded files.
 
 ### MAX_FILE_SIZE
 
-Maximum allowed file size. Supports raw bytes (number only), decimal units (KB, MB, GB, TB), or binary units (Ki, Mi, Gi, Ti, KiB, MiB, GiB, TiB).
+Maximum allowed file size. Supports raw bytes (number only) or a number followed by a unit: KB, MB, GB, TB, the IEC forms KiB/MiB/GiB/TiB, or Ki/Mi/Gi/Ti. All units are binary (1 KB = 1024 bytes).
 
 | Property | Value |
 |----------|-------|
 | Variable | `MAX_FILE_SIZE` |
 | Default | `100MB` |
-| Examples | `5368709120` (raw bytes)<br/>`1073741824` (raw bytes)<br/>`1GB` (decimal)<br/>`5GiB` (binary)<br/>`500Mi` (binary) |
+| Examples | `1073741824` (raw bytes)<br/>`1GB`<br/>`5GiB`<br/>`500Mi` |
 
 ### CHUNK_SIZE
 
-Upload chunk size in megabytes.
+Upload chunk size in megabytes, between 1 and 64.
 
 | Property | Value |
 |----------|-------|
 | Variable | `CHUNK_SIZE` |
-| Default | `1` |
+| Default | `4` |
 | Example | `2` |
 
 ### KEY_SIZE
@@ -103,35 +93,57 @@ File ID size in bits.
 | Default | `128` |
 | Options | `64`, `128`, `192`, `256` |
 
-### FILE_EXPIRY
+### FILES_RETENTION_DAYS
 
-File expiration time (if not downloaded).
-
-| Property | Value |
-|----------|-------|
-| Variable | `FILE_EXPIRY` |
-| Default | `24h` |
-| Example | `48h`, `7d` |
-
-### RATE_LIMIT
-
-Request rate limit per IP.
+Days to keep an uploaded file before it is deleted, whether or not it was downloaded. Expired files are swept at startup and then hourly.
 
 | Property | Value |
 |----------|-------|
-| Variable | `RATE_LIMIT` |
-| Default | `100` |
-| Example | `50` |
+| Variable | `FILES_RETENTION_DAYS` |
+| Default | `7` |
+| Example | `1` |
 
-### RATE_LIMIT_BURST
+### MAX_UPLOADS_PER_IP
 
-Rate limit burst allowance.
+Maximum number of concurrent uploads from one client IP.
 
 | Property | Value |
 |----------|-------|
-| Variable | `RATE_LIMIT_BURST` |
-| Default | `10` |
-| Example | `5` |
+| Variable | `MAX_UPLOADS_PER_IP` |
+| Default | `4` |
+| Example | `2` |
+
+### MAX_STORAGE_SIZE
+
+Optional cap on the total size of stored files, using the same format as `MAX_FILE_SIZE`. New uploads are rejected while the cap is reached. Unset means unlimited.
+
+| Property | Value |
+|----------|-------|
+| Variable | `MAX_STORAGE_SIZE` |
+| Default | (unlimited) |
+| Example | `50GB` |
+
+### TRUSTED_PROXIES
+
+Comma-separated IPs or CIDR ranges of reverse proxies. `X-Forwarded-For` / `X-Real-IP` are only honoured when the direct peer is in this list; this is what the per-IP rate limit and upload limit key on.
+
+| Property | Value |
+|----------|-------|
+| Variable | `TRUSTED_PROXIES` |
+| Default | `10.0.0.0/8` |
+| Example | `10.0.0.0/8,192.168.1.10` |
+
+### ALLOWED_ORIGINS
+
+Comma-separated extra browser origins allowed to open WebSocket connections. Browser requests are otherwise only accepted when `Origin` matches the request `Host`. Only needed when a proxy rewrites `Host`.
+
+| Property | Value |
+|----------|-------|
+| Variable | `ALLOWED_ORIGINS` |
+| Default | (none) |
+| Example | `https://paste.example.com` |
+
+The server listens on port `8080` and rate-limits API requests to 60/s per IP (burst 120); these are not configurable.
 
 ## Docker Configuration
 
@@ -219,12 +231,13 @@ None of the environment variables contain secrets. Encryption keys are generated
 |----------|----------------|
 | `UPLOAD_DIR` | Dedicated volume, not in container |
 | `MAX_FILE_SIZE` | Set based on available storage |
-| `FILE_EXPIRY` | Balance security vs. convenience |
-| `RATE_LIMIT` | Protect against abuse |
+| `FILES_RETENTION_DAYS` | Balance security vs. convenience |
+| `MAX_STORAGE_SIZE` | Set below the volume size to avoid filling the disk |
+| `TRUSTED_PROXIES` | Only your ingress/proxy addresses |
 
 ## Validation
 
-The server validates environment variables at startup and uses defaults for invalid values. Check server logs for configuration warnings.
+The server validates environment variables at startup and refuses to start if `MAX_FILE_SIZE`, `MAX_STORAGE_SIZE`, `ID_SIZE`, `KEY_SIZE`, `CHUNK_SIZE`, `MAX_UPLOADS_PER_IP` or `TRUSTED_PROXIES` is invalid. `PASSPHRASE_WORDS` is clamped to 4-8 with a warning.
 
 ```bash
 # View current configuration
