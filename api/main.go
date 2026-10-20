@@ -42,15 +42,23 @@ func main() {
 		log.Fatalf("Failed to initialize telemetry: %v", err)
 	}
 
-	handlers.InitConfig()
+	if err := handlers.InitConfig(); err != nil {
+		log.Fatalf("Invalid configuration: %v", err)
+	}
 
 	limiter := middleware.NewIPRateLimiter(rate.Limit(requestsPerSecond), burstSize)
+	uploadLimiter := handlers.NewUploadLimiter(uploadDir)
 
 	r := gin.New()
-	r.SetTrustedProxies(utils.GetTrustedProxies())
-	r.TrustedPlatform = "X-Forwarded-For"
+	// Forwarded headers are only honoured when the direct peer is a trusted
+	// proxy. Do not set r.TrustedPlatform: Gin returns that header verbatim
+	// from any client, which lets callers spoof their IP and bypass rate limits.
+	if err := r.SetTrustedProxies(utils.GetTrustedProxies()); err != nil {
+		log.Fatalf("Invalid TRUSTED_PROXIES: %v", err)
+	}
 
 	r.Use(middleware.PrivacyLogger(), gin.Recovery())
+	r.Use(middleware.SecurityHeaders())
 	r.Use(telemetryProvider.Middleware())
 
 	// Add compression middleware with custom options
@@ -66,7 +74,7 @@ func main() {
 		api.GET("/download/:id", handlers.HandleDownload(uploadDir))
 		api.DELETE("/delete/:id", handlers.HandleDelete(uploadDir))
 
-		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, telemetryProvider))
+		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, telemetryProvider, uploadLimiter))
 		api.GET("/ws/download", handlers.HandleWSDownload(uploadDir, telemetryProvider))
 	}
 

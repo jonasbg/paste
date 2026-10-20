@@ -1,15 +1,19 @@
 package handlers
 
 import (
-	"bufio"
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -32,9 +36,30 @@ var upgrader = websocket.Upgrader{
 	// Larger buffers reduce syscall overhead for large binary frames (default 1KB -> 64KB)
 	ReadBufferSize:  64 * 1024,
 	WriteBufferSize: 64 * 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // TODO: tighten this with origin checks if exposed publicly
-	},
+	CheckOrigin:     checkOrigin,
+}
+
+// checkOrigin blocks cross-site WebSocket use from other websites' pages.
+// Browsers always send Origin; non-browser clients such as pastectl do not.
+// Extra origins (e.g. when a proxy rewrites Host) come from ALLOWED_ORIGINS.
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	for _, allowed := range GlobalConfig.AllowedOrigins {
+		if strings.EqualFold(origin, allowed) {
+			return true
+		}
+	}
+	return false
 }
 
 // startPingLoop sends periodic WebSocket pings so reverse proxies do not cut
@@ -122,11 +147,6 @@ func HandleWSDownload(uploadDir string, metrics *telemetry.Provider) gin.Handler
 		}
 
 		// Validate fileId format
-		if len(request.FileId) != 16 && len(request.FileId) != 24 && len(request.FileId) != 32 {
-			sendWSError(ws, "Invalid file ID format")
-			return
-		}
-
 		if !validateID(request.FileId) {
 			sendWSError(ws, "Invalid file ID format")
 			return
@@ -297,7 +317,20 @@ func HandleWSDownload(uploadDir string, metrics *telemetry.Provider) gin.Handler
 	}
 }
 
-func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFunc {
+func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *UploadLimiter) gin.HandlerFunc {
+	// Limit inbound frame size to one encrypted chunk + GCM tag + small headroom.
+	// This prevents a malicious client from forcing gorilla to allocate a huge buffer
+	// before the application-level chunk-size validation can fire.
+	maxChunkBytes := GlobalConfig.ChunkSize*1024*1024 + 16
+	maxFrameBytes := maxChunkBytes + 1024
+
+	// Frames are read into pooled buffers instead of ws.ReadMessage, which
+	// allocates and repeatedly regrows a fresh slice for every chunk.
+	framePool := sync.Pool{New: func() any {
+		b := make([]byte, maxFrameBytes)
+		return &b
+	}}
+
 	return func(c *gin.Context) {
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
@@ -306,11 +339,7 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 		}
 		defer ws.Close()
 
-		// Limit inbound frame size to one encrypted chunk + GCM tag + small headroom.
-		// This prevents a malicious client from forcing gorilla to allocate a huge buffer
-		// before the application-level chunk-size validation can fire.
-		maxFrameBytes := int64(GlobalConfig.ChunkSize)*1024*1024 + 16 + 1024
-		ws.SetReadLimit(maxFrameBytes)
+		ws.SetReadLimit(int64(maxFrameBytes))
 
 		// Keepalive: extend read deadline whenever a pong arrives.
 		ws.SetReadDeadline(time.Now().Add(pongWait))
@@ -346,34 +375,53 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 			return
 		}
 
-		if init.Size > int64(GlobalConfig.MaxFileSizeBytes) {
+		if init.Size < 0 || init.Size > int64(GlobalConfig.MaxFileSizeBytes) {
 			sendWSError(ws, "File too large")
 			return
 		}
+
+		upload, reason := limiter.Begin(c.ClientIP(), init.Size)
+		if upload == nil {
+			sendWSError(ws, reason)
+			return
+		}
+		defer upload.Done()
 
 		// 2. Generate or Use Provided ID
 		var id string
 		if init.FileID != "" {
 			// Client provided a custom fileID (passphrase mode)
-			// Validate format
-			if len(init.FileID) != 16 && len(init.FileID) != 24 && len(init.FileID) != 32 {
-				sendWSError(ws, "Invalid custom file ID length")
-				return
-			}
 			if !validateID(init.FileID) {
 				sendWSError(ws, "Invalid custom file ID format")
 				return
 			}
 
-			// Check for collision: reject if any file with this ID already exists
+			// Claim the ID atomically. A plain "does it exist" check races with
+			// a concurrent upload of the same ID; O_EXCL does not.
+			reservePath := filepath.Join(uploadDir, init.FileID+".reserve")
+			reserve, err := os.OpenFile(reservePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if errors.Is(err, fs.ErrExist) {
+				sendWSError(ws, "Share code already in use, please try again with a different passphrase")
+				return
+			}
+			if err != nil {
+				sendWSError(ws, "Failed to check for existing files")
+				return
+			}
+			reserve.Close()
+			defer os.Remove(reservePath)
+
+			// Reject if a finished upload already uses this ID
 			matches, err := filepath.Glob(filepath.Join(uploadDir, init.FileID+".*"))
 			if err != nil {
 				sendWSError(ws, "Failed to check for existing files")
 				return
 			}
-			if len(matches) > 0 {
-				sendWSError(ws, "Share code already in use, please try again with a different passphrase")
-				return
+			for _, m := range matches {
+				if m != reservePath {
+					sendWSError(ws, "Share code already in use, please try again with a different passphrase")
+					return
+				}
 			}
 
 			id = init.FileID
@@ -420,56 +468,41 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 			return
 		}
 
-		// 4. Create File (with token)
+		// 4. Create File (with token). O_EXCL guarantees we never write into
+		// a file another upload created.
 		finalPath := filepath.Join(uploadDir, id+"."+tokenData.Token)
-		tmpPath := finalPath + ".tmp" // Use a temporary file
-		file, err := os.Create(tmpPath)
+		tmpPath := finalPath + ".tmp"
+		file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0640)
 		if err != nil {
 			sendWSError(ws, "Failed to create file")
 			return
 		}
-		// 512 KB buffer is enough to smooth out syscall bursts; the OS page cache
-		// handles larger sequential writes efficiently without a huge userspace buffer.
-		bufWriter := bufio.NewWriterSize(file, 512*1024)
-		defer func() {
-			bufWriter.Flush()
-			file.Close()
-		}()
+		defer file.Close()
+
+		bufp := framePool.Get().(*[]byte)
+		defer framePool.Put(bufp)
+		buf := *bufp
 
 		// 5. Read and Validate Encrypted Metadata Header
-		_, header, err := ws.ReadMessage()
+		// Layout: IV(12) | length(4 LE) | AES-GCM ciphertext+tag (length bytes)
+		header, err := readFrame(ws, buf)
 		if err != nil || len(header) < headerSize {
 			wsCleanup(ws, tmpPath, "Invalid header: incorrect size")
 			return
 		}
 		ws.SetReadDeadline(time.Now().Add(pongWait))
 
-		// Basic structural checks on the header (before we even try processing)
-		metadataIV := header[:12] // first 12 is the IV
 		metadataLength := binary.LittleEndian.Uint32(header[12:16])
-		metadataEncryptedDataIV := header[16:28]
-
-		if len(metadataIV) != 12 {
-			wsCleanup(ws, tmpPath, "Invalid metadata IV size")
-			return
-		}
-
-		if len(metadataEncryptedDataIV) != 12 {
-			wsCleanup(ws, tmpPath, "Invalid metadata encrypted data IV size")
-			return
-		}
-
-		if metadataLength > 65535 { // Example limit: 64KB metadata
+		if metadataLength > 65535 {
 			wsCleanup(ws, tmpPath, "Metadata size too large")
 			return
 		}
-
-		if int(16+metadataLength) > len(header) {
-			wsCleanup(ws, tmpPath, "Incomplete metadata in header")
+		if metadataLength < 16 || uint64(len(header)) != headerSize+uint64(metadataLength) {
+			wsCleanup(ws, tmpPath, "Invalid metadata length in header")
 			return
 		}
 
-		if _, err := bufWriter.Write(header); err != nil {
+		if _, err := file.Write(header); err != nil {
 			wsCleanup(ws, tmpPath, "Failed to write header")
 			return
 		}
@@ -482,22 +515,26 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 		}
 
 		// 6. Read and Validate IV
-		_, iv, err := ws.ReadMessage()
+		iv, err := readFrame(ws, buf)
 		if err != nil || len(iv) != 12 {
 			wsCleanup(ws, tmpPath, "Invalid IV: incorrect size")
 			return
 		}
 		ws.SetReadDeadline(time.Now().Add(pongWait))
 
-		if _, err := bufWriter.Write(iv); err != nil {
+		if _, err := file.Write(iv); err != nil {
 			wsCleanup(ws, tmpPath, "Failed to write IV")
 			return
 		}
 
 		// 7. Chunk Processing Loop
-		var totalBytes int64 = int64(len(header) + len(iv)) // Initialize with header + IV
+		var totalBytes int64 = int64(headerSize) + int64(metadataLength) + 12 // header + IV
+		if !upload.Add(totalBytes) {
+			wsCleanup(ws, tmpPath, "Server storage is full, please try again later")
+			return
+		}
 		for {
-			_, chunk, err := ws.ReadMessage()
+			chunk, err := readFrame(ws, buf)
 			if err != nil {
 				wsCleanup(ws, tmpPath, "Failed to read chunk")
 				return
@@ -510,7 +547,7 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 			}
 
 			// Validate size
-			if len(chunk) > (GlobalConfig.ChunkSize*1024*1024 + 16) {
+			if len(chunk) > maxChunkBytes {
 				wsCleanup(ws, tmpPath, "Chunk size exceeds maximum")
 				return
 			}
@@ -525,18 +562,22 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 				wsCleanup(ws, tmpPath, "File too large")
 				return
 			}
+			if !upload.Add(chunkSize) {
+				wsCleanup(ws, tmpPath, "Server storage is full, please try again later")
+				return
+			}
 
 			// Persist chunk to disk BEFORE acknowledging.
 			// An ACK sent before the write succeeds would make a disk error look like a
 			// sudden connection drop to the client, because the server close frame races
 			// the in-flight next chunk from the client.
-			if _, err := bufWriter.Write(chunk); err != nil {
+			if _, err := file.Write(chunk); err != nil {
 				wsCleanup(ws, tmpPath, "Failed to write chunk")
 				return
 			}
 			totalBytes = projectedTotal
 
-			// ACK only after the chunk is safely written to the buffer
+			// ACK only after the chunk is written
 			if err := wsWriteJSON(ws, gin.H{"type": "ack", "ack": chunkSize}); err != nil {
 				log.Printf("Failed to send acknowledgement: %v", err)
 				wsCleanup(ws, tmpPath, "Failed to send acknowledgement")
@@ -545,11 +586,6 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 		}
 
 		// 8. Finalization
-		// Ensure all buffered data is flushed before closing/renaming
-		if err := bufWriter.Flush(); err != nil {
-			wsCleanup(ws, tmpPath, "Error flushing buffer")
-			return
-		}
 		if err := file.Close(); err != nil { // Close before rename
 			wsCleanup(ws, tmpPath, "Error closing file")
 			return
@@ -573,6 +609,23 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 			log.Printf("Failed to send complete message: %v", err)
 		}
 	}
+}
+
+// readFrame reads the next WebSocket message into buf and returns the filled
+// prefix. The connection's read limit must not exceed len(buf).
+func readFrame(ws *websocket.Conn, buf []byte) ([]byte, error) {
+	_, r, err := ws.NextReader()
+	if err != nil {
+		return nil, err
+	}
+	n, err := io.ReadFull(r, buf)
+	if err == io.ErrUnexpectedEOF || err == io.EOF {
+		err = nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return buf[:n], nil
 }
 
 // sendWSError sends a typed error JSON frame and closes the connection.

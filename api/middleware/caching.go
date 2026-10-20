@@ -34,8 +34,7 @@ var (
 
 // Load and cache a static immutable file. Returns nil if not suitable for caching or error.
 func getOrLoadStatic(spaDir, relPath string) *staticFile {
-	// Normalize
-	relPath = strings.TrimPrefix(relPath, "/")
+	relPath, fullPath := resolveInDir(spaDir, relPath)
 	// Only cache files with a fingerprint-like name (simple heuristic: contains a dot and a hash-looking segment)
 	if !strings.Contains(relPath, ".") {
 		return nil
@@ -55,7 +54,6 @@ func getOrLoadStatic(spaDir, relPath string) *staticFile {
 	staticCacheMu.RUnlock()
 
 	// Load file from disk
-	fullPath := filepath.Join(spaDir, relPath)
 	info, err := os.Stat(fullPath)
 	if err != nil || info.IsDir() {
 		return nil
@@ -156,7 +154,10 @@ func CacheHeaders(spaDir string) gin.HandlerFunc {
 }
 
 // bytesReader implements io.ReadSeeker for a byte slice without copying.
-type bytesReader struct{ b []byte; off int64 }
+type bytesReader struct {
+	b   []byte
+	off int64
+}
 
 func (r *bytesReader) Read(p []byte) (int, error) {
 	if r.off >= int64(len(r.b)) {

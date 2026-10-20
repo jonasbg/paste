@@ -21,6 +21,11 @@ const (
 	defaultPassphraseWords = 4
 	minPassphraseWords     = 4
 	maxPassphraseWords     = 8
+
+	minChunkSizeMB = 1
+	maxChunkSizeMB = 64
+
+	defaultUploadsPerIP = 4
 )
 
 var GlobalConfig Config
@@ -34,6 +39,12 @@ type Config struct {
 	ChunkSize        int    `json:"chunk_size"`
 	TokenMinLength   int    `json:"token_min_length"`
 	PassphraseWords  int    `json:"passphrase_words"`
+
+	// Server-side limits, not exposed to clients.
+	MaxStorageBytes int64 `json:"-"` // 0 = unlimited
+	UploadsPerIP    int   `json:"-"`
+	// Extra browser origins allowed to open WebSockets, besides the request host.
+	AllowedOrigins []string `json:"-"`
 }
 
 func InitConfig() error {
@@ -66,8 +77,23 @@ func InitConfig() error {
 
 	// Convert Chunk Size
 	chunkSize, err := strconv.Atoi(chunkSizeStr)
-	if err != nil {
-		return fmt.Errorf("invalid CHUNK_SIZE. Must be an integer")
+	if err != nil || chunkSize < minChunkSizeMB || chunkSize > maxChunkSizeMB {
+		return fmt.Errorf("invalid CHUNK_SIZE. Must be an integer between %d and %d (MB)", minChunkSizeMB, maxChunkSizeMB)
+	}
+
+	var maxStorageBytes int64
+	if v := os.Getenv("MAX_STORAGE_SIZE"); v != "" {
+		if !isValidFileSize(v) {
+			return fmt.Errorf("invalid MAX_STORAGE_SIZE format. Must be a number followed by KB, MB, GB, or TB")
+		}
+		if maxStorageBytes, err = parseFileSize(v); err != nil {
+			return fmt.Errorf("failed to parse MAX_STORAGE_SIZE: %v", err)
+		}
+	}
+
+	uploadsPerIP, err := strconv.Atoi(getEnv("MAX_UPLOADS_PER_IP", strconv.Itoa(defaultUploadsPerIP)))
+	if err != nil || uploadsPerIP < 1 {
+		return fmt.Errorf("invalid MAX_UPLOADS_PER_IP. Must be a positive integer")
 	}
 
 	passphraseWords := parsePassphraseWords(getEnv("PASSPHRASE_WORDS", strconv.Itoa(defaultPassphraseWords)))
@@ -80,6 +106,9 @@ func InitConfig() error {
 		ChunkSize:        chunkSize,
 		TokenMinLength:   calculateTokenMinLength(keySize),
 		PassphraseWords:  passphraseWords,
+		MaxStorageBytes:  maxStorageBytes,
+		UploadsPerIP:     uploadsPerIP,
+		AllowedOrigins:   parseList(os.Getenv("ALLOWED_ORIGINS")),
 	}
 
 	return nil
@@ -181,6 +210,17 @@ func parseBitSize(size string, allowedSizes []int) (int, error) {
 	return 0, fmt.Errorf("invalid bit size")
 }
 
+// parseList splits a comma-separated value, dropping empty entries.
+func parseList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // getEnv retrieves an environment variable with a default value.
 func getEnv(key, defaultValue string) string {
 	value := os.Getenv(key)
@@ -203,4 +243,3 @@ func isValidFileSize(s string) bool {
 	}
 	return false
 }
-
