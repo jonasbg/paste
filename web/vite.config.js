@@ -21,7 +21,9 @@ export default defineConfig(() => ({
 		proxy: {
 			'/api': {
 				target: 'http://localhost:8080',
-				changeOrigin: true,
+				// Keep the browser's Host so it matches Origin: the API refuses
+				// cross-origin WebSockets (see checkOrigin in api/handlers).
+				changeOrigin: false,
 				ws: true // Enable WebSocket proxying
 			}
 		}
