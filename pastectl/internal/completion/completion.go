@@ -15,7 +15,7 @@ _pastectl_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Main commands
-    local commands="upload send download version help completion"
+    local commands="upload send download update version help completion"
 
     # Flags for upload
     local upload_flags="-f -n -url"
@@ -88,6 +88,7 @@ _pastectl() {
         'upload:Upload a file or stdin'
         'send:Send a file or stdin'
         'download:Download a file'
+        'update:Update to the latest release'
         'version:Show version'
         'help:Show help'
         'completion:Generate shell completion'
@@ -150,6 +151,7 @@ func FishCompletion() string {
 complete -c pastectl -f -n __fish_use_subcommand -a upload -d 'Upload a file or stdin'
 complete -c pastectl -f -n __fish_use_subcommand -a send -d 'Send a file or stdin'
 complete -c pastectl -f -n __fish_use_subcommand -a download -d 'Download a file'
+complete -c pastectl -f -n __fish_use_subcommand -a update -d 'Update to the latest release'
 complete -c pastectl -f -n __fish_use_subcommand -a version -d 'Show version'
 complete -c pastectl -f -n __fish_use_subcommand -a help -d 'Show help'
 complete -c pastectl -f -n __fish_use_subcommand -a completion -d 'Generate shell completion'
