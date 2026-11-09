@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/jonasbg/paste/pastectl/internal/client"
 	"github.com/jonasbg/paste/pastectl/internal/completion"
 	"github.com/jonasbg/paste/pastectl/internal/download"
+	"github.com/jonasbg/paste/pastectl/internal/update"
 	"github.com/jonasbg/paste/pastectl/internal/upload"
 )
 
@@ -68,6 +70,12 @@ func (a *App) Run(args []string) error {
 	downloadLink := downloadCmd.String("l", "", "Download link (format: https://paste.torden.tech/{id}#key={key})")
 	downloadOutput := downloadCmd.String("o", "", "Output file (default: original filename or stdout)")
 	downloadURL := downloadCmd.String("url", a.pasteURL, "Paste server URL")
+
+	// Update flags
+	updateCmd := flag.NewFlagSet("update", flag.ExitOnError)
+	updateCheck := updateCmd.Bool("check", false, "Only check whether a newer release exists")
+	updateVersion := updateCmd.String("version", "", "Install a specific release (e.g. v1.2.1) instead of the latest")
+	updateForce := updateCmd.Bool("force", false, "Reinstall even if not newer, or replace a development build")
 
 	// If no args provided
 	if len(args) < 1 {
@@ -153,6 +161,19 @@ func (a *App) Run(args []string) error {
 			return errors.New("download link or passphrase is required")
 		}
 		return a.handleDownload(*downloadLink, *downloadOutput, *downloadURL)
+
+	case "update", "upgrade":
+		updateCmd.Parse(args[1:])
+		err := update.New(os.Stderr).Run(context.Background(), Version, update.Options{
+			CheckOnly: *updateCheck,
+			Version:   *updateVersion,
+			Force:     *updateForce,
+		})
+		if errors.Is(err, update.ErrUpToDate) {
+			fmt.Fprintf(os.Stderr, "pastectl v%s is already the latest release\n", Version)
+			return nil
+		}
+		return err
 
 	case "version", "-v", "--version":
 		fmt.Printf("pastectl v%s\n", Version)
@@ -283,6 +304,7 @@ Usage:
 	pastectl download <passphrase> [flags]    Download using share code
 	pastectl download -l <url> [flags]        Download using URL
 	pastectl completion <shell>               Generate shell completion
+	pastectl update [flags]                   Update to the latest release
 	pastectl version                          Show version
 	pastectl help                             Show this help
 
@@ -323,6 +345,13 @@ Download Flags:
 	-l <url>           URL with embedded key (from --url-mode uploads)
 	-o <file>          Output file (default: original filename)
 	--url <url>        Custom server URL
+
+Update Flags:
+	--check            Only report whether a newer release exists
+	--version <tag>    Install a specific release (e.g. v1.2.1)
+	--force            Reinstall, or replace a development build
+
+	Downloads are verified against the release's SHA256SUMS before install.
 
 Security:
 	- All encryption happens client-side (AES-256-GCM)
