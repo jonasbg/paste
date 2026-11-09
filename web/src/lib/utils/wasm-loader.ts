@@ -28,7 +28,13 @@ const WASM_CACHE_NAME = 'paste-wasm-cache-v2';
 const WASM_PATH = '/encryption.wasm';
 const WASM_VERSION_KEY = 'wasm-version';
 // Update this when your WASM file changes
-const CURRENT_WASM_VERSION = '2.0.0-v2-format-tinygo0.43.0-opt2';
+const CURRENT_WASM_VERSION = '2.0.0-v2-format-go1.27-tinygo0.43.0-opt2-inplace';
+// The server sends static .wasm/.js files as `immutable` for a year, so the
+// version must be part of the URL. Fetching a bare /encryption.wasm would let a
+// returning browser reuse the previous build from its HTTP cache while
+// wasm_exec.js (already versioned) updates; the two must come from the same
+// toolchain, so that mismatch breaks the app until the cache expires.
+const WASM_URL = `${WASM_PATH}?v=${CURRENT_WASM_VERSION}`;
 
 let wasmInstance: GoEncryption | null = null;
 let wasmInitPromise: Promise<GoEncryption> | null = null;
@@ -62,7 +68,7 @@ async function getCachedWasm(): Promise<ArrayBuffer | null> {
 			return null;
 		}
 
-		const cachedResponse = await cache.match(WASM_PATH);
+		const cachedResponse = await cache.match(WASM_URL);
 		if (!cachedResponse) return null;
 
 		return await cachedResponse.arrayBuffer();
@@ -78,7 +84,7 @@ async function cacheWasmFile(response: Response): Promise<void> {
 
 	try {
 		const cache = await caches.open(WASM_CACHE_NAME);
-		await cache.put(WASM_PATH, response.clone());
+		await cache.put(WASM_URL, response.clone());
 		localStorage.setItem(WASM_VERSION_KEY, CURRENT_WASM_VERSION);
 	} catch (error) {
 		console.warn('Failed to cache WASM file:', error);
@@ -113,7 +119,7 @@ export async function initWasm(): Promise<GoEncryption> {
 				// Download fresh WASM file
 				try {
 					// Attempt streaming instantiation
-					const response = await fetch(WASM_PATH, {
+					const response = await fetch(WASM_URL, {
 						headers: { Accept: 'application/wasm' }
 					});
 
@@ -130,7 +136,7 @@ export async function initWasm(): Promise<GoEncryption> {
 					console.warn('Streaming instantiation failed, using fallback method');
 
 					// Fallback to ArrayBuffer method
-					const response = await fetch(WASM_PATH);
+					const response = await fetch(WASM_URL);
 					const wasmBuffer = await response.arrayBuffer();
 
 					// Cache the response

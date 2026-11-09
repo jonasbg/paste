@@ -66,7 +66,9 @@ const no = {
 			'Kunne ikke hente filinformasjon. Sjekk at nøkkelen er riktig, eller at filen ikke er slettet.',
 		decryptError: 'Kunne ikke dekryptere filen - filen er nå slettet fra serveren',
 		deleteNetworkError:
-			'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.'
+			'Filen ble lastet ned, men kunne ikke slettes fra serveren på grunn av en nettverksfeil.',
+		deleteFailed: 'Filen ble lastet ned, men kunne ikke slettes fra serveren.',
+		unavailable: 'Filen finnes ikke eller har allerede blitt lastet ned.'
 	},
 	key: {
 		requiredTitle: 'Dekrypteringsnøkkel kreves',

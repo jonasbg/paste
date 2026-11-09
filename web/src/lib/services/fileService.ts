@@ -70,74 +70,82 @@ export async function downloadAndDecryptFile(
 	let cipherId: number | null = null;
 	let bufferedData = new Uint8Array(0);
 
-	// Process the stream
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
+	try {
+		// Process the stream
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
 
-		receivedLength += value.length;
+			receivedLength += value.length;
 
-		// Combine buffered data with new chunk
-		const newBufferedData = new Uint8Array(bufferedData.length + value.length);
-		newBufferedData.set(bufferedData);
-		newBufferedData.set(value, bufferedData.length);
-		bufferedData = newBufferedData;
+			// Combine buffered data with new chunk
+			const newBufferedData = new Uint8Array(bufferedData.length + value.length);
+			newBufferedData.set(bufferedData);
+			newBufferedData.set(value, bufferedData.length);
+			bufferedData = newBufferedData;
 
-		if (!headerProcessed) {
-			// Need at least 16 bytes to read metadata length
-			if (bufferedData.length < 16) continue;
+			if (!headerProcessed) {
+				// Need at least 16 bytes to read metadata length
+				if (bufferedData.length < 16) continue;
 
-			const metadataLength = new DataView(bufferedData.buffer).getUint32(12, true);
-			const headerLength = 16 + metadataLength;
+				const metadataLength = new DataView(bufferedData.buffer).getUint32(12, true);
+				const headerLength = 16 + metadataLength;
 
-			// Wait until we have the full header
-			if (bufferedData.length < headerLength) continue;
+				// Wait until we have the full header
+				if (bufferedData.length < headerLength) continue;
 
-			// Process header and remove it from buffer
-			headerProcessed = true;
-			bufferedData = bufferedData.slice(headerLength);
-		}
-
-		if (!decryptionInitialized && bufferedData.length >= 12) {
-			// Initialize decryption with IV
-			const iv = bufferedData.slice(0, 12);
-			cipherId = createDecryptionStream(key, iv);
-			if (typeof cipherId !== 'number') {
-				throw new Error('Failed to initialize decryption stream');
+				// Process header and remove it from buffer
+				headerProcessed = true;
+				bufferedData = bufferedData.slice(headerLength);
 			}
 
-			decryptionInitialized = true;
-			bufferedData = bufferedData.slice(12);
-		}
-
-		if (decryptionInitialized && bufferedData.length > 0 && cipherId !== null) {
-			// Use strict `>` so the last chunk always reaches the final-chunk
-			// branch below. The v2 STREAM nonce binds isFinal, so a chunk
-			// encrypted as final must be decrypted as final.
-			const chunkSize = config.chunkSize * 1024 * 1024 + 16; // plaintext + GCM tag
-			while (bufferedData.length > chunkSize) {
-				const chunk = bufferedData.slice(0, chunkSize);
-				const decrypted = decryptChunk(cipherId, chunk, false);
-				if (!decrypted) {
-					throw new Error('Failed to decrypt chunk');
+			if (!decryptionInitialized && bufferedData.length >= 12) {
+				// Initialize decryption with IV
+				const iv = bufferedData.slice(0, 12);
+				cipherId = createDecryptionStream(key, iv);
+				if (typeof cipherId !== 'number') {
+					throw new Error('Failed to initialize decryption stream');
 				}
 
-				decryptedChunks.push(new Uint8Array(decrypted));
+				decryptionInitialized = true;
+				bufferedData = bufferedData.slice(12);
+			}
 
-				const progress = Math.round(((decryptedChunks.length * chunkSize) / contentLength) * 100);
-				await onProgress(progress, tr('service.downloading'));
+			if (decryptionInitialized && bufferedData.length > 0 && cipherId !== null) {
+				// Use strict `>` so the last chunk always reaches the final-chunk
+				// branch below. The v2 STREAM nonce binds isFinal, so a chunk
+				// encrypted as final must be decrypted as final.
+				const chunkSize = config.chunkSize * 1024 * 1024 + 16; // plaintext + GCM tag
+				while (bufferedData.length > chunkSize) {
+					const chunk = bufferedData.slice(0, chunkSize);
+					const decrypted = decryptChunk(cipherId, chunk, false);
+					if (!decrypted || decrypted instanceof Error) {
+						throw new Error('Failed to decrypt chunk');
+					}
 
-				bufferedData = bufferedData.slice(chunkSize);
+					decryptedChunks.push(new Uint8Array(decrypted));
+
+					const progress = Math.round(((decryptedChunks.length * chunkSize) / contentLength) * 100);
+					await onProgress(progress, tr('service.downloading'));
+
+					bufferedData = bufferedData.slice(chunkSize);
+				}
 			}
 		}
-	}
 
-	if (bufferedData.length > 0 && cipherId !== null) {
-		const decrypted = decryptChunk(cipherId, bufferedData, true);
-		if (!decrypted) {
-			throw new Error('Failed to decrypt final chunk');
+		if (bufferedData.length > 0 && cipherId !== null) {
+			const decrypted = decryptChunk(cipherId, bufferedData, true);
+			if (!decrypted || decrypted instanceof Error) {
+				throw new Error('Failed to decrypt final chunk');
+			}
+			decryptedChunks.push(new Uint8Array(decrypted));
 		}
-		decryptedChunks.push(new Uint8Array(decrypted));
+	} finally {
+		// decryptChunk(isLast=true) disposes on success; this covers every error
+		// path (network failure, bad chunk) so the WASM cipher never leaks.
+		// Guard on type: a failed createDecryptionStream returns an Error object,
+		// and passing a non-number to Go's .Int() would panic the WASM runtime.
+		if (typeof cipherId === 'number') wasmInstance.disposeCipher?.(cipherId);
 	}
 
 	// Create a blob from all decrypted chunks
@@ -267,6 +275,19 @@ export async function streamDownloadAndDecrypt(
   let cipherId: number | null = null; // Track cipher ID
   let bufferedData = new Uint8Array(0);
 
+  // Release the WASM cipher. Called on completion, on every error path and when
+  // the consumer cancels or the response stream aborts.
+  const disposeCipher = () => {
+    if (cipherId !== null) {
+      wasmInstance.disposeCipher?.(cipherId);
+      cipherId = null;
+    }
+  };
+  const fail = (controller: TransformStreamDefaultController<Uint8Array>, error: Error) => {
+    disposeCipher();
+    controller.error(error);
+  };
+
   // For smooth progress updates - throttle progress updates
   let lastProgressUpdate = 0;
   let lastProgressValue = 0;
@@ -295,7 +316,9 @@ export async function streamDownloadAndDecrypt(
   };
 
   // Create a transform stream that will process and decrypt the data
-  const decryptionStream = new TransformStream<Uint8Array, Uint8Array>({
+  // `cancel` is part of the Streams spec (and shipped in current browsers) but
+  // not yet in TypeScript's DOM lib; older engines simply ignore the key.
+  const transformer: Transformer<Uint8Array, Uint8Array> & { cancel?: (reason: unknown) => void } = {
     transform: async (chunk, controller) => {
       // Update total received bytes and report progress
       receivedLength += chunk.length;
@@ -327,7 +350,8 @@ export async function streamDownloadAndDecrypt(
         const iv = bufferedData.slice(0, 12);
         cipherId = createDecryptionStream(key, iv);
         if (typeof cipherId !== 'number') {
-          controller.error(new Error('Failed to initialize decryption stream'));
+          cipherId = null;
+          fail(controller, new Error('Failed to initialize decryption stream'));
           return;
         }
 
@@ -343,8 +367,8 @@ export async function streamDownloadAndDecrypt(
         while (bufferedData.length > chunkSize) {
           const dataChunk = bufferedData.slice(0, chunkSize);
           const decrypted = decryptChunk(cipherId, dataChunk, false);
-          if (!decrypted) {
-            controller.error(new Error('Failed to decrypt chunk'));
+          if (!decrypted || decrypted instanceof Error) {
+            fail(controller, new Error('Failed to decrypt chunk'));
             return;
           }
 
@@ -359,19 +383,23 @@ export async function streamDownloadAndDecrypt(
 
       if (bufferedData.length > 0 && decryptionInitialized && cipherId !== null) {
         const decrypted = decryptChunk(cipherId, bufferedData, true);
-        if (!decrypted) {
-          controller.error(new Error('Failed to decrypt final chunk'));
+        if (!decrypted || decrypted instanceof Error) {
+          fail(controller, new Error('Failed to decrypt final chunk'));
           return;
         }
         controller.enqueue(decrypted);
       }
 
       // decryptChunk(isLast=true) auto-disposes in WASM; this is belt-and-suspenders.
-      if (cipherId !== null && wasmInstance.disposeCipher) {
-        wasmInstance.disposeCipher(cipherId);
-      }
+      disposeCipher();
+    },
+
+    // Reader cancelled or the response body aborted mid-download.
+    cancel: () => {
+      disposeCipher();
     }
-  });
+  };
+  const decryptionStream = new TransformStream<Uint8Array, Uint8Array>(transformer);
 
   // Pipe the response through our decryption transform
   const decryptedStream = response.body.pipeThrough(decryptionStream);

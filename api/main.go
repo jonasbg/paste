@@ -76,7 +76,6 @@ func main() {
 		api.DELETE("/delete/:id", handlers.HandleDelete(uploadDir))
 
 		api.GET("/ws/upload", handlers.HandleWSUpload(uploadDir, telemetryProvider, uploadLimiter))
-		api.GET("/ws/download", handlers.HandleWSDownload(uploadDir, telemetryProvider))
 	}
 
 	if err := telemetry.MountPrometheusRoute(r, telemetryProvider.PrometheusHandler()); err != nil {
