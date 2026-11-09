@@ -15,7 +15,7 @@ type limiterInfo struct {
 
 type IPRateLimiter struct {
 	ips map[string]*limiterInfo
-	mu  *sync.RWMutex
+	mu  sync.Mutex
 	r   rate.Limit
 	b   int
 }
@@ -23,7 +23,6 @@ type IPRateLimiter struct {
 func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
 	i := &IPRateLimiter{
 		ips: make(map[string]*limiterInfo),
-		mu:  &sync.RWMutex{},
 		r:   r,
 		b:   b,
 	}
@@ -48,12 +47,17 @@ func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
 	return info.limiter
 }
 
+// limiterIdleTTL is how long an idle IP keeps its bucket. A bucket refills
+// completely within seconds, so a short TTL bounds memory without loosening
+// the limit.
+const limiterIdleTTL = 10 * time.Minute
+
 func (i *IPRateLimiter) cleanupLoop() {
-	ticker := time.NewTicker(time.Hour)
+	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
 		i.mu.Lock()
 		for ip, info := range i.ips {
-			if time.Since(info.lastSeen) > time.Hour {
+			if time.Since(info.lastSeen) > limiterIdleTTL {
 				delete(i.ips, ip)
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
@@ -20,9 +21,7 @@ func Middleware(urlPrefix, spaDirectory string) gin.HandlerFunc {
 		path := c.Request.URL.Path
 
 		// Serve the requested file if it exists (Stat instead of Open)
-		rel := strings.TrimPrefix(path, urlPrefix)
-		rel = strings.TrimPrefix(rel, "/")
-		full := filepath.Join(spaDirectory, rel)
+		_, full := resolveInDir(spaDirectory, strings.TrimPrefix(path, urlPrefix))
 
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
 			if ext := filepath.Ext(path); ext != "" {
@@ -41,4 +40,13 @@ func Middleware(urlPrefix, spaDirectory string) gin.HandlerFunc {
 		fileserver.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
 	}
+}
+
+// resolveInDir maps a request path onto a file inside root. Cleaning the path
+// as a rooted path drops every ".." segment, so the result can never escape
+// root (the same approach http.Dir uses). Returns the root-relative slash path
+// and the full filesystem path.
+func resolveInDir(root, urlPath string) (rel, full string) {
+	rel = strings.TrimPrefix(pathpkg.Clean("/"+urlPath), "/")
+	return rel, filepath.Join(root, filepath.FromSlash(rel))
 }

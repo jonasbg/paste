@@ -4,14 +4,16 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,6 +21,12 @@ import (
 const (
 	headerSize      = 16          // Size of metadata header
 	maxMetadataSize = 1024 * 1024 // 1MB max metadata size
+
+	// Tokens are base64url HMACs truncated to the key length, so a 128-bit key
+	// gives 22 characters and a 256-bit key 43. Accepting the whole range keeps
+	// existing files reachable when an operator changes KEY_SIZE.
+	minTokenLength = 22
+	maxTokenLength = 43
 )
 
 // generateID generates a cryptographically secure random ID with a specified bit length.
@@ -55,37 +63,39 @@ func generateID(bitLength ...int) (string, error) {
 	}
 }
 
-func HandleMetadata(uploadDir string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		if len(id) != 16 && len(id) != 24 && len(id) != 32 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
+// resolveFile validates the file ID and the X-HMAC-Token header and opens the
+// matching upload. On failure it writes the error response and returns nil.
+func resolveFile(c *gin.Context, uploadDir string) (*os.File, string) {
+	id := c.Param("id")
+	if !validateID(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return nil, ""
+	}
 
-		// Validate id contains only safe characters (same as token validation)
-		if !validateID(id) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
-			return
-		}
+	token := c.GetHeader("X-HMAC-Token")
+	if !validateToken(token) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
+		return nil, ""
+	}
 
-		token := c.GetHeader("X-HMAC-Token")
-		if !validateToken(token) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
-			return
-		}
-
-		// Look for file with token in name
-		filePath := filepath.Join(uploadDir, id+"."+token)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	filePath := filepath.Join(uploadDir, id+"."+token)
+	file, err := os.Open(filePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-			return
-		}
-
-		file, err := os.Open(filePath)
-		if err != nil {
+		} else {
 			log.Printf("Error: Failed to open file: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		}
+		return nil, ""
+	}
+	return file, filePath
+}
+
+func HandleMetadata(uploadDir string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		file, _ := resolveFile(c, uploadDir)
+		if file == nil {
 			return
 		}
 		defer file.Close()
@@ -99,7 +109,7 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 		}
 
 		// Read header to get metadata length
-		header := make([]byte, 16)
+		header := make([]byte, headerSize)
 		if _, err = io.ReadFull(file, header); err != nil {
 			log.Printf("Error: Failed to read header: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
@@ -114,10 +124,10 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 		}
 
 		// Read full metadata including header
-		fullMetadata := make([]byte, 16+int(metadataLen))
-		copy(fullMetadata[:16], header)
+		fullMetadata := make([]byte, headerSize+int(metadataLen))
+		copy(fullMetadata, header)
 
-		if _, err = io.ReadFull(file, fullMetadata[16:]); err != nil {
+		if _, err = io.ReadFull(file, fullMetadata[headerSize:]); err != nil {
 			log.Printf("Error: Failed to read metadata: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
@@ -134,26 +144,12 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 
 func HandleDelete(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id := c.Param("id")
-		if len(id) != 16 && len(id) != 24 && len(id) != 32 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		file, filePath := resolveFile(c, uploadDir)
+		if file == nil {
 			return
 		}
+		file.Close()
 
-		token := c.GetHeader("X-HMAC-Token")
-		if !validateToken(token) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
-			return
-		}
-
-		// Look for file with token
-		filePath := filepath.Join(uploadDir, id+"."+token)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-			return
-		}
-
-		// Delete the file
 		if err := os.Remove(filePath); err != nil {
 			log.Printf("Error: Failed to delete file: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
@@ -164,65 +160,52 @@ func HandleDelete(uploadDir string) gin.HandlerFunc {
 	}
 }
 
+// HandleDownload streams the stored ciphertext. It does not delete the file:
+// the web client fetches it more than once (previews, then the download) and
+// deletes it explicitly afterwards via DELETE /api/delete/:id.
 func HandleDownload(uploadDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id := c.Param("id")
-		if len(id) != 16 && len(id) != 24 && len(id) != 32 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		file, _ := resolveFile(c, uploadDir)
+		if file == nil {
 			return
 		}
-
-		token := c.GetHeader("X-HMAC-Token")
-		if !validateToken(token) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
-			return
-		}
-
-		// Look for file with token
-		filePath := filepath.Join(uploadDir, id+"."+token)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-			return
-		}
-
-		// Serve file and delete after download
-		file, err := os.Stat(filePath)
-		if err != nil {
-			log.Printf("Error: Failed to get file info: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-			return
-		}
+		defer file.Close()
 
 		c.Header("Content-Type", "application/octet-stream")
-		c.Header("Content-Length", strconv.FormatInt(file.Size(), 10))
 		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
 
-		c.File(filePath)
+		// ServeContent sets Content-Length and supports Range requests.
+		http.ServeContent(c.Writer, c.Request, "", time.Time{}, file)
 	}
 }
 
 func validateToken(token string) bool {
-	if len(token) < GlobalConfig.TokenMinLength {
+	if len(token) < minTokenLength || len(token) > maxTokenLength {
 		return false
 	}
 
 	// Ensure token only contains safe filename characters
-	safeChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-	for _, char := range token {
-		if !strings.ContainsRune(safeChars, char) {
+	for i := 0; i < len(token); i++ {
+		ch := token[i]
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
 			return false
 		}
 	}
 	return true
 }
 
-// Add this function to validate ID characters
+// validateID checks that id is a hex file ID of a supported length and is
+// therefore safe to use in a file name. Generated IDs are ID_SIZE/4 characters
+// (64-256 bit); passphrase IDs are 32. 24 is kept for older clients.
 func validateID(id string) bool {
-	// Ensure ID only contains hexadecimal characters (since it's generated as hex)
-	safeChars := "0123456789abcdefABCDEF"
-	for _, char := range id {
-		if !strings.ContainsRune(safeChars, char) {
+	switch len(id) {
+	case 16, 24, 32, 48, 64:
+	default:
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		ch := id[i]
+		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f' || ch >= 'A' && ch <= 'F') {
 			return false
 		}
 	}

@@ -146,7 +146,9 @@ func routeLabel(c *gin.Context) string {
 	if path := c.FullPath(); path != "" {
 		return path
 	}
-	return c.Request.URL.Path
+	// Never use the raw request path: clients control it, so every distinct
+	// URL would create a new metric series and grow memory without bound.
+	return "unmatched"
 }
 
 func (p *Provider) RecordTransfer(ctx context.Context, operation string, size int64, success bool, protocol string) {

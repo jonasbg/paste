@@ -42,7 +42,7 @@ What we're protecting:
 | MITM attack | TLS certificate validation | Protected |
 | Inject malicious data | GCM authentication | Protected |
 | Replay upload | Server-side dedup | Protected |
-| Replay download | File deleted after download | Protected |
+| Replay download | Web client and `pastectl` delete the file after a completed download; otherwise it is removed after `FILES_RETENTION_DAYS`. The server does not enforce single download. | Partial |
 
 ### Malicious Server Operator
 

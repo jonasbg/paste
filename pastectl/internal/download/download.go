@@ -45,8 +45,12 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 		// Check if stdout is a terminal
 		stat, _ := os.Stdout.Stat()
 		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			// Terminal - use original filename
-			outputPath = metadata.Filename
+			// Terminal - use original filename. It comes from the sender, so
+			// reduce it to a bare name in the current directory.
+			outputPath, err = safeFilename(metadata.Filename)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -321,4 +325,19 @@ func ParseLink(link string) (fileID string, key []byte, serverURL string, error 
 	}
 
 	return fileID, key, serverURL, nil
+}
+
+// safeFilename turns a sender-supplied filename into a plain file name in the
+// current directory. It strips any directory components (both / and \) so a
+// malicious sender cannot write to paths like ../../.bashrc or /etc/cron.d/x.
+func safeFilename(name string) (string, error) {
+	name = strings.ReplaceAll(name, "\\", "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." || strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("refusing unsafe filename from sender; use -o to choose an output file")
+	}
+	return name, nil
 }
