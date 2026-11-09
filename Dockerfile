@@ -1,5 +1,5 @@
 # Stage 1: Build WASM binaries and dependencies
-FROM golang:1.25.9-alpine AS wasm-builder
+FROM golang:1.27-alpine AS wasm-builder
 
 # Docker buildx provides these for multi-platform builds
 ARG TARGETOS
@@ -11,17 +11,17 @@ COPY wasm/ .
 # Install dependencies and download TinyGo
 RUN apk add --no-cache wget ca-certificates
 
-# Use TinyGo 0.40.1 with Go 1.26 support
+# Use TinyGo 0.43.0 with Go 1.27 support
 # Map Docker TARGETARCH to TinyGo's architecture naming
 RUN TINYGO_ARCH=$(case ${TARGETARCH} in \
         amd64) echo "amd64" ;; \
         arm64) echo "arm64" ;; \
         *) echo "amd64" ;; \
     esac) && \
-    wget https://github.com/tinygo-org/tinygo/releases/download/v0.40.1/tinygo0.40.1.linux-${TINYGO_ARCH}.tar.gz && \
-    tar -xzf tinygo0.40.1.linux-${TINYGO_ARCH}.tar.gz && \
+    wget https://github.com/tinygo-org/tinygo/releases/download/v0.43.0/tinygo0.43.0.linux-${TINYGO_ARCH}.tar.gz && \
+    tar -xzf tinygo0.43.0.linux-${TINYGO_ARCH}.tar.gz && \
     mv tinygo /usr/local/ && \
-    rm tinygo0.40.1.linux-${TINYGO_ARCH}.tar.gz
+    rm tinygo0.43.0.linux-${TINYGO_ARCH}.tar.gz
 
 # Build WASM with TinyGo
 RUN /usr/local/tinygo/bin/tinygo build -o encryption.wasm -target wasm -no-debug wasm.go
@@ -45,7 +45,7 @@ COPY web .
 RUN NODE_ENV=production npm run build
 
 # Stage 3: Build the Go backend
-FROM golang:1.26-alpine AS backend-builder
+FROM golang:1.27-alpine AS backend-builder
 
 # Docker buildx automatically provides these
 ARG TARGETOS

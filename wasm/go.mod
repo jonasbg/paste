@@ -1,6 +1,6 @@
 module paste-wasm
 
-go 1.25.9
+go 1.27
 
 require golang.org/x/crypto v0.51.0
 
