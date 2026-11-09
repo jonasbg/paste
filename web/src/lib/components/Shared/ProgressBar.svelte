@@ -1,9 +1,7 @@
 <script lang="ts">
-	import { run } from 'svelte/legacy';
-
-	import { onMount, onDestroy, untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { fly } from 'svelte/transition';
-	import { tr } from '$lib/i18n';
+	import { SmoothProgress } from '$lib/state/smoothProgress.svelte';
 
 	interface Props {
 		progress?: number;
@@ -27,72 +25,29 @@
 		onCancel = undefined
 	}: Props = $props();
 
-	let displayProgress: number = $state(0);
-	let animationFrame: number | undefined = $state();
-	let uploadStartTime: number = $state(0);
-	let eta: string = $state('');
+	const anim = new SmoothProgress();
 
-	function formatEta(seconds: number): string {
-		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
-		if (seconds < 60) return `${Math.ceil(seconds)}s ${tr('common.remaining')}`;
-		const mins = Math.floor(seconds / 60);
-		const secs = Math.ceil(seconds % 60);
-		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} ${tr('common.remaining')}`;
-	}
-
-	function updateDisplayProgress() {
-		const diff = progress - displayProgress;
-		if (Math.abs(diff) < 0.2) {
-			displayProgress = progress;
-		} else {
-			displayProgress += diff * 0.1;
-		}
-
-		if (displayProgress > 2 && displayProgress < 99 && uploadStartTime > 0) {
-			const elapsed = (Date.now() - uploadStartTime) / 1000;
-			if (elapsed > 0.5) {
-				const rate = displayProgress / elapsed;
-				eta = formatEta((100 - displayProgress) / rate);
-			}
-		} else if (displayProgress >= 99) {
-			eta = '';
-		}
-
-		if (displayProgress !== progress || (isVisible && !isComplete)) {
-			animationFrame = requestAnimationFrame(updateDisplayProgress);
-		}
-	}
-
-	// Kick off the smoothing animation when the incoming progress changes. Only
-	// `progress` is tracked; the animation bookkeeping is read/written untracked so
-	// this effect never re-triggers itself (the rAF loop self-schedules).
+	// visible & not complete → running; complete → snap to 100; hidden → idle.
+	// Each new upload starts a fresh run, so ETA never uses a previous upload's
+	// start time.
+	let running = $derived(isVisible && !isComplete);
 	$effect(() => {
-		const next = progress;
+		const complete = isComplete;
+		const active = running;
 		untrack(() => {
-			if (next !== displayProgress) {
-				if (uploadStartTime === 0 && next > 0) {
-					uploadStartTime = Date.now();
-				}
-				if (animationFrame) cancelAnimationFrame(animationFrame);
-				animationFrame = requestAnimationFrame(updateDisplayProgress);
-			}
+			if (complete) anim.complete();
+			else if (active) anim.begin();
+			else anim.reset();
 		});
 	});
 
-	run(() => {
-		if (isComplete) {
-			displayProgress = 100;
-			eta = '';
-		}
+	// Feed incoming progress to the animator. Only `progress` is tracked.
+	$effect(() => {
+		const next = progress;
+		untrack(() => anim.set(next));
 	});
 
-	onMount(() => {
-		displayProgress = progress;
-	});
-
-	onDestroy(() => {
-		if (animationFrame) cancelAnimationFrame(animationFrame);
-	});
+	onDestroy(() => anim.destroy());
 </script>
 
 {#if isVisible}
@@ -120,15 +75,15 @@
 			<div class="file-meta">
 				<div class="meta-left">
 					<span class="size">{fileSize}</span>
-					{#if eta && !isComplete}
+					{#if anim.eta && !isComplete}
 						<span class="dot">·</span>
-						<span class="eta">{eta}</span>
+						<span class="eta">{anim.eta}</span>
 					{/if}
 				</div>
-				<span class="pct">{Math.round(displayProgress)}%</span>
+				<span class="pct">{Math.round(anim.display)}%</span>
 			</div>
 			<div class="progress-track">
-				<div class="progress-fill" class:complete={isComplete} style="width: {displayProgress}%"></div>
+				<div class="progress-fill" class:complete={isComplete} style="width: {anim.display}%"></div>
 			</div>
 		</div>
 

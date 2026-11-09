@@ -1,205 +1,64 @@
 <script lang="ts">
-	import { run, preventDefault } from 'svelte/legacy';
+	import { preventDefault } from 'svelte/legacy';
 
-	import { onDestroy, onMount, untrack } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import {
-		downloadAndDecryptFile,
-		streamDownloadAndDecrypt,
-		fetchMetadata
-	} from '$lib/services/fileService';
+	import { fetchMetadata } from '$lib/services/fileService';
+	import { downloadSaveAndDelete } from '$lib/services/downloadService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
-	import { renderTextPreview } from '$lib/utils/textPreview';
-	import { isTextBased } from '$lib/utils/mimeType';
+	import {
+		type FileMetadata,
+		isImagePreviewable,
+		isTextPreviewable
+	} from '$lib/utils/filePreview';
+	import { fitViewport } from '$lib/actions/fitViewport';
+	import { FilePreviews } from '$lib/state/filePreviews.svelte';
+	import { SmoothProgress } from '$lib/state/smoothProgress.svelte';
 	import { fly } from 'svelte/transition';
-
-	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
-	const TEXT_PREVIEW_MAX_CHARS = 120_000;
-	const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
-	const TEXT_PREVIEW_EXTENSIONS = new Set([
-		'txt',
-		'md',
-		'markdown',
-		'json',
-		'jsonl',
-		'log',
-		'csv',
-		'tsv',
-		'xml',
-		'yaml',
-		'yml',
-		'toml',
-		'ini',
-		'conf',
-		'cfg',
-		'env',
-		'sh',
-		'bash',
-		'zsh',
-		'fish',
-		'ps1',
-		'js',
-		'ts',
-		'jsx',
-		'tsx',
-		'css',
-		'scss',
-		'html',
-		'htm',
-		'svelte',
-		'py',
-		'rb',
-		'php',
-		'java',
-		'go',
-		'rs',
-		'c',
-		'cc',
-		'cpp',
-		'h',
-		'hpp',
-		'sql',
-		'kt',
-		'kts',
-		'swift',
-		'dart',
-		'lua',
-		'r',
-		'rmd',
-		'vue',
-		'astro',
-		'scala',
-		'ex',
-		'exs',
-		'hs',
-		'zig',
-		'diff',
-		'patch',
-		'lock',
-		'gradle',
-		'pl',
-		'pm',
-		'properties',
-		'rtf'
-	]);
-	const IMAGE_PREVIEW_EXTENSIONS = new Set([
-		'png',
-		'jpg',
-		'jpeg',
-		'gif',
-		'webp',
-		'bmp',
-		'avif',
-		'svg'
-	]);
-	const IMAGE_MIME_TYPES: Record<string, string> = {
-		png: 'image/png',
-		jpg: 'image/jpeg',
-		jpeg: 'image/jpeg',
-		gif: 'image/gif',
-		webp: 'image/webp',
-		bmp: 'image/bmp',
-		avif: 'image/avif',
-		svg: 'image/svg+xml'
-	};
-
-	type FileMetadata = {
-		filename?: string;
-		contentType?: string;
-		size?: number;
-		error?: string;
-	};
 
 	let { fileId }: { fileId: string } = $props();
 
-	let encryptionKey: string = $state('');
-	let manualKeyInput: string = $state('');
-	let metadata = $state<FileMetadata | null>(null);
-	let fileSize: string | undefined = $state();
-	let downloadProgress = $state(0);
-	let downloadMessage = '';
-	let isDownloading = $state(false);
-	let downloadError: string | null = $state(null);
-	let isDownloadComplete = $state(false);
+	type ResolvedFile = { metadata: FileMetadata & { filename: string }; fileSize: string };
+
+	/**
+	 * The page is always in exactly one of these phases. Each phase carries only
+	 * the data that is valid in it, so impossible combinations (e.g. "downloaded
+	 * but still asking for a key") cannot be represented.
+	 */
+	type Phase =
+		| { kind: 'initializing' }
+		/** No usable key yet. `error` is set when a previous key failed to resolve. */
+		| { kind: 'needs-key'; error: string | null }
+		| { kind: 'loading-metadata' }
+		| { kind: 'ready'; key: string; file: ResolvedFile }
+		| { kind: 'downloading'; key: string; file: ResolvedFile }
+		/** Saved to disk. `deleteError` is set when the server copy could not be removed. */
+		| { kind: 'downloaded'; file: ResolvedFile; deleteError: string | null }
+		/** The server no longer has the file (already downloaded, deleted or expired). */
+		| { kind: 'unavailable'; message: string }
+		| { kind: 'failed'; message: string };
+
+	let phase = $state<Phase>({ kind: 'initializing' });
+	let manualKeyInput = $state('');
 	let keyError: string | null = $state(null);
-	let isLoading = $state(true);
-	let deletionError: string | null = $state(null);
-	let textPreview: string | null = $state(null);
-	let textPreviewHtml = $state('');
-	let textPreviewMode: 'pre' | 'table' = $state('pre');
-	let textPreviewError: string | null = $state(null);
-	let isLoadingTextPreview = $state(false);
-	let isTextPreviewTruncated = $state(false);
-	let copyState: 'idle' | 'copied' | 'error' = $state('idle');
-	let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
-	let imagePreviewUrl: string | null = $state(null);
-	let imagePreviewError: string | null = $state(null);
-	let isLoadingImagePreview = $state(false);
-	let previewRequestId = 0;
 
-	// Smooth progress animation
-	let displayProgress = $state(0);
-	let animationFrame: number | undefined = $state();
-	let downloadStartTime = $state(0);
-	let eta = $state('');
+	const previews = new FilePreviews();
+	const progress = new SmoothProgress();
 
-	function formatEta(seconds: number): string {
-		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
-		if (seconds < 60) return `${Math.ceil(seconds)}s ${tr('common.remaining')}`;
-		const mins = Math.floor(seconds / 60);
-		const secs = Math.ceil(seconds % 60);
-		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} ${tr('common.remaining')}`;
-	}
+	let file = $derived('file' in phase ? phase.file : null);
+	let isDownloading = $derived(phase.kind === 'downloading');
+	let isDownloaded = $derived(phase.kind === 'downloaded');
 
-	function animateProgress() {
-		const diff = downloadProgress - displayProgress;
-		if (Math.abs(diff) < 0.2) {
-			displayProgress = downloadProgress;
-		} else {
-			displayProgress += diff * 0.1;
-		}
-
-		if (displayProgress > 2 && displayProgress < 99 && downloadStartTime > 0) {
-			const elapsed = (Date.now() - downloadStartTime) / 1000;
-			if (elapsed > 0.5) {
-				const rate = displayProgress / elapsed;
-				eta = formatEta((100 - displayProgress) / rate);
-			}
-		} else if (displayProgress >= 99) {
-			eta = '';
-		}
-
-		if (displayProgress !== downloadProgress || isDownloading) {
-			animationFrame = requestAnimationFrame(animateProgress);
-		}
-	}
-
-	// Kick off the smoothing animation when the incoming progress changes. Only
-	// `downloadProgress` is tracked; the animation bookkeeping is read/written
-	// untracked so this effect never re-triggers itself (the rAF loop self-schedules).
-	$effect(() => {
-		const next = downloadProgress;
-		untrack(() => {
-			if (next !== displayProgress) {
-				if (downloadStartTime === 0 && next > 0) {
-					downloadStartTime = Date.now();
-				}
-				if (animationFrame) cancelAnimationFrame(animationFrame);
-				animationFrame = requestAnimationFrame(animateProgress);
-			}
-		});
-	});
-
-	run(() => {
-		if (isDownloadComplete) {
-			displayProgress = 100;
-			eta = '';
-		}
-	});
+	const fitPreview = {
+		containerSelector: '.download-section',
+		reserveSelector: '.file-row',
+		bottomGap: 48,
+		minHeight: 200
+	};
 
 	function validateAndExtractKey(input: string): string | null {
 		input = input.trim();
@@ -217,432 +76,70 @@
 		return null;
 	}
 
-	function getCurrentFileId(): string {
-		if (!fileId) {
-			throw new Error('Missing file ID');
-		}
-		return fileId;
-	}
+	/** Resolve metadata for `key` and move to `ready`, or back to `needs-key` on failure. */
+	async function resolveKey(key: string) {
+		previews.reset();
+		if (browser) window.history.replaceState(null, '', window.location.pathname);
+		phase = { kind: 'loading-metadata' };
 
-	function formatPreviewLimit(bytes: number): string {
-		if (bytes >= 1024 * 1024) {
-			return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-		}
-
-		if (bytes >= 1024) {
-			return `${(bytes / 1024).toFixed(0)} KB`;
-		}
-
-		return `${bytes} B`;
-	}
-
-	function getFileExtension(filename: string | undefined): string {
-		if (!filename || !filename.includes('.')) return '';
-		return filename.split('.').pop()?.toLowerCase() || '';
-	}
-
-	function isTextPreviewable(fileMetadata: FileMetadata | null): boolean {
-		if (!fileMetadata?.filename) return false;
-
-		// Trust the server-stored contentType (normalized at upload time)
-		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType && isTextBased(contentType)) return true;
-
-		// Extension fallback for files uploaded before MIME normalization
-		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
-	}
-
-	function isImagePreviewable(fileMetadata: FileMetadata | null): boolean {
-		if (!fileMetadata?.filename) return false;
-
-		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType.startsWith('image/')) return true;
-
-		return IMAGE_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
-	}
-
-	function resolveImagePreviewType(fileMetadata: FileMetadata): string | null {
-		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType.startsWith('image/')) {
-			return contentType;
-		}
-
-		return IMAGE_MIME_TYPES[getFileExtension(fileMetadata.filename)] || null;
-	}
-
-	function getUnavailableDownloadMessage(error: unknown): string | null {
-		const message = error instanceof Error ? error.message : String(error);
-		if (message.includes('Failed to download file') || message.includes('Invalid access token')) {
-			return 'Filen finnes ikke eller har allerede blitt lastet ned.';
-		}
-		return null;
-	}
-
-	function fitViewport(
-		node: HTMLElement,
-		options: { reserveSelector?: string; bottomGap?: number; minHeight?: number } = {}
-	) {
-		let frame = 0;
-		let resizeObserver: ResizeObserver | null = null;
-		let currentOptions = options;
-
-		const getOuterHeight = (element: Element) => {
-			const styles = window.getComputedStyle(element as HTMLElement);
-			const marginTop = parseFloat(styles.marginTop) || 0;
-			const marginBottom = parseFloat(styles.marginBottom) || 0;
-			return (element as HTMLElement).getBoundingClientRect().height + marginTop + marginBottom;
-		};
-
-		const update = () => {
-			frame = 0;
-			const rect = node.getBoundingClientRect();
-			const viewportHeight = window.visualViewport?.height || window.innerHeight;
-			const reserveHeight = currentOptions.reserveSelector
-				? Array.from(
-						node.closest('.download-section')?.querySelectorAll(currentOptions.reserveSelector) ??
-							[]
-					).reduce((total, element) => total + getOuterHeight(element), 0)
-				: 0;
-			const bottomGap = currentOptions.bottomGap ?? 24;
-			const minHeight = currentOptions.minHeight ?? 120;
-			const availableHeight = Math.max(
-				minHeight,
-				Math.floor(viewportHeight - rect.top - reserveHeight - bottomGap)
-			);
-			node.style.maxHeight = `${availableHeight}px`;
-		};
-
-		const scheduleUpdate = () => {
-			if (frame) cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(update);
-		};
-
-		scheduleUpdate();
-		window.addEventListener('resize', scheduleUpdate);
-		window.visualViewport?.addEventListener('resize', scheduleUpdate);
-
-		if ('ResizeObserver' in window) {
-			resizeObserver = new ResizeObserver(scheduleUpdate);
-			resizeObserver.observe(document.body);
-		}
-
-		return {
-			update(nextOptions: typeof currentOptions = currentOptions) {
-				currentOptions = nextOptions;
-				scheduleUpdate();
-			},
-			destroy() {
-				if (frame) cancelAnimationFrame(frame);
-				window.removeEventListener('resize', scheduleUpdate);
-				window.visualViewport?.removeEventListener('resize', scheduleUpdate);
-				resizeObserver?.disconnect();
-			}
-		};
-	}
-
-	function resetTextPreview() {
-		textPreview = null;
-		textPreviewHtml = '';
-		textPreviewMode = 'pre';
-		textPreviewError = null;
-		isLoadingTextPreview = false;
-		isTextPreviewTruncated = false;
-		if (copyResetTimer) {
-			clearTimeout(copyResetTimer);
-			copyResetTimer = null;
-		}
-		copyState = 'idle';
-	}
-
-	async function copyTextPreview() {
-		if (textPreview === null) return;
 		try {
-			if (navigator.clipboard && window.isSecureContext) {
-				await navigator.clipboard.writeText(textPreview);
-				copyState = 'copied';
-			} else {
-				// Fallback: use a temporary textarea for older browsers / insecure contexts
-				const textarea = document.createElement('textarea');
-				textarea.value = textPreview;
-				textarea.style.position = 'fixed';
-				textarea.style.left = '-9999px';
-				textarea.style.top = '-9999px';
-				document.body.appendChild(textarea);
-				textarea.focus();
-				textarea.select();
-				const success = document.execCommand('copy');
-				document.body.removeChild(textarea);
-				copyState = success ? 'copied' : 'error';
-			}
-		} catch {
-			copyState = 'error';
-		}
-		if (copyResetTimer) clearTimeout(copyResetTimer);
-		copyResetTimer = setTimeout(() => {
-			copyState = 'idle';
-			copyResetTimer = null;
-		}, 1800);
-	}
-
-	function resetImagePreview() {
-		if (imagePreviewUrl && browser) {
-			URL.revokeObjectURL(imagePreviewUrl);
-		}
-
-		imagePreviewUrl = null;
-		imagePreviewError = null;
-		isLoadingImagePreview = false;
-	}
-
-	function resetPreviews(): number {
-		previewRequestId += 1;
-		resetTextPreview();
-		resetImagePreview();
-		return previewRequestId;
-	}
-
-	async function loadTextPreview(
-		fileId: string,
-		key: string,
-		token: string,
-		fileMetadata: FileMetadata,
-		requestId: number
-	) {
-		if (!isTextPreviewable(fileMetadata)) return;
-
-		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
-			textPreviewError = tr('preview.textOnlyLimit', {
-				limit: formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)
+			if (!fileId) throw new Error('Missing file ID');
+			const hmacToken = await generateHmacToken(fileId, key);
+			const response = await fetchMetadata(fileId, key, hmacToken);
+			phase = {
+				kind: 'ready',
+				key,
+				file: { metadata: response.metadata, fileSize: response.size ?? '' }
+			};
+			void previews.load({
+				fileId,
+				key,
+				token: hmacToken,
+				metadata: response.metadata,
+				onUnavailable: (message) => {
+					// Only meaningful while the user is still looking at this file.
+					if (phase.kind === 'ready' && phase.key === key) {
+						phase = { kind: 'unavailable', message };
+					}
+				}
 			});
-			return;
-		}
-
-		isLoadingTextPreview = true;
-
-		try {
-			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
-			const previewText = (await decrypted.text()).replace(/\r\n/g, '\n');
-
-			if (requestId !== previewRequestId) return;
-
-			const clippedPreview = previewText.slice(0, TEXT_PREVIEW_MAX_CHARS);
-			textPreview = clippedPreview;
-			isTextPreviewTruncated = previewText.length > TEXT_PREVIEW_MAX_CHARS;
-			const renderedPreview = renderTextPreview(clippedPreview, fileMetadata);
-			textPreviewHtml = renderedPreview.html;
-			textPreviewMode = renderedPreview.mode;
-		} catch (error) {
-			if (requestId !== previewRequestId) return;
-			console.error('Text preview error:', error);
-			const unavailableMessage = getUnavailableDownloadMessage(error);
-			if (unavailableMessage) {
-				metadata = { error: unavailableMessage };
-				return;
-			}
-			textPreviewError = tr('preview.textLoadError');
-		} finally {
-			if (requestId === previewRequestId) {
-				isLoadingTextPreview = false;
-			}
-		}
-	}
-
-	async function loadImagePreview(
-		fileId: string,
-		key: string,
-		token: string,
-		fileMetadata: FileMetadata,
-		requestId: number
-	) {
-		if (!isImagePreviewable(fileMetadata)) return;
-
-		if ((fileMetadata.size || 0) > IMAGE_PREVIEW_MAX_BYTES) {
-			imagePreviewError = tr('preview.imageOnlyLimit', {
-				limit: formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)
-			});
-			return;
-		}
-
-		isLoadingImagePreview = true;
-
-		try {
-			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
-			const previewType = resolveImagePreviewType(fileMetadata);
-			const previewBlob =
-				previewType && decrypted.type !== previewType
-					? new Blob([decrypted], { type: previewType })
-					: decrypted;
-			const objectUrl = URL.createObjectURL(previewBlob);
-
-			if (requestId !== previewRequestId) {
-				URL.revokeObjectURL(objectUrl);
-				return;
-			}
-
-			imagePreviewUrl = objectUrl;
-		} catch (error) {
-			if (requestId !== previewRequestId) return;
-			console.error('Image preview error:', error);
-			const unavailableMessage = getUnavailableDownloadMessage(error);
-			if (unavailableMessage) {
-				metadata = { error: unavailableMessage };
-				return;
-			}
-			imagePreviewError = tr('preview.imageLoadError');
-		} finally {
-			if (requestId === previewRequestId) {
-				isLoadingImagePreview = false;
-			}
-		}
-	}
-
-	async function loadPreviews(
-		fileId: string,
-		key: string,
-		token: string,
-		fileMetadata: FileMetadata,
-		requestId: number
-	) {
-		const previewTasks: Promise<void>[] = [];
-
-		if (isTextPreviewable(fileMetadata)) {
-			previewTasks.push(loadTextPreview(fileId, key, token, fileMetadata, requestId));
-		}
-
-		if (isImagePreviewable(fileMetadata)) {
-			previewTasks.push(loadImagePreview(fileId, key, token, fileMetadata, requestId));
-		}
-
-		if (previewTasks.length > 0) {
-			await Promise.all(previewTasks);
-		}
-	}
-
-	async function getMetadata() {
-		const requestId = resetPreviews();
-
-		try {
-			const fileId = getCurrentFileId();
-			const activeKey = encryptionKey;
-			const hmacToken = await generateHmacToken(fileId, activeKey);
-			const metadataResponse = await fetchMetadata(fileId, activeKey, hmacToken);
-			metadata = metadataResponse.metadata;
-			fileSize = metadataResponse.size?.toString();
-			void loadPreviews(fileId, activeKey, hmacToken, metadataResponse.metadata, requestId);
 		} catch (error) {
 			console.error('Metadata error:', error);
-			encryptionKey = '';
 			manualKeyInput = '';
-			metadata = {
-				error:
-					tr('dl.metadataError')
-			};
-		} finally {
-			isLoading = false;
+			phase = { kind: 'needs-key', error: tr('dl.metadataError') };
 		}
-	}
-
-	function setEncryptionKey(key: string) {
-		encryptionKey = key;
-		resetPreviews();
-		if (browser) window.history.replaceState(null, '', window.location.pathname);
 	}
 
 	async function handleManualKeySubmit() {
-		if (!manualKeyInput.trim()) return;
+		if (phase.kind !== 'needs-key' || !manualKeyInput.trim()) return;
 		const key = validateAndExtractKey(manualKeyInput.trim());
 		if (key) {
-			setEncryptionKey(key);
-			await getMetadata();
+			await resolveKey(key);
 		} else {
 			keyError = tr('key.invalid');
 		}
 	}
 
 	async function initiateDownload() {
-		if (!encryptionKey || isDownloading || !metadata || metadata.error) return;
-		isDownloading = true;
-		downloadError = null;
+		if (phase.kind !== 'ready') return;
+		const { key, file } = phase;
+		phase = { kind: 'downloading', key, file };
+		progress.begin();
 
 		try {
-			const fileId = getCurrentFileId();
-			const hmacToken = await generateHmacToken(fileId, encryptionKey);
-
-			const { stream, metadata: fileMetadata } = await streamDownloadAndDecrypt(
-				fileId,
-				encryptionKey,
-				hmacToken,
-				async (progress, message) => {
-					downloadProgress = progress;
-					downloadMessage = message;
-				}
-			);
-
-			const reader = stream.getReader();
-			const chunks: BlobPart[] = [];
-			let receivedLength = 0;
-
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				if (value) {
-					chunks.push(new Uint8Array(value));
-					receivedLength += value.length;
-				}
-			}
-
-			if (receivedLength === 0) {
-				throw new Error(tr('dl.decryptError'));
-			}
-
-			const blob = new Blob(chunks, {
-				type: fileMetadata.contentType || 'application/octet-stream'
-			});
-
-			if (blob.size === 0) {
-				throw new Error(tr('dl.decryptError'));
-			}
-
-			const url = window.URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = fileMetadata.filename;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-			window.URL.revokeObjectURL(url);
-
-			try {
-				const deleteResponse = await fetch(`/api/delete/${fileId}`, {
-					method: 'DELETE',
-					headers: {
-						'Content-Type': 'application/json',
-						'X-HMAC-Token': hmacToken
-					}
-				});
-
-				encryptionKey = '';
-				manualKeyInput = '';
-
-				if (deleteResponse.ok) {
-					isDownloadComplete = true;
-					deletionError = null;
-				} else {
-					deletionError = 'Filen ble lastet ned, men kunne ikke slettes fra serveren.';
-				}
-			} catch (err) {
-				deletionError =
-					tr('dl.deleteNetworkError');
-			}
-
+			const outcome = await downloadSaveAndDelete(fileId, key, (p) => progress.set(p));
+			progress.complete();
+			phase = {
+				kind: 'downloaded',
+				file,
+				deleteError: outcome.deleted ? null : outcome.message
+			};
+			manualKeyInput = '';
 			if (browser) window.history.replaceState({}, '', '/');
 		} catch (error) {
 			console.error('Download error:', error);
-			downloadError = (error as Error).message;
-			downloadProgress = 0;
-			downloadMessage = '';
-		} finally {
-			isDownloading = false;
+			progress.reset();
+			phase = { kind: 'failed', message: (error as Error).message };
 		}
 	}
 
@@ -651,53 +148,42 @@
 
 		try {
 			await initWasm();
-
-			const fileId = getCurrentFileId();
-
-			const storedKey = sessionStorage.getItem('paste_key_' + fileId);
-			if (storedKey) {
-				sessionStorage.removeItem('paste_key_' + fileId);
-				setEncryptionKey(storedKey);
-				await getMetadata();
-				return;
-			}
-
-			if (window.location.hash) {
-				const urlParams = new URLSearchParams(window.location.hash.slice(1));
-				const key = urlParams.get('key');
-				if (key) {
-					const validatedKey = validateAndExtractKey(key);
-					if (validatedKey) {
-						setEncryptionKey(validatedKey);
-						await getMetadata();
-					} else {
-						keyError = tr('key.invalid');
-					}
-				}
-			}
 		} catch (error) {
 			console.error('Failed to initialize:', error);
-			downloadError = 'Failed to initialize the application';
-		} finally {
-			isLoading = false;
+			phase = { kind: 'failed', message: 'Failed to initialize the application' };
+			return;
 		}
+
+		let storedKey: string | null = null;
+		try {
+			storedKey = sessionStorage.getItem('paste_key_' + fileId);
+			if (storedKey) sessionStorage.removeItem('paste_key_' + fileId);
+		} catch {
+			// Storage can be unavailable (private mode, blocked site data).
+		}
+		if (storedKey) {
+			await resolveKey(storedKey);
+			return;
+		}
+
+		const hashKey = window.location.hash
+			? new URLSearchParams(window.location.hash.slice(1)).get('key')
+			: null;
+		if (hashKey) {
+			const validatedKey = validateAndExtractKey(hashKey);
+			if (validatedKey) {
+				await resolveKey(validatedKey);
+				return;
+			}
+			keyError = tr('key.invalid');
+		}
+
+		phase = { kind: 'needs-key', error: null };
 	});
 
 	onDestroy(() => {
-		resetPreviews();
-	});
-
-	let canDownload = $derived(!!(
-		metadata &&
-		!metadata.error &&
-		!isDownloading &&
-		!isDownloadComplete &&
-		encryptionKey
-	));
-
-	run(() => {
-		void manualKeyInput;
-		keyError = null;
+		previews.reset();
+		progress.destroy();
 	});
 </script>
 
@@ -709,65 +195,63 @@
 				{$t('dl.description')}
 			</p>
 
-			{#if isLoading}
+			{#if phase.kind === 'initializing' || phase.kind === 'loading-metadata'}
 				<LoadingSpinner message="" />
 			{/if}
 
-			{#if downloadError}
-				<ErrorMessage message={downloadError} />
-			{:else if metadata?.error}
-				<ErrorMessage message={metadata.error} />
-			{:else if metadata?.filename}
-				{#if isImagePreviewable(metadata)}
+			{#if phase.kind === 'failed' || phase.kind === 'unavailable'}
+				<ErrorMessage message={phase.message} />
+			{:else if file}
+				{#if isImagePreviewable(file.metadata)}
 					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
 						<div class="preview-header">
 							<h2>{$t('preview.title')}</h2>
 							<span class="preview-badge">{$t('preview.image')}</span>
 						</div>
 
-						{#if isLoadingImagePreview}
+						{#if previews.image.status === 'loading'}
 							<div class="preview-loading">
 								<LoadingSpinner message={$t('preview.loadingImage')} />
 							</div>
-						{:else if imagePreviewUrl}
+						{:else if previews.image.status === 'ready'}
 							<img
 								class="image-preview"
-								src={imagePreviewUrl}
-								alt={$t('preview.imageAlt', { filename: metadata.filename })}
-								use:fitViewport={{ reserveSelector: '.file-row', bottomGap: 48, minHeight: 200 }}
+								src={previews.image.url}
+								alt={$t('preview.imageAlt', { filename: file.metadata.filename })}
+								use:fitViewport={fitPreview}
 							/>
-						{:else if imagePreviewError}
-							<p class="preview-note">{imagePreviewError}</p>
+						{:else if previews.image.status === 'error'}
+							<p class="preview-note">{previews.image.message}</p>
 						{/if}
 					</div>
 				{/if}
 
-				{#if isTextPreviewable(metadata)}
+				{#if isTextPreviewable(file.metadata)}
 					<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
 						<div class="preview-header">
 							<h2>{$t('preview.title')}</h2>
 							<span class="preview-badge">{$t('preview.text')}</span>
 						</div>
 
-						{#if isLoadingTextPreview}
+						{#if previews.text.status === 'loading'}
 							<div class="preview-loading">
 								<LoadingSpinner message={$t('preview.loadingText')} />
 							</div>
-						{:else if textPreview !== null}
-							{#if textPreview.length > 0}
+						{:else if previews.text.status === 'ready'}
+							{#if previews.text.text.length > 0}
 								<div class="text-preview-wrap">
 									<button
 										type="button"
 										class="copy-preview-btn"
-										class:copied={copyState === 'copied'}
-										class:error={copyState === 'error'}
-										onclick={copyTextPreview}
+										class:copied={previews.copyState === 'copied'}
+										class:error={previews.copyState === 'error'}
+										onclick={() => previews.copyText()}
 										aria-label={$t('preview.copyAria')}
 										title={$t('preview.copyAria')}
 									>
-										{#if copyState === 'copied'}
+										{#if previews.copyState === 'copied'}
 											{$t('common.copied')}
-										{:else if copyState === 'error'}
+										{:else if previews.copyState === 'error'}
 											{$t('common.error')}
 										{:else}
 											<svg
@@ -787,36 +271,25 @@
 											<span>{$t('common.copy')}</span>
 										{/if}
 									</button>
-									{#if textPreviewMode === 'table'}
-										<div
-											class="table-preview"
-											use:fitViewport={{
-												reserveSelector: '.file-row',
-												bottomGap: 48,
-												minHeight: 200
-											}}
-										>
-											{@html textPreviewHtml}
+									{#if previews.text.mode === 'table'}
+										<div class="table-preview" use:fitViewport={fitPreview}>
+											{@html previews.text.html}
 										</div>
 									{:else}
 										<pre
 											class="text-preview syntax-preview"
-											use:fitViewport={{
-												reserveSelector: '.file-row',
-												bottomGap: 48,
-												minHeight: 200
-											}}>{@html textPreviewHtml}</pre>
+											use:fitViewport={fitPreview}>{@html previews.text.html}</pre>
 									{/if}
 								</div>
 							{:else}
 								<p class="preview-note">{$t('preview.emptyTextFile')}</p>
 							{/if}
 
-							{#if isTextPreviewTruncated}
+							{#if previews.text.truncated}
 								<p class="preview-note">{$t('preview.truncated')}</p>
 							{/if}
-						{:else if textPreviewError}
-							<p class="preview-note">{textPreviewError}</p>
+						{:else if previews.text.status === 'error'}
+							<p class="preview-note">{previews.text.message}</p>
 						{/if}
 					</div>
 				{/if}
@@ -842,27 +315,27 @@
 
 					<!-- Middle: name · size · eta · progress -->
 					<div class="col-info">
-						<div class="file-name">{metadata.filename}</div>
+						<div class="file-name">{file.metadata.filename}</div>
 						<div class="file-meta">
 							<div class="meta-left">
-								{#if fileSize}
-									<span class="size">{fileSize}</span>
+								{#if file.fileSize}
+									<span class="size">{file.fileSize}</span>
 								{/if}
-								{#if eta && isDownloading}
+								{#if progress.eta && isDownloading}
 									<span class="dot">·</span>
-									<span class="eta">{eta}</span>
+									<span class="eta">{progress.eta}</span>
 								{/if}
 							</div>
-							{#if isDownloading || isDownloadComplete}
-								<span class="pct">{Math.round(displayProgress)}%</span>
+							{#if isDownloading || isDownloaded}
+								<span class="pct">{Math.round(progress.display)}%</span>
 							{/if}
 						</div>
-						{#if isDownloading || isDownloadComplete}
+						{#if isDownloading || isDownloaded}
 							<div class="progress-track">
 								<div
 									class="progress-fill"
-									class:complete={isDownloadComplete}
-									style="width: {displayProgress}%"
+									class:complete={isDownloaded}
+									style="width: {progress.display}%"
 								></div>
 							</div>
 						{/if}
@@ -870,7 +343,7 @@
 
 					<!-- Right: download button → spinner → checkmark -->
 					<div class="col-action">
-						{#if isDownloadComplete}
+						{#if isDownloaded}
 							<div class="checkmark" title={$t('download.completeTitle')}>
 								<svg
 									fill="currentColor"
@@ -892,25 +365,32 @@
 						{:else if isDownloading}
 							<div class="spinner" aria-label={$t('download.downloadingAria')}></div>
 						{:else}
-							<button class="download-btn" onclick={initiateDownload} disabled={!canDownload}>
+							<button
+								class="download-btn"
+								onclick={initiateDownload}
+								disabled={phase.kind !== 'ready'}
+							>
 								{$t('common.download')}
 							</button>
 						{/if}
 					</div>
 				</div>
 
-				{#if isDownloadComplete}
-					<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
-						{$t('download.fileDeleted')}
-					</p>
-				{/if}
-
-				{#if deletionError}
-					<ErrorMessage message={deletionError} />
+				{#if phase.kind === 'downloaded'}
+					{#if phase.deleteError}
+						<ErrorMessage message={phase.deleteError} />
+					{:else}
+						<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
+							{$t('download.fileDeleted')}
+						</p>
+					{/if}
 				{/if}
 			{/if}
 
-			{#if !encryptionKey && !isDownloadComplete && !isLoading}
+			{#if phase.kind === 'needs-key'}
+				{#if phase.error}
+					<ErrorMessage message={phase.error} />
+				{/if}
 				<form class="key-prompt" onsubmit={preventDefault(handleManualKeySubmit)}>
 					<h3>{$t('key.requiredTitle')}</h3>
 					<p class="hint">
@@ -922,9 +402,9 @@
 							class="key-input"
 							placeholder={$t('key.placeholder')}
 							bind:value={manualKeyInput}
-							disabled={isDownloading}
+							oninput={() => (keyError = null)}
 						/>
-						<button type="submit" class="button" disabled={!manualKeyInput.trim() || isDownloading}>
+						<button type="submit" class="button" disabled={!manualKeyInput.trim()}>
 							{$t('key.decrypt')}
 						</button>
 					</div>

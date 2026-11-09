@@ -5,7 +5,8 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"io"
+	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -72,229 +73,6 @@ func startPingLoop(ctx context.Context, ws *websocket.Conn) {
 func wsWriteJSON(ws *websocket.Conn, v any) error {
 	ws.SetWriteDeadline(time.Now().Add(writeWait))
 	return ws.WriteJSON(v)
-}
-
-func HandleWSDownload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-		if err != nil {
-			log.Printf("WebSocket upgrade failed: %v", err)
-			return
-		}
-		defer ws.Close()
-
-		// Download clients only send small JSON control messages.
-		ws.SetReadLimit(64 * 1024)
-
-		// Keepalive: extend read deadline on every pong.
-		ws.SetReadDeadline(time.Now().Add(pongWait))
-		ws.SetPongHandler(func(string) error {
-			ws.SetReadDeadline(time.Now().Add(pongWait))
-			return nil
-		})
-
-		ctx, cancelPing := context.WithCancel(context.Background())
-		defer cancelPing()
-		startPingLoop(ctx, ws)
-
-		// Get initial request with fileId and token
-		_, msg, err := ws.ReadMessage()
-		if err != nil {
-			sendWSError(ws, "Failed to read initial message")
-			return
-		}
-		ws.SetReadDeadline(time.Now().Add(pongWait))
-
-		var request struct {
-			Type   string `json:"type"`
-			FileId string `json:"fileId"`
-			Token  string `json:"token"`
-		}
-
-		if err := json.Unmarshal(msg, &request); err != nil {
-			sendWSError(ws, "Invalid message format")
-			return
-		}
-
-		if request.Type != "download_init" {
-			sendWSError(ws, "Invalid message type: expected 'download_init'")
-			return
-		}
-
-		// Validate fileId format
-		if len(request.FileId) != 16 && len(request.FileId) != 24 && len(request.FileId) != 32 {
-			sendWSError(ws, "Invalid file ID format")
-			return
-		}
-
-		if !validateID(request.FileId) {
-			sendWSError(ws, "Invalid file ID format")
-			return
-		}
-
-		// Validate token format
-		if !validateToken(request.Token) {
-			sendWSError(ws, "Invalid token format")
-			return
-		}
-
-		// Locate file with the exact token - this is the security check
-		// The file name MUST match fileId.token exactly
-		filePath := filepath.Join(uploadDir, request.FileId+"."+request.Token)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			// Return generic error to prevent token enumeration
-			sendWSError(ws, "Access denied")
-			return
-		}
-
-		file, err := os.Open(filePath)
-		if err != nil {
-			log.Printf("Error: Failed to open file: %v", err)
-			sendWSError(ws, "Server error: Cannot open file")
-			return
-		}
-		defer file.Close()
-
-		// Get file info for size
-		fileInfo, err := file.Stat()
-		if err != nil {
-			log.Printf("Error: Failed to get file info: %v", err)
-			sendWSError(ws, "Server error: Cannot get file info")
-			return
-		}
-
-		// Send file size info
-		if err := wsWriteJSON(ws, gin.H{
-			"type": "file_info",
-			"size": fileInfo.Size(),
-		}); err != nil {
-			log.Printf("Failed to send file info: %v", err)
-			return
-		}
-
-		// Read client ready confirmation
-		_, readyMsg, err := ws.ReadMessage()
-		if err != nil {
-			log.Printf("Failed to read ready message: %v", err)
-			return
-		}
-		ws.SetReadDeadline(time.Now().Add(pongWait))
-
-		var readyResp struct {
-			Type  string `json:"type"`
-			Ready bool   `json:"ready"`
-		}
-		if err := json.Unmarshal(readyMsg, &readyResp); err != nil || readyResp.Type != "ready" || !readyResp.Ready {
-			log.Printf("Client not ready: %v", err)
-			return
-		}
-
-		// Stream file in chunks
-		// Use the configured chunk size (+16 tag) to match upload pipeline; fall back to 1MB if unset
-		configuredChunkBytes := GlobalConfig.ChunkSize * 1024 * 1024
-		if configuredChunkBytes <= 0 {
-			configuredChunkBytes = 1 * 1024 * 1024
-		}
-		buffer := make([]byte, configuredChunkBytes+16)
-		var totalSent int64 = 0
-		var isComplete = false
-		// Ack batching: require client to ack every batchAckInterval chunks instead of every chunk
-		const batchAckInterval = 8 // tuneable; higher reduces round trips
-		chunksSinceAck := 0
-
-		for {
-			n, err := file.Read(buffer)
-			if n > 0 {
-				ws.SetWriteDeadline(time.Now().Add(writeWait))
-				if err := ws.WriteMessage(websocket.BinaryMessage, buffer[:n]); err != nil {
-					log.Printf("Error sending chunk: %v", err)
-					return
-				}
-				totalSent += int64(n)
-				chunksSinceAck++
-
-				// Only wait for an ACK every batchAckInterval chunks to improve throughput
-				if chunksSinceAck >= batchAckInterval {
-					_, ackMsg, err := ws.ReadMessage()
-					if err != nil {
-						log.Printf("Error receiving ack: %v", err)
-						return
-					}
-					ws.SetReadDeadline(time.Now().Add(pongWait))
-					var ack struct {
-						Type string `json:"type"`
-						Size int    `json:"size"`
-					}
-					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" || ack.Size != n {
-						log.Printf("Invalid ack: %v (expected size %d, got %d)", err, n, ack.Size)
-						return
-					}
-					chunksSinceAck = 0
-				}
-			}
-
-			if err == io.EOF {
-				// Flush final ack if there are outstanding unacked chunks
-				if chunksSinceAck > 0 {
-					_, ackMsg, err := ws.ReadMessage()
-					if err != nil {
-						log.Printf("Error receiving final batch ack: %v", err)
-						return
-					}
-					ws.SetReadDeadline(time.Now().Add(pongWait))
-					var ack struct {
-						Type string `json:"type"`
-					}
-					if err := json.Unmarshal(ackMsg, &ack); err != nil || ack.Type != "ack" {
-						log.Printf("Invalid final batch ack: %v", err)
-						return
-					}
-				}
-
-				if err := wsWriteJSON(ws, gin.H{"type": "complete", "size": totalSent}); err != nil {
-					log.Printf("Failed to send complete message: %v", err)
-					return
-				}
-				_, completeMsg, err := ws.ReadMessage()
-				if err != nil {
-					log.Printf("Error receiving final ack: %v", err)
-					return
-				}
-				ws.SetReadDeadline(time.Now().Add(pongWait))
-				var complete struct {
-					Type     string `json:"type"`
-					Complete bool   `json:"complete"`
-				}
-				if err := json.Unmarshal(completeMsg, &complete); err != nil || complete.Type != "complete_ack" || !complete.Complete {
-					log.Printf("Invalid complete ack")
-					return
-				}
-				isComplete = true
-				break
-			}
-
-			if err != nil {
-				log.Printf("Error reading file: %v", err)
-				sendWSError(ws, "Error reading file")
-				return
-			}
-			if n == 0 {
-				break
-			}
-		}
-
-		// Calculate duration of download
-		// Only delete file if download was completed successfully
-		if isComplete {
-			if err := os.Remove(filePath); err != nil {
-				log.Printf("Failed to remove file: %v", err)
-			}
-
-			metrics.RecordTransfer(c.Request.Context(), "download", totalSent, true, "websocket")
-		} else {
-			metrics.RecordTransfer(c.Request.Context(), "download", totalSent, false, "websocket")
-		}
-	}
 }
 
 func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFunc {
@@ -423,7 +201,14 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider) gin.HandlerFu
 		// 4. Create File (with token)
 		finalPath := filepath.Join(uploadDir, id+"."+tokenData.Token)
 		tmpPath := finalPath + ".tmp" // Use a temporary file
-		file, err := os.Create(tmpPath)
+		// O_EXCL makes creation the atomic claim on this ID: two concurrent
+		// passphrase uploads with the same derived fileId+token can both pass the
+		// Glob collision check above, but only one can create the temp file.
+		file, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+		if errors.Is(err, fs.ErrExist) {
+			sendWSError(ws, "Share code already in use, please try again with a different passphrase")
+			return
+		}
 		if err != nil {
 			sendWSError(ws, "Failed to create file")
 			return
