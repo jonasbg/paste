@@ -151,7 +151,6 @@ Base path: `/api`
 | GET | `/metadata/:id` | Get encrypted metadata |
 | DELETE | `/delete/:id` | Delete a file |
 | GET | `/ws/upload` | WebSocket upload for large files |
-| GET | `/ws/download` | WebSocket download for large files |
 | GET | `/metrics` | Prometheus-compatible OTEL metrics endpoint |
 
 Notes:

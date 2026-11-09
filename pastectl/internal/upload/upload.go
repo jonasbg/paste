@@ -106,14 +106,14 @@ func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentTyp
 		return "", fmt.Errorf("failed to send init: %w", err)
 	}
 
-	var initResp map[string]interface{}
-	if err := conn.ReadJSON(&initResp); err != nil {
-		return "", fmt.Errorf("failed to read init response: %w", err)
+	initResp, err := readServerMessage(conn, "id")
+	if err != nil {
+		return "", fmt.Errorf("init rejected: %w", err)
 	}
 
 	fileID, ok := initResp["id"].(string)
-	if !ok {
-		return "", errors.New("invalid init response")
+	if !ok || fileID == "" {
+		return "", errors.New("invalid init response: missing id")
 	}
 
 	// Step 2: Generate and send HMAC token
@@ -130,9 +130,8 @@ func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentTyp
 		return "", fmt.Errorf("failed to send token: %w", err)
 	}
 
-	var tokenResp map[string]interface{}
-	if err := conn.ReadJSON(&tokenResp); err != nil {
-		return "", fmt.Errorf("failed to read token response: %w", err)
+	if _, err := readServerMessage(conn, "token_accepted"); err != nil {
+		return "", fmt.Errorf("token rejected: %w", err)
 	}
 
 	// Step 3: Encrypt and send metadata
@@ -152,9 +151,8 @@ func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentTyp
 		return "", fmt.Errorf("failed to send metadata: %w", err)
 	}
 
-	var metadataResp map[string]interface{}
-	if err := conn.ReadJSON(&metadataResp); err != nil {
-		return "", fmt.Errorf("failed to read metadata response: %w", err)
+	if _, err := readServerMessage(conn, "ready"); err != nil {
+		return "", fmt.Errorf("metadata rejected: %w", err)
 	}
 
 	// Step 4: Create streaming cipher and send IV
@@ -188,9 +186,8 @@ func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentTyp
 		if err := conn.WriteMessage(websocket.BinaryMessage, encryptedChunk); err != nil {
 			return fmt.Errorf("failed to send chunk: %w", err)
 		}
-		var ackResp map[string]interface{}
-		if err := conn.ReadJSON(&ackResp); err != nil {
-			return fmt.Errorf("failed to read ack: %w", err)
+		if _, err := readServerMessage(conn, "ack"); err != nil {
+			return fmt.Errorf("chunk rejected: %w", err)
 		}
 		return nil
 	}
@@ -244,12 +241,36 @@ func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentTyp
 		return "", fmt.Errorf("failed to send end marker: %w", err)
 	}
 
-	var finalResp map[string]interface{}
-	if err := conn.ReadJSON(&finalResp); err != nil {
-		return "", fmt.Errorf("failed to read final response: %w", err)
+	finalResp, err := readServerMessage(conn, "complete")
+	if err != nil {
+		return "", fmt.Errorf("upload not finalized: %w", err)
+	}
+	if id, _ := finalResp["id"].(string); id != fileID {
+		return "", fmt.Errorf("server completed unexpected file ID %q (expected %q)", id, fileID)
 	}
 
 	return fileID, nil
+}
+
+// readServerMessage reads the next JSON frame from the upload socket and
+// enforces the protocol step: a server "error" frame or any type other than
+// want is returned as an error instead of being mistaken for success.
+func readServerMessage(conn *websocket.Conn, want string) (map[string]interface{}, error) {
+	var msg map[string]interface{}
+	if err := conn.ReadJSON(&msg); err != nil {
+		return nil, fmt.Errorf("failed to read %q response: %w", want, err)
+	}
+	msgType, _ := msg["type"].(string)
+	if msgType == "error" {
+		if serverErr, ok := msg["error"].(string); ok && serverErr != "" {
+			return nil, fmt.Errorf("server error: %s", serverErr)
+		}
+		return nil, errors.New("server error")
+	}
+	if msgType != want {
+		return nil, fmt.Errorf("unexpected server message %q (expected %q)", msgType, want)
+	}
+	return msg, nil
 }
 
 // PrepareInput prepares the input for upload (file or stdin)

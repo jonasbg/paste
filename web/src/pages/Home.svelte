@@ -1,17 +1,14 @@
 <script lang="ts">
-	import { run, preventDefault, createBubbler, stopPropagation } from 'svelte/legacy';
+	import { preventDefault, createBubbler, stopPropagation } from 'svelte/legacy';
 
 	const bubble = createBubbler();
-	import { onMount, onDestroy, untrack } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
-	import {
-		downloadAndDecryptFile,
-		fetchMetadata,
-		streamDownloadAndDecrypt
-	} from '$lib/services/fileService';
+	import { fetchMetadata } from '$lib/services/fileService';
+	import { downloadSaveAndDelete } from '$lib/services/downloadService';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import { generatePassphrase, DEFAULT_PASSPHRASE_WORDS } from '$lib/utils/wordlist';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
@@ -21,156 +18,87 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 	import { configStore } from '$lib/stores/config';
-	import { renderTextPreview } from '$lib/utils/textPreview';
-	import { isTextBased } from '$lib/utils/mimeType';
+	import {
+		type FileMetadata,
+		isImagePreviewable,
+		isTextPreviewable
+	} from '$lib/utils/filePreview';
+	import { fitViewport } from '$lib/actions/fitViewport';
+	import { FilePreviews } from '$lib/state/filePreviews.svelte';
+	import { SmoothProgress } from '$lib/state/smoothProgress.svelte';
 
-	const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
-	const TEXT_PREVIEW_MAX_CHARS = 120_000;
-	const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
-	const TEXT_PREVIEW_EXTENSIONS = new Set([
-		'txt',
-		'md',
-		'markdown',
-		'json',
-		'jsonl',
-		'log',
-		'csv',
-		'tsv',
-		'xml',
-		'yaml',
-		'yml',
-		'toml',
-		'ini',
-		'conf',
-		'cfg',
-		'env',
-		'sh',
-		'bash',
-		'zsh',
-		'fish',
-		'ps1',
-		'js',
-		'ts',
-		'jsx',
-		'tsx',
-		'css',
-		'scss',
-		'html',
-		'htm',
-		'svelte',
-		'py',
-		'rb',
-		'php',
-		'java',
-		'go',
-		'rs',
-		'c',
-		'cc',
-		'cpp',
-		'h',
-		'hpp',
-		'sql',
-		'kt',
-		'kts',
-		'swift',
-		'dart',
-		'lua',
-		'r',
-		'rmd',
-		'vue',
-		'astro',
-		'scala',
-		'ex',
-		'exs',
-		'hs',
-		'zig',
-		'diff',
-		'patch',
-		'lock',
-		'gradle',
-		'pl',
-		'pm',
-		'properties',
-		'rtf'
-	]);
-	const IMAGE_PREVIEW_EXTENSIONS = new Set([
-		'png',
-		'jpg',
-		'jpeg',
-		'gif',
-		'webp',
-		'bmp',
-		'avif',
-		'svg'
-	]);
-	const IMAGE_MIME_TYPES = {
-		png: 'image/png',
-		jpg: 'image/jpeg',
-		jpeg: 'image/jpeg',
-		gif: 'image/gif',
-		webp: 'image/webp',
-		bmp: 'image/bmp',
-		avif: 'image/avif',
-		svg: 'image/svg+xml'
+	/**
+	 * Upload flow. Exactly one of these at a time; each state carries only the
+	 * data valid in it (the file being uploaded, the error, the share result).
+	 */
+	type UploadState =
+		| { kind: 'idle' }
+		| { kind: 'selected'; file: File }
+		| { kind: 'uploading'; file: File }
+		| { kind: 'failed'; file: File; error: string }
+		| { kind: 'shared'; file: File; passphrase: string; url: string };
+
+	type ResolvedFile = {
+		fileId: string;
+		key: string;
+		metadata: FileMetadata & { filename: string };
+		fileSize: string;
 	};
 
-	type FileMetadata = {
-		filename?: string;
-		contentType?: string;
-		size?: number;
-		error?: string;
-	};
+	/** Receive-by-passphrase flow, shown under the upload area. */
+	type RetrieveState =
+		/** Passphrase form. `error` is set when the last passphrase did not resolve. */
+		| { kind: 'idle'; error: string | null }
+		| { kind: 'resolving' }
+		| { kind: 'ready'; file: ResolvedFile }
+		| { kind: 'downloading'; file: ResolvedFile }
+		| { kind: 'download-failed'; file: ResolvedFile; error: string }
+		/** Saved to disk. `deleteError` is set when the server copy could not be removed. */
+		| { kind: 'downloaded'; file: ResolvedFile; deleteError: string | null }
+		/** The server no longer has the file (already downloaded, deleted or expired). */
+		| { kind: 'unavailable'; message: string };
+
+	let upload = $state<UploadState>({ kind: 'idle' });
+	let retrieve = $state<RetrieveState>({ kind: 'idle', error: null });
+
+	// Bumped whenever a flow is reset or restarted; async work started under an
+	// older value drops its result instead of resurrecting a stale state.
+	let uploadAttempt = 0;
+	let retrieveAttempt = 0;
+
+	// Upload progress data for the ProgressBar (not flow state).
+	let uploadProgress = $state(0);
+	let uploadMessage = $state('');
+	// Validation message for a rejected file (too large / config missing).
+	let fileSizeError = $state('');
+
+	let passphraseInput = $state('');
+
+	const previews = new FilePreviews();
+	const dlProgress = new SmoothProgress();
 
 	let fileInput: HTMLInputElement | undefined = $state();
 	let dropZoneEl: HTMLDivElement | null = $state(null);
 	let passphraseInputEl: HTMLInputElement | null = $state(null);
-	let selectedFile: File | null = $state(null);
-	let isUploading = $state(false);
-	let uploadProgress = $state(0);
-	let uploadMessage = $state('');
-	let sharePassphrase = $state('');
-	let shareUrl = $state('');
-	let fileSizeError = $state('');
-	let uploadError = $state('');
-	let generatedPassphrase = '';
 
-	// Passphrase download form
-	let passphraseInput = $state('');
-	let passphraseError = $state('');
-	let isDerivingPassphrase = $state(false);
-
-	// Inline passphrase download state
-	let passphraseFileId = '';
-	let passphraseKey = '';
-	let passphraseFileMetadata: any = $state(null);
-	let passphraseFileSizeStr = $state('');
-	let isPassphraseDownloading = $state(false);
-	let passphraseDownloadProgress = $state(0);
-	let passphraseDisplayProgress = $state(0);
-	let passphraseDownloadComplete = $state(false);
-	let passphraseDownloadError = $state('');
-	let passphraseDownloadStartTime = $state(0);
-	let passphraseEta = $state('');
-	let passphraseAnimFrame: number | undefined = $state();
-	let passphraseTextPreview: string | null = $state(null);
-	let passphraseTextPreviewHtml = $state('');
-	let passphraseTextPreviewMode: 'pre' | 'table' = $state('pre');
-	let passphraseTextPreviewError = $state('');
-	let isLoadingPassphraseTextPreview = $state(false);
-	let isPassphraseTextPreviewTruncated = $state(false);
 	let showPasteAffordance = $state(false);
 	let pasteAffordanceState: 'idle' | 'reading' | 'denied' | 'empty' = $state('idle');
 	let pasteAffordanceTimer: ReturnType<typeof setTimeout> | null = null;
-	let passphraseCopyState: 'idle' | 'copied' | 'error' = $state('idle');
-	let passphraseCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
-	let passphraseImagePreviewUrl: string | null = $state(null);
-	let passphraseImagePreviewError = $state('');
-	let isLoadingPassphraseImagePreview = $state(false);
-	let passphrasePreviewRequestId = 0;
 
 	// Drag state
 	let dragCounter = 0;
 	let isDragging = $state(false);
+
+	/** Upload is in progress or finished; the upload area must not change. */
+	let uploadLocked = $derived(upload.kind === 'uploading' || upload.kind === 'shared');
+	let uploadFile = $derived('file' in upload ? upload.file : null);
+	let retrievedFile = $derived('file' in retrieve ? retrieve.file : null);
+	/** A passphrase resolved to a file (or to "file is gone"); the page shows it instead of the drop zone. */
+	let hasRetrievedFile = $derived(retrievedFile !== null || retrieve.kind === 'unavailable');
+	/** Whether a newly picked/dropped/pasted file may become the upload selection. */
+	let canAcceptFile = $derived(!uploadLocked && !hasRetrievedFile && retrieve.kind !== 'resolving');
+	let retrieveDownloading = $derived(retrieve.kind === 'downloading');
+	let retrieveDownloaded = $derived(retrieve.kind === 'downloaded');
 
 	let maxFileSizeLabel = $derived($configStore.data?.max_file_size ?? '–');
 
@@ -178,356 +106,26 @@
 	// clamps this to the safe [4,8] range, so the fallback only matters before config loads.
 	let passphraseWordCount = $derived($configStore.data?.passphrase_words ?? DEFAULT_PASSPHRASE_WORDS);
 
-	function formatEta(seconds: number): string {
-		if (!isFinite(seconds) || seconds <= 0 || seconds > 3600) return '';
-		if (seconds < 60) return `${Math.ceil(seconds)}s ${tr('common.remaining')}`;
-		const mins = Math.floor(seconds / 60);
-		const secs = Math.ceil(seconds % 60);
-		return `${mins}m${secs > 0 ? ` ${secs}s` : ''} ${tr('common.remaining')}`;
-	}
+	const fitPreview = {
+		containerSelector: '.passphrase-panel',
+		reserveSelector: '.file-row',
+		bottomGap: 48,
+		minHeight: 200
+	};
 
-	function formatPreviewLimit(bytes: number): string {
-		if (bytes >= 1024 * 1024) {
-			return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-		}
-
-		if (bytes >= 1024) {
-			return `${(bytes / 1024).toFixed(0)} KB`;
-		}
-
-		return `${bytes} B`;
-	}
-
-	function getFileExtension(filename: string | undefined): string {
-		if (!filename || !filename.includes('.')) return '';
-		return filename.split('.').pop()?.toLowerCase() || '';
-	}
-
-	function isTextPreviewable(fileMetadata: FileMetadata | null): boolean {
-		if (!fileMetadata?.filename) return false;
-
-		// Trust the server-stored contentType (normalized at upload time)
-		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType && isTextBased(contentType)) return true;
-
-		// Extension fallback for files uploaded before MIME normalization
-		return TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
-	}
-
-	function isImagePreviewable(fileMetadata: FileMetadata | null): boolean {
-		if (!fileMetadata?.filename) return false;
-
-		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType.startsWith('image/')) return true;
-
-		return IMAGE_PREVIEW_EXTENSIONS.has(getFileExtension(fileMetadata.filename));
-	}
-
-	function resolveImagePreviewType(fileMetadata: FileMetadata): string | null {
-		const contentType = fileMetadata.contentType?.toLowerCase() || '';
-		if (contentType.startsWith('image/')) {
-			return contentType;
-		}
-
-		const ext = getFileExtension(fileMetadata.filename);
-		return (IMAGE_MIME_TYPES as Record<string, string>)[ext] || null;
-	}
-
-	function getUnavailableDownloadMessage(error: unknown): string | null {
-		const message = error instanceof Error ? error.message : String(error);
-		if (message.includes('Failed to download file') || message.includes('Invalid access token')) {
-			return 'Filen finnes ikke eller har allerede blitt lastet ned.';
-		}
-		return null;
-	}
-
-	function fitViewport(
-		node: HTMLElement,
-		options: { reserveSelector?: string; bottomGap?: number; minHeight?: number } = {}
-	) {
-		let frame = 0;
-		let resizeObserver: ResizeObserver | null = null;
-		let currentOptions = options;
-
-		const getOuterHeight = (element: Element) => {
-			const styles = window.getComputedStyle(element as HTMLElement);
-			const marginTop = parseFloat(styles.marginTop) || 0;
-			const marginBottom = parseFloat(styles.marginBottom) || 0;
-			return (element as HTMLElement).getBoundingClientRect().height + marginTop + marginBottom;
-		};
-
-		const update = () => {
-			frame = 0;
-			const rect = node.getBoundingClientRect();
-			const viewportHeight = window.visualViewport?.height || window.innerHeight;
-			const reserveHeight = currentOptions.reserveSelector
-				? Array.from(
-						node.closest('.passphrase-panel')?.querySelectorAll(currentOptions.reserveSelector) ??
-							[]
-					).reduce((total, element) => total + getOuterHeight(element), 0)
-				: 0;
-			const bottomGap = currentOptions.bottomGap ?? 24;
-			const minHeight = currentOptions.minHeight ?? 120;
-			const availableHeight = Math.max(
-				minHeight,
-				Math.floor(viewportHeight - rect.top - reserveHeight - bottomGap)
-			);
-			node.style.maxHeight = `${availableHeight}px`;
-		};
-
-		const scheduleUpdate = () => {
-			if (frame) cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(update);
-		};
-
-		scheduleUpdate();
-		window.addEventListener('resize', scheduleUpdate);
-		window.visualViewport?.addEventListener('resize', scheduleUpdate);
-
-		if ('ResizeObserver' in window) {
-			resizeObserver = new ResizeObserver(scheduleUpdate);
-			resizeObserver.observe(document.body);
-		}
-
-		return {
-			update(nextOptions: typeof currentOptions = currentOptions) {
-				currentOptions = nextOptions;
-				scheduleUpdate();
-			},
-			destroy() {
-				if (frame) cancelAnimationFrame(frame);
-				window.removeEventListener('resize', scheduleUpdate);
-				window.visualViewport?.removeEventListener('resize', scheduleUpdate);
-				resizeObserver?.disconnect();
-			}
-		};
-	}
-
-	function resetPassphraseTextPreview() {
-		passphraseTextPreview = null;
-		passphraseTextPreviewHtml = '';
-		passphraseTextPreviewMode = 'pre';
-		passphraseTextPreviewError = '';
-		isLoadingPassphraseTextPreview = false;
-		isPassphraseTextPreviewTruncated = false;
-		if (passphraseCopyResetTimer) {
-			clearTimeout(passphraseCopyResetTimer);
-			passphraseCopyResetTimer = null;
-		}
-		passphraseCopyState = 'idle';
-	}
-
-	async function copyPassphrasePreview() {
-		if (passphraseTextPreview === null) return;
-		try {
-			await navigator.clipboard.writeText(passphraseTextPreview);
-			passphraseCopyState = 'copied';
-		} catch {
-			passphraseCopyState = 'error';
-		}
-		if (passphraseCopyResetTimer) clearTimeout(passphraseCopyResetTimer);
-		passphraseCopyResetTimer = setTimeout(() => {
-			passphraseCopyState = 'idle';
-			passphraseCopyResetTimer = null;
-		}, 1800);
-	}
-
-	function resetPassphraseImagePreview() {
-		if (passphraseImagePreviewUrl && browser) {
-			URL.revokeObjectURL(passphraseImagePreviewUrl);
-		}
-
-		passphraseImagePreviewUrl = null;
-		passphraseImagePreviewError = '';
-		isLoadingPassphraseImagePreview = false;
-	}
-
-	function resetPassphrasePreviews(): number {
-		passphrasePreviewRequestId += 1;
-		resetPassphraseTextPreview();
-		resetPassphraseImagePreview();
-		return passphrasePreviewRequestId;
-	}
-
-	async function loadPassphraseTextPreview(
-		fileId: string,
-		key: string,
-		token: string,
-		fileMetadata: FileMetadata,
-		requestId: number
-	) {
-		if (!isTextPreviewable(fileMetadata)) return;
-
-		if ((fileMetadata.size || 0) > TEXT_PREVIEW_MAX_BYTES) {
-			passphraseTextPreviewError = tr('preview.textOnlyLimit', {
-				limit: formatPreviewLimit(TEXT_PREVIEW_MAX_BYTES)
-			});
-			return;
-		}
-
-		isLoadingPassphraseTextPreview = true;
-
-		try {
-			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
-			const previewText = (await decrypted.text()).replace(/\r\n/g, '\n');
-
-			if (requestId !== passphrasePreviewRequestId) return;
-
-			const clippedPreview = previewText.slice(0, TEXT_PREVIEW_MAX_CHARS);
-			passphraseTextPreview = clippedPreview;
-			isPassphraseTextPreviewTruncated = previewText.length > TEXT_PREVIEW_MAX_CHARS;
-			const renderedPreview = renderTextPreview(clippedPreview, fileMetadata);
-			passphraseTextPreviewHtml = renderedPreview.html;
-			passphraseTextPreviewMode = renderedPreview.mode;
-		} catch (error) {
-			if (requestId !== passphrasePreviewRequestId) return;
-			console.error('Passphrase text preview error:', error);
-			const unavailableMessage = getUnavailableDownloadMessage(error);
-			if (unavailableMessage) {
-				passphraseFileMetadata = { error: unavailableMessage };
-				return;
-			}
-			passphraseTextPreviewError = tr('preview.textLoadError');
-		} finally {
-			if (requestId === passphrasePreviewRequestId) {
-				isLoadingPassphraseTextPreview = false;
-			}
-		}
-	}
-
-	async function loadPassphraseImagePreview(
-		fileId: string,
-		key: string,
-		token: string,
-		fileMetadata: FileMetadata,
-		requestId: number
-	) {
-		if (!isImagePreviewable(fileMetadata)) return;
-
-		if ((fileMetadata.size || 0) > IMAGE_PREVIEW_MAX_BYTES) {
-			passphraseImagePreviewError = tr('preview.imageOnlyLimit', {
-				limit: formatPreviewLimit(IMAGE_PREVIEW_MAX_BYTES)
-			});
-			return;
-		}
-
-		isLoadingPassphraseImagePreview = true;
-
-		try {
-			const { decrypted } = await downloadAndDecryptFile(fileId, key, token, async () => {});
-			const previewType = resolveImagePreviewType(fileMetadata);
-			const previewBlob =
-				previewType && decrypted.type !== previewType
-					? new Blob([decrypted], { type: previewType })
-					: decrypted;
-			const objectUrl = URL.createObjectURL(previewBlob);
-
-			if (requestId !== passphrasePreviewRequestId) {
-				URL.revokeObjectURL(objectUrl);
-				return;
-			}
-
-			passphraseImagePreviewUrl = objectUrl;
-		} catch (error) {
-			if (requestId !== passphrasePreviewRequestId) return;
-			console.error('Passphrase image preview error:', error);
-			const unavailableMessage = getUnavailableDownloadMessage(error);
-			if (unavailableMessage) {
-				passphraseFileMetadata = { error: unavailableMessage };
-				return;
-			}
-			passphraseImagePreviewError = tr('preview.imageLoadError');
-		} finally {
-			if (requestId === passphrasePreviewRequestId) {
-				isLoadingPassphraseImagePreview = false;
-			}
-		}
-	}
-
-	async function loadPassphrasePreviews(
-		fileId: string,
-		key: string,
-		token: string,
-		fileMetadata: FileMetadata,
-		requestId: number
-	) {
-		const previewTasks: Promise<void>[] = [];
-
-		if (isTextPreviewable(fileMetadata)) {
-			previewTasks.push(loadPassphraseTextPreview(fileId, key, token, fileMetadata, requestId));
-		}
-
-		if (isImagePreviewable(fileMetadata)) {
-			previewTasks.push(loadPassphraseImagePreview(fileId, key, token, fileMetadata, requestId));
-		}
-
-		if (previewTasks.length > 0) {
-			await Promise.all(previewTasks);
-		}
-	}
-
-	function animatePassphraseProgress() {
-		const diff = passphraseDownloadProgress - passphraseDisplayProgress;
-		if (Math.abs(diff) < 0.2) {
-			passphraseDisplayProgress = passphraseDownloadProgress;
-		} else {
-			passphraseDisplayProgress += diff * 0.1;
-		}
-
-		if (
-			passphraseDisplayProgress > 2 &&
-			passphraseDisplayProgress < 99 &&
-			passphraseDownloadStartTime > 0
-		) {
-			const elapsed = (Date.now() - passphraseDownloadStartTime) / 1000;
-			if (elapsed > 0.5) {
-				const rate = passphraseDisplayProgress / elapsed;
-				passphraseEta = formatEta((100 - passphraseDisplayProgress) / rate);
-			}
-		} else if (passphraseDisplayProgress >= 99) {
-			passphraseEta = '';
-		}
-
-		if (passphraseDisplayProgress !== passphraseDownloadProgress || isPassphraseDownloading) {
-			passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
-		}
-	}
-
-	// Kick off the smoothing animation when the incoming progress changes. Only
-	// `passphraseDownloadProgress` is tracked; the animation bookkeeping is read/written
-	// untracked so this effect never re-triggers itself (the rAF loop self-schedules).
-	$effect(() => {
-		const next = passphraseDownloadProgress;
-		untrack(() => {
-			if (next !== passphraseDisplayProgress) {
-				if (passphraseDownloadStartTime === 0 && next > 0) {
-					passphraseDownloadStartTime = Date.now();
-				}
-				if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
-				passphraseAnimFrame = requestAnimationFrame(animatePassphraseProgress);
-			}
-		});
-	});
-
-	run(() => {
-		if (passphraseDownloadComplete) {
-			passphraseDisplayProgress = 100;
-			passphraseEta = '';
-		}
-	});
-
-	function validateAndSetFile(file: File): boolean {
+	/** Validate a picked/dropped/pasted file and make it the upload selection. */
+	function acceptFile(file: File): boolean {
+		if (!canAcceptFile) return false;
 		if (!$configStore.data) {
 			fileSizeError = 'Unable to validate file size: configuration not loaded';
 			return false;
 		}
-		const fp = new FileProcessor();
-		const max = fp.getMaxFileSize();
+		const max = new FileProcessor().getMaxFileSize();
 		if (file.size > max) {
 			fileSizeError = tr('upload.fileTooLarge', { size: FileProcessor.formatFileSize(max) });
 			return false;
 		}
-		selectedFile = file;
+		upload = { kind: 'selected', file };
 		fileSizeError = '';
 		return true;
 	}
@@ -535,86 +133,101 @@
 	function handleFileSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
 		if (input.files?.length) {
-			if (!validateAndSetFile(input.files[0])) {
+			if (!acceptFile(input.files[0])) {
 				input.value = '';
 			}
 		}
 	}
 
-	function cleanupMemoryReferences() {
-		if (sharePassphrase && selectedFile) {
-			if (fileInput) fileInput.value = '';
-		}
-	}
-
-	function clearUploadDraft() {
-		selectedFile = null;
+	/** Back to an empty upload area (cancels the result of any in-flight upload). */
+	function clearUpload() {
+		uploadAttempt += 1;
+		upload = { kind: 'idle' };
+		uploadProgress = 0;
+		uploadMessage = '';
 		fileSizeError = '';
-		uploadError = '';
 		if (fileInput) fileInput.value = '';
 	}
 
 	async function handleUpload() {
-		if (!selectedFile) return;
+		if (upload.kind !== 'selected' && upload.kind !== 'failed') return;
+		const file = upload.file;
 		if (!$configStore.data) {
 			fileSizeError = 'Unable to upload: configuration not loaded';
 			return;
 		}
 
-		const fp = new FileProcessor();
-		const max = fp.getMaxFileSize();
-		if (selectedFile.size > max) {
+		const max = new FileProcessor().getMaxFileSize();
+		if (file.size > max) {
 			fileSizeError = tr('upload.fileTooLarge', { size: FileProcessor.formatFileSize(max) });
 			return;
 		}
 
+		const attempt = ++uploadAttempt;
+		const isCurrent = () => attempt === uploadAttempt;
+		upload = { kind: 'uploading', file };
+		uploadProgress = 0;
+		uploadMessage = '';
+
+		// A fresh passphrase per attempt: a retry after a failure gets a new fileId,
+		// which avoids colliding with a partial upload on the server.
+		const passphrase = generatePassphrase(passphraseWordCount);
+
 		try {
-			isUploading = true;
-			uploadError = '';
 			const { initWasm, getWasmInstance } = await import('$lib/utils/wasm-loader');
 			await initWasm();
-
-			if (!generatedPassphrase) generatedPassphrase = generatePassphrase(passphraseWordCount);
 
 			const wasm = getWasmInstance();
 			if (!wasm || !wasm.deriveFromPassphrase) throw new Error('WASM not initialized');
 
 			const keySize = parseInt($configStore.data.key_size) || 128;
-			const derived = wasm.deriveFromPassphrase(generatedPassphrase, keySize);
+			const derived = wasm.deriveFromPassphrase(passphrase, keySize);
 			if (derived instanceof Error) throw derived;
 
 			const { fileId, key } = derived as { fileId: string; key: string };
 
 			await uploadEncryptedFile(
-				selectedFile,
+				file,
 				key,
 				async (progress, message) => {
+					if (!isCurrent()) return;
 					uploadProgress = progress;
 					uploadMessage = message;
 				},
 				fileId
 			);
 
-			sharePassphrase = generatedPassphrase;
-			shareUrl = `${window.location.origin}/${fileId}#key=${key}`;
-			cleanupMemoryReferences();
+			if (!isCurrent()) return;
+			upload = {
+				kind: 'shared',
+				file,
+				passphrase,
+				url: `${window.location.origin}/${fileId}#key=${key}`
+			};
+			if (fileInput) fileInput.value = '';
 		} catch (error) {
-			uploadError = error instanceof Error ? error.message : String(error);
+			if (!isCurrent()) return;
+			upload = {
+				kind: 'failed',
+				file,
+				error: error instanceof Error ? error.message : String(error)
+			};
 			uploadProgress = 0;
 			uploadMessage = '';
-			generatedPassphrase = generatePassphrase(passphraseWordCount); // fresh passphrase → new fileId avoids server-side collision
-		} finally {
-			isUploading = false;
 		}
 	}
 
+	/** Resolve the passphrase in the form to a file and show it, ready to download. */
 	async function handlePassphraseDownload() {
 		const phrase = passphraseInput.trim();
-		if (!phrase) return;
+		if (!phrase || retrieve.kind === 'resolving') return;
+		// Never let a passphrase lookup replace an upload or download in flight.
+		if (upload.kind === 'uploading' || retrieve.kind === 'downloading') return;
 
-		isDerivingPassphrase = true;
-		passphraseError = '';
-		const previewRequestId = resetPassphrasePreviews();
+		const attempt = ++retrieveAttempt;
+		retrieve = { kind: 'resolving' };
+		previews.reset();
+		dlProgress.reset();
 
 		try {
 			const { initWasm, getWasmInstance } = await import('$lib/utils/wasm-loader');
@@ -632,137 +245,66 @@
 
 			const hmacToken = await generateHmacToken(fileId, key);
 			const response = await fetchMetadata(fileId, key, hmacToken);
+			if (attempt !== retrieveAttempt) return;
 
-			if (response.metadata?.error) {
-				throw new Error(response.metadata.error);
-			}
-
-			clearUploadDraft();
-			passphraseFileId = fileId;
-			passphraseKey = key;
-			passphraseFileMetadata = response.metadata;
-			passphraseFileSizeStr = response.size?.toString() ?? '';
-			void loadPassphrasePreviews(fileId, key, hmacToken, response.metadata, previewRequestId);
+			clearUpload();
+			retrieve = {
+				kind: 'ready',
+				file: { fileId, key, metadata: response.metadata, fileSize: response.size ?? '' }
+			};
+			void previews.load({
+				fileId,
+				key,
+				token: hmacToken,
+				metadata: response.metadata,
+				onUnavailable: (message) => {
+					// Only meaningful while the user is still looking at this file.
+					if (attempt === retrieveAttempt && retrieve.kind === 'ready') {
+						retrieve = { kind: 'unavailable', message };
+					}
+				}
+			});
 		} catch (err) {
-			passphraseError = tr('passphrase.invalidCode');
-			resetPassphrasePreviews();
+			if (attempt !== retrieveAttempt) return;
 			console.error('Passphrase resolve error:', err);
-		} finally {
-			isDerivingPassphrase = false;
+			retrieve = { kind: 'idle', error: tr('passphrase.invalidCode') };
 		}
 	}
 
 	async function initiatePassphraseDownload() {
-		if (!passphraseFileId || !passphraseKey || isPassphraseDownloading) return;
-
-		isPassphraseDownloading = true;
-		passphraseDownloadError = '';
+		if (retrieve.kind !== 'ready' && retrieve.kind !== 'download-failed') return;
+		const file = retrieve.file;
+		const attempt = retrieveAttempt;
+		retrieve = { kind: 'downloading', file };
+		dlProgress.begin();
 
 		try {
-			const hmacToken = await generateHmacToken(passphraseFileId, passphraseKey);
-
-			const { stream, metadata: fileMeta } = await streamDownloadAndDecrypt(
-				passphraseFileId,
-				passphraseKey,
-				hmacToken,
-				async (progress) => {
-					passphraseDownloadProgress = progress;
-				}
-			);
-
-			const reader = stream.getReader();
-			const chunks: BlobPart[] = [];
-			let receivedLength = 0;
-
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				if (value) {
-					chunks.push(new Uint8Array(value));
-					receivedLength += value.length;
-				}
-			}
-
-			if (receivedLength === 0) throw new Error('Filen er allerede slettet fra serveren');
-
-			const blob = new Blob(chunks, { type: fileMeta.contentType || 'application/octet-stream' });
-			if (blob.size === 0) throw new Error('Filen er allerede slettet fra serveren');
-
-			const blobUrl = window.URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = blobUrl;
-			a.download = fileMeta.filename;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-			window.URL.revokeObjectURL(blobUrl);
-
-			try {
-				await fetch(`/api/delete/${passphraseFileId}`, {
-					method: 'DELETE',
-					headers: { 'Content-Type': 'application/json', 'X-HMAC-Token': hmacToken }
-				});
-			} catch (err) {
-				console.error('Delete error:', err);
-			}
-
-			passphraseDownloadComplete = true;
+			const outcome = await downloadSaveAndDelete(file.fileId, file.key, (p) => {
+				if (attempt === retrieveAttempt) dlProgress.set(p);
+			});
+			if (attempt !== retrieveAttempt) return;
+			dlProgress.complete();
+			retrieve = {
+				kind: 'downloaded',
+				file,
+				deleteError: outcome.deleted ? null : outcome.message
+			};
 		} catch (error) {
-			passphraseDownloadError = (error as Error).message;
-			passphraseDownloadProgress = 0;
-		} finally {
-			isPassphraseDownloading = false;
+			if (attempt !== retrieveAttempt) return;
+			dlProgress.reset();
+			retrieve = { kind: 'download-failed', file, error: (error as Error).message };
 		}
 	}
 
-	function removeFile() {
-		selectedFile = null;
-		sharePassphrase = '';
-		shareUrl = '';
-		generatedPassphrase = '';
-		uploadProgress = 0;
-		uploadMessage = '';
-		fileSizeError = '';
-		uploadError = '';
-		if (fileInput) fileInput.value = '';
-		generatedPassphrase = generatePassphrase(passphraseWordCount);
-	}
-
 	function resetAll() {
-		selectedFile = null;
-		isUploading = false;
-		uploadProgress = 0;
-		uploadMessage = '';
-		sharePassphrase = '';
-		shareUrl = '';
-		fileSizeError = '';
-		uploadError = '';
-		generatedPassphrase = generatePassphrase(passphraseWordCount);
+		clearUpload();
+		retrieveAttempt += 1;
+		retrieve = { kind: 'idle', error: null };
 		passphraseInput = '';
-		passphraseError = '';
-		passphraseFileId = '';
-		passphraseKey = '';
-		passphraseFileMetadata = null;
-		passphraseFileSizeStr = '';
-		isPassphraseDownloading = false;
-		passphraseDownloadProgress = 0;
-		passphraseDisplayProgress = 0;
-		passphraseDownloadComplete = false;
-		passphraseDownloadError = '';
-		passphraseDownloadStartTime = 0;
-		passphraseEta = '';
-		resetPassphrasePreviews();
+		previews.reset();
+		dlProgress.reset();
 		isDragging = false;
 		dragCounter = 0;
-		if (fileInput) fileInput.value = '';
-		if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
-	}
-
-	function dismissUploadError() {
-		uploadError = '';
-		selectedFile = null;
-		generatedPassphrase = generatePassphrase(passphraseWordCount);
-		if (fileInput) fileInput.value = '';
 	}
 
 	function preventBrowserFileDrop(event: DragEvent) {
@@ -780,7 +322,7 @@
 	function handleDropZoneKeydown(event: KeyboardEvent) {
 		if (event.key === 'Enter') {
 			event.preventDefault();
-			if (selectedFile && !isUploading) {
+			if (upload.kind === 'selected') {
 				handleUpload();
 			} else {
 				handleZoneClick();
@@ -799,7 +341,7 @@
 	}
 
 	function handleDropZoneContextMenu(event: MouseEvent) {
-		if (isUploading || sharePassphrase) return;
+		if (!canAcceptFile) return;
 		event.preventDefault();
 		event.stopPropagation();
 		openPasteAffordance();
@@ -829,7 +371,7 @@
 	}
 
 	async function pasteFromClipboard() {
-		if (isUploading || sharePassphrase) return;
+		if (!canAcceptFile) return;
 		if (!browser || !navigator.clipboard) {
 			pasteAffordanceState = 'denied';
 			return;
@@ -848,7 +390,7 @@
 					if (imageType) {
 						const blob = await item.getType(imageType);
 						const ext = imageType.split('/')[1] || 'png';
-						processClipboardFile(
+						acceptFile(
 							new File([blob], `screenshot-${ts}.${ext}`, { type: imageType })
 						);
 						dismissPasteAffordance();
@@ -859,7 +401,7 @@
 						const text = await blob.text();
 						if (text.trim()) {
 							const out = new Blob([text], { type: 'text/plain' });
-							processClipboardFile(
+							acceptFile(
 								new File([out], `pasted-text-${ts}.txt`, { type: 'text/plain' })
 							);
 							dismissPasteAffordance();
@@ -879,7 +421,7 @@
 				return;
 			}
 			const out = new Blob([text], { type: 'text/plain' });
-			processClipboardFile(new File([out], `pasted-text-${ts}.txt`, { type: 'text/plain' }));
+			acceptFile(new File([out], `pasted-text-${ts}.txt`, { type: 'text/plain' }));
 			dismissPasteAffordance();
 		} catch {
 			pasteAffordanceState = 'denied';
@@ -888,10 +430,9 @@
 
 	function handlePageDrop(event: DragEvent) {
 		event.preventDefault();
-		if (isUploading || sharePassphrase) return;
 		const files = event.dataTransfer?.files;
 		if (files?.length) {
-			validateAndSetFile(files[0]);
+			acceptFile(files[0]);
 		}
 	}
 
@@ -900,6 +441,9 @@
 		const hashParams = new URLSearchParams(window.location.hash.slice(1));
 		const passphrase = hashParams.get('passphrase');
 		if (!passphrase) return false;
+		// Leave the hash in place while an upload/download is running so the user
+		// can open it once that finishes, instead of clobbering the transfer.
+		if (upload.kind === 'uploading' || retrieve.kind === 'downloading') return false;
 		history.replaceState(null, '', window.location.pathname);
 		passphraseInput = passphrase;
 		await handlePassphraseDownload();
@@ -913,9 +457,14 @@
 	onMount(async () => {
 		if (!browser) return;
 
-		// Block browser's default file-drop navigation on the whole page
+		// Register every page listener up front. These used to be added only when
+		// the page was NOT opened via a #passphrase= link, so after resetting from
+		// such a link, paste / Enter-to-upload / click-outside never worked.
 		document.addEventListener('dragover', preventBrowserFileDrop);
 		document.addEventListener('drop', handlePageDrop);
+		window.addEventListener('paste', handlePaste);
+		window.addEventListener('keydown', handleGlobalEnter);
+		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
 
 		if ($configStore.loading) {
 			await new Promise<void>((resolve) => {
@@ -937,15 +486,8 @@
 		// without reloading, so the on-mount check alone would never see it.
 		window.addEventListener('hashchange', handleHashChange);
 
-		// Handle #passphrase=... in URL — resolve inline and auto-start download
-		if (await tryPassphraseFromHash()) {
-			return;
-		}
-
-		generatedPassphrase = generatePassphrase(passphraseWordCount);
-		window.addEventListener('paste', handlePaste);
-		window.addEventListener('keydown', handleGlobalEnter);
-		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+		// Handle #passphrase=... in URL — resolve inline
+		await tryPassphraseFromHash();
 	});
 
 	onDestroy(() => {
@@ -957,9 +499,9 @@
 			document.removeEventListener('drop', handlePageDrop);
 			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
 		}
-		if (passphraseAnimFrame) cancelAnimationFrame(passphraseAnimFrame);
 		if (pasteAffordanceTimer) clearTimeout(pasteAffordanceTimer);
-		resetPassphrasePreviews();
+		previews.reset();
+		dlProgress.destroy();
 	});
 
 	function handleDragEnter(event: DragEvent) {
@@ -986,21 +528,20 @@
 		event.stopPropagation();
 		isDragging = false;
 		dragCounter = 0;
-		if (isUploading || sharePassphrase) return;
 		const files = event.dataTransfer?.files;
 		if (files?.length) {
-			validateAndSetFile(files[0]);
+			acceptFile(files[0]);
 		}
 	}
 
 	function handleZoneClick() {
-		if (!isUploading && !sharePassphrase) fileInput?.click();
+		if (canAcceptFile) fileInput?.click();
 	}
 
 	async function handlePaste(event: ClipboardEvent) {
 		const target = event.target as HTMLElement;
 		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-		if (isUploading || sharePassphrase) return;
+		if (!canAcceptFile) return;
 
 		const items = event.clipboardData?.items;
 		if (!items) return;
@@ -1019,7 +560,7 @@
 					const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
 					filename = `screenshot-${ts}.${item.type.split('/')[1] || 'png'}`;
 				}
-				await processClipboardFile(new File([blob], filename, { type: item.type }));
+				acceptFile(new File([blob], filename, { type: item.type }));
 				return;
 			}
 
@@ -1027,7 +568,7 @@
 				event.preventDefault();
 				const file = item.getAsFile();
 				if (file) {
-					await processClipboardFile(file);
+					acceptFile(file);
 					return;
 				}
 			}
@@ -1038,7 +579,7 @@
 					if (!text.trim()) return;
 					const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
 					const blob = new Blob([text], { type: 'text/plain' });
-					await processClipboardFile(
+					acceptFile(
 						new File([blob], `pasted-text-${ts}.txt`, { type: 'text/plain' })
 					);
 				});
@@ -1049,7 +590,7 @@
 
 	function handleGlobalEnter(event: KeyboardEvent) {
 		if (event.key !== 'Enter' || event.defaultPrevented) return;
-		if (!selectedFile || isUploading || sharePassphrase) return;
+		if (upload.kind !== 'selected') return;
 		const target = event.target as HTMLElement | null;
 		if (target) {
 			const tag = target.tagName;
@@ -1067,21 +608,6 @@
 		event.preventDefault();
 		handleUpload();
 	}
-
-	function processClipboardFile(file: File) {
-		if (!$configStore.data) {
-			fileSizeError = 'Unable to validate file size: configuration not loaded';
-			return;
-		}
-		const fp = new FileProcessor();
-		const max = fp.getMaxFileSize();
-		if (file.size > max) {
-			fileSizeError = tr('upload.fileTooLarge', { size: FileProcessor.formatFileSize(max) });
-			return;
-		}
-		selectedFile = file;
-		fileSizeError = '';
-	}
 </script>
 
 <div class="page-container">
@@ -1093,7 +619,7 @@
 				>{$t('home.titleAfter')}
 			</h1>
 
-			{#if !sharePassphrase}
+			{#if upload.kind !== 'shared'}
 				<p class="description">
 					{$t('home.description')}
 				</p>
@@ -1102,7 +628,7 @@
 					<ErrorMessage message={fileSizeError} />
 				{/if}
 
-				{#if uploadError && selectedFile}
+				{#if upload.kind === 'failed'}
 					<div class="retry-row" in:fly={{ y: 6, duration: 200 }}>
 						<div class="retry-left">
 							<svg
@@ -1120,15 +646,15 @@
 								<line x1="12" y1="16" x2="12.01" y2="16" />
 							</svg>
 							<div class="retry-text">
-								<span class="retry-filename">{selectedFile.name}</span>
-								<span class="retry-errmsg">{uploadError}</span>
+								<span class="retry-filename">{upload.file.name}</span>
+								<span class="retry-errmsg">{upload.error}</span>
 							</div>
 						</div>
 						<div class="retry-actions">
 							<button class="btn-retry" onclick={handleUpload}>{$t('common.retry')}</button>
 							<button
 								class="btn-dismiss-retry"
-								onclick={dismissUploadError}
+								onclick={clearUpload}
 								aria-label={$t('common.cancel')}
 							>
 								<svg
@@ -1150,11 +676,10 @@
 				{/if}
 
 				<!-- Row 1: Drop zone — slides away once a passphrase file is resolved, on upload error, or when a file is selected -->
-				{#if !passphraseFileMetadata && !uploadError && !selectedFile}
+				{#if upload.kind === 'idle' && !hasRetrievedFile}
 					<div
 						class="drop-zone"
 						class:dragging={isDragging}
-						class:uploading={isUploading}
 						bind:this={dropZoneEl}
 						onclick={handleZoneClick}
 						oncontextmenu={handleDropZoneContextMenu}
@@ -1215,7 +740,7 @@
 							bind:this={fileInput}
 							onchange={handleFileSelect}
 							class="file-input"
-							disabled={isUploading}
+							disabled={!canAcceptFile}
 						/>
 
 						<div class="drop-icon">
@@ -1243,7 +768,7 @@
 			{/if}
 
 			<!-- Selected file preview: shown after file chosen, before upload starts -->
-			{#if selectedFile && !isUploading && !sharePassphrase && !uploadError && !passphraseFileMetadata}
+			{#if upload.kind === 'selected'}
 				<div class="selected-file-row" in:fly={{ y: 8, duration: 220 }}>
 					<div class="col-icon">
 						<svg
@@ -1261,14 +786,14 @@
 						</svg>
 					</div>
 					<div class="col-info">
-						<div class="file-name">{selectedFile.name}</div>
-						<div class="file-pre-size">{FileProcessor.formatFileSize(selectedFile.size)}</div>
+						<div class="file-name">{upload.file.name}</div>
+						<div class="file-pre-size">{FileProcessor.formatFileSize(upload.file.size)}</div>
 					</div>
 					<div class="selected-col-action">
 						<button class="btn-upload-now" onclick={handleUpload}>{$t('upload.uploadNow')}</button>
 						<button
 							class="btn-remove-file"
-							onclick={removeFile}
+							onclick={clearUpload}
 							aria-label={$t('upload.removeFile')}
 						>
 							<svg
@@ -1291,36 +816,36 @@
 
 			<!-- Row 2: Upload progress -->
 			<ProgressBar
-				isVisible={isUploading || !!sharePassphrase}
-				isComplete={!!sharePassphrase}
+				isVisible={uploadLocked}
+				isComplete={upload.kind === 'shared'}
 				progress={uploadProgress}
 				message={uploadMessage}
-				fileName={selectedFile?.name ?? ''}
-				fileSize={selectedFile ? FileProcessor.formatFileSize(selectedFile.size) : ''}
-				fileSizeBytes={selectedFile?.size ?? 0}
+				fileName={uploadFile?.name ?? ''}
+				fileSize={uploadFile ? FileProcessor.formatFileSize(uploadFile.size) : ''}
+				fileSizeBytes={uploadFile?.size ?? 0}
 			/>
 
 			<PassphraseShare
-				passphrase={sharePassphrase}
-				secureUrl={shareUrl}
-				isVisible={!!sharePassphrase}
+				passphrase={upload.kind === 'shared' ? upload.passphrase : ''}
+				secureUrl={upload.kind === 'shared' ? upload.url : ''}
+				isVisible={upload.kind === 'shared'}
 			/>
 
 			<!-- Passphrase download panel -->
-			{#if !isUploading && !sharePassphrase}
+			{#if !uploadLocked}
 				<div class="passphrase-panel" transition:slide={{ duration: 300, easing: cubicOut }}>
 					<!-- "eller" separator fades away once a file is resolved -->
-					{#if !passphraseFileMetadata && !selectedFile}
+					{#if !hasRetrievedFile && upload.kind === 'idle'}
 						<div class="horizontal-separator" out:fade={{ duration: 200 }}>
 							<span>{$t('common.or')}</span>
 						</div>
 					{/if}
 
-					{#if !passphraseFileMetadata && !selectedFile}
+					{#if !hasRetrievedFile && upload.kind === 'idle'}
 						<div class="copy-section" out:slide={{ duration: 250, easing: cubicOut }}>
 							<p class="hint">{$t('passphrase.hint')}</p>
-							{#if passphraseError}
-								<p class="passphrase-error">{passphraseError}</p>
+							{#if retrieve.kind === 'idle' && retrieve.error}
+								<p class="passphrase-error">{retrieve.error}</p>
 							{/if}
 							<form onsubmit={preventDefault(handlePassphraseDownload)}>
 								<div class="input-group">
@@ -1331,220 +856,211 @@
 										bind:value={passphraseInput}
 										bind:this={passphraseInputEl}
 										onkeydown={handlePassphraseKeydown}
-										disabled={isDerivingPassphrase}
+										disabled={retrieve.kind === 'resolving'}
 									/>
 									<button
 										type="submit"
 										class="button"
-										disabled={!passphraseInput.trim() || isDerivingPassphrase}
+										disabled={!passphraseInput.trim() || retrieve.kind === 'resolving'}
 									>
-										{isDerivingPassphrase ? $t('common.loadingShort') : $t('passphrase.findFile')}
+										{retrieve.kind === 'resolving'
+											? $t('common.loadingShort')
+											: $t('passphrase.findFile')}
 									</button>
 								</div>
 							</form>
 						</div>
 					{/if}
 
-					{#if passphraseFileMetadata}
-						{#if passphraseFileMetadata.error}
-							<ErrorMessage message={passphraseFileMetadata.error} />
-						{:else}
-							{#if isImagePreviewable(passphraseFileMetadata)}
-								<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
-									<div class="preview-header">
-										<h2>{$t('preview.title')}</h2>
-										<span class="preview-badge">{$t('preview.image')}</span>
+					{#if retrieve.kind === 'unavailable'}
+						<ErrorMessage message={retrieve.message} />
+					{:else if retrievedFile}
+						{#if isImagePreviewable(retrievedFile.metadata)}
+							<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+								<div class="preview-header">
+									<h2>{$t('preview.title')}</h2>
+									<span class="preview-badge">{$t('preview.image')}</span>
+								</div>
+
+								{#if previews.image.status === 'loading'}
+									<div class="preview-loading">
+										<LoadingSpinner message={$t('preview.loadingImage')} />
 									</div>
+								{:else if previews.image.status === 'ready'}
+									<img
+										class="image-preview"
+										src={previews.image.url}
+										alt={$t('preview.imageAlt', { filename: retrievedFile.metadata.filename })}
+										use:fitViewport={fitPreview}
+									/>
+								{:else if previews.image.status === 'error'}
+									<p class="preview-note">{previews.image.message}</p>
+								{/if}
+							</div>
+						{/if}
 
-									{#if isLoadingPassphraseImagePreview}
-										<div class="preview-loading">
-											<LoadingSpinner message={$t('preview.loadingImage')} />
-										</div>
-									{:else if passphraseImagePreviewUrl}
-										<img
-											class="image-preview"
-											src={passphraseImagePreviewUrl}
-											alt={$t('preview.imageAlt', { filename: passphraseFileMetadata.filename })}
-											use:fitViewport={{
-												reserveSelector: '.file-row',
-												bottomGap: 48,
-												minHeight: 200
-											}}
-										/>
-									{:else if passphraseImagePreviewError}
-										<p class="preview-note">{passphraseImagePreviewError}</p>
-									{/if}
+						{#if isTextPreviewable(retrievedFile.metadata)}
+							<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
+								<div class="preview-header">
+									<h2>{$t('preview.title')}</h2>
+									<span class="preview-badge">{$t('preview.text')}</span>
 								</div>
-							{/if}
 
-							{#if isTextPreviewable(passphraseFileMetadata)}
-								<div class="preview-card" in:fly={{ y: 12, duration: 240 }}>
-									<div class="preview-header">
-										<h2>{$t('preview.title')}</h2>
-										<span class="preview-badge">{$t('preview.text')}</span>
+								{#if previews.text.status === 'loading'}
+									<div class="preview-loading">
+										<LoadingSpinner message={$t('preview.loadingText')} />
 									</div>
-
-									{#if isLoadingPassphraseTextPreview}
-										<div class="preview-loading">
-											<LoadingSpinner message={$t('preview.loadingText')} />
-										</div>
-									{:else if passphraseTextPreview !== null}
-										{#if passphraseTextPreview.length > 0}
-											<div class="text-preview-wrap">
-												<button
-													type="button"
-													class="copy-preview-btn"
-													class:copied={passphraseCopyState === 'copied'}
-													class:error={passphraseCopyState === 'error'}
-													onclick={copyPassphrasePreview}
-													aria-label={$t('preview.copyAria')}
-													title={$t('preview.copyAria')}
-												>
-													{#if passphraseCopyState === 'copied'}
-														{$t('common.copied')}
-													{:else if passphraseCopyState === 'error'}
-														{$t('common.error')}
-													{:else}
-														<svg
-															width="14"
-															height="14"
-															viewBox="0 0 24 24"
-															fill="none"
-															stroke="currentColor"
-															stroke-width="2"
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															aria-hidden="true"
-														>
-															<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-															<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-														</svg>
-														<span>{$t('common.copy')}</span>
-													{/if}
-												</button>
-												{#if passphraseTextPreviewMode === 'table'}
-													<div
-														class="table-preview"
-														use:fitViewport={{
-															reserveSelector: '.file-row',
-															bottomGap: 48,
-															minHeight: 200
-														}}
-													>
-														{@html passphraseTextPreviewHtml}
-													</div>
-												{:else}
-													<pre
-														class="text-preview syntax-preview"
-														use:fitViewport={{
-															reserveSelector: '.file-row',
-															bottomGap: 48,
-															minHeight: 200
-														}}>{@html passphraseTextPreviewHtml}</pre>
-												{/if}
-											</div>
-										{:else}
-											<p class="preview-note">{$t('preview.emptyTextFile')}</p>
-										{/if}
-
-										{#if isPassphraseTextPreviewTruncated}
-											<p class="preview-note">{$t('preview.truncated')}</p>
-										{/if}
-									{:else if passphraseTextPreviewError}
-										<p class="preview-note">{passphraseTextPreviewError}</p>
-									{/if}
-								</div>
-							{/if}
-
-							<!-- File row below copy-section, no border -->
-							<div class="file-row" in:fly={{ y: 12, duration: 260 }}>
-								<!-- Left: file icon -->
-								<div class="col-icon">
-									<svg
-										width="32"
-										height="32"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.5"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									>
-										<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-										<polyline points="13 2 13 9 20 9" />
-									</svg>
-								</div>
-
-								<!-- Middle: name · size · eta · progress -->
-								<div class="col-info">
-									<div class="file-name">{passphraseFileMetadata.filename}</div>
-									<div class="file-meta">
-										<div class="meta-left">
-											{#if passphraseFileSizeStr}
-												<span class="size">{passphraseFileSizeStr}</span>
-											{/if}
-											{#if passphraseEta && isPassphraseDownloading}
-												<span class="dot">·</span>
-												<span class="eta">{passphraseEta}</span>
-											{/if}
-										</div>
-										{#if isPassphraseDownloading || passphraseDownloadComplete}
-											<span class="pct">{Math.round(passphraseDisplayProgress)}%</span>
-										{/if}
-									</div>
-									{#if isPassphraseDownloading || passphraseDownloadComplete}
-										<div class="progress-track">
-											<div
-												class="progress-fill"
-												class:complete={passphraseDownloadComplete}
-												style="width: {passphraseDisplayProgress}%"
-											></div>
-										</div>
-									{/if}
-								</div>
-
-								<!-- Right: download button → spinner → checkmark -->
-								<div class="col-action">
-									{#if passphraseDownloadComplete}
-										<div class="checkmark" title={$t('download.completeTitle')}>
-											<svg
-												fill="currentColor"
-												width="28"
-												height="28"
-												viewBox="-2.4 -2.4 28.80 28.80"
-												xmlns="http://www.w3.org/2000/svg"
+								{:else if previews.text.status === 'ready'}
+									{#if previews.text.text.length > 0}
+										<div class="text-preview-wrap">
+											<button
+												type="button"
+												class="copy-preview-btn"
+												class:copied={previews.copyState === 'copied'}
+												class:error={previews.copyState === 'error'}
+												onclick={() => previews.copyText()}
+												aria-label={$t('preview.copyAria')}
+												title={$t('preview.copyAria')}
 											>
-												<g data-name="Layer 2">
-													<g data-name="checkmark-circle-2">
-														<rect width="24" height="24" opacity="0"></rect>
-														<path
-															d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm4.3 7.61l-4.57 6a1 1 0 0 1-.79.39 1 1 0 0 1-.79-.38l-2.44-3.11a1 1 0 0 1 1.58-1.23l1.63 2.08 3.78-5a1 1 0 1 1 1.6 1.22z"
-														></path>
-													</g>
-												</g>
-											</svg>
+												{#if previews.copyState === 'copied'}
+													{$t('common.copied')}
+												{:else if previews.copyState === 'error'}
+													{$t('common.error')}
+												{:else}
+													<svg
+														width="14"
+														height="14"
+														viewBox="0 0 24 24"
+														fill="none"
+														stroke="currentColor"
+														stroke-width="2"
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														aria-hidden="true"
+													>
+														<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+														<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+													</svg>
+													<span>{$t('common.copy')}</span>
+												{/if}
+											</button>
+											{#if previews.text.mode === 'table'}
+												<div class="table-preview" use:fitViewport={fitPreview}>
+													{@html previews.text.html}
+												</div>
+											{:else}
+												<pre
+													class="text-preview syntax-preview"
+													use:fitViewport={fitPreview}>{@html previews.text.html}</pre>
+											{/if}
 										</div>
-									{:else if isPassphraseDownloading}
-										<div class="spinner" aria-label={$t('download.downloadingAria')}></div>
 									{:else}
-										<button class="btn-last-ned" onclick={initiatePassphraseDownload}>
-											{$t('common.download')}
-										</button>
+										<p class="preview-note">{$t('preview.emptyTextFile')}</p>
 									{/if}
-								</div>
+
+									{#if previews.text.truncated}
+										<p class="preview-note">{$t('preview.truncated')}</p>
+									{/if}
+								{:else if previews.text.status === 'error'}
+									<p class="preview-note">{previews.text.message}</p>
+								{/if}
+							</div>
+						{/if}
+
+						<!-- File row below copy-section, no border -->
+						<div class="file-row" in:fly={{ y: 12, duration: 260 }}>
+							<!-- Left: file icon -->
+							<div class="col-icon">
+								<svg
+									width="32"
+									height="32"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+									<polyline points="13 2 13 9 20 9" />
+								</svg>
 							</div>
 
-							{#if passphraseDownloadComplete}
+							<!-- Middle: name · size · eta · progress -->
+							<div class="col-info">
+								<div class="file-name">{retrievedFile.metadata.filename}</div>
+								<div class="file-meta">
+									<div class="meta-left">
+										{#if retrievedFile.fileSize}
+											<span class="size">{retrievedFile.fileSize}</span>
+										{/if}
+										{#if dlProgress.eta && retrieveDownloading}
+											<span class="dot">·</span>
+											<span class="eta">{dlProgress.eta}</span>
+										{/if}
+									</div>
+									{#if retrieveDownloading || retrieveDownloaded}
+										<span class="pct">{Math.round(dlProgress.display)}%</span>
+									{/if}
+								</div>
+								{#if retrieveDownloading || retrieveDownloaded}
+									<div class="progress-track">
+										<div
+											class="progress-fill"
+											class:complete={retrieveDownloaded}
+											style="width: {dlProgress.display}%"
+										></div>
+									</div>
+								{/if}
+							</div>
+
+							<!-- Right: download button → spinner → checkmark -->
+							<div class="col-action">
+								{#if retrieveDownloaded}
+									<div class="checkmark" title={$t('download.completeTitle')}>
+										<svg
+											fill="currentColor"
+											width="28"
+											height="28"
+											viewBox="-2.4 -2.4 28.80 28.80"
+											xmlns="http://www.w3.org/2000/svg"
+										>
+											<g data-name="Layer 2">
+												<g data-name="checkmark-circle-2">
+													<rect width="24" height="24" opacity="0"></rect>
+													<path
+														d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm4.3 7.61l-4.57 6a1 1 0 0 1-.79.39 1 1 0 0 1-.79-.38l-2.44-3.11a1 1 0 0 1 1.58-1.23l1.63 2.08 3.78-5a1 1 0 1 1 1.6 1.22z"
+													></path>
+												</g>
+											</g>
+										</svg>
+									</div>
+								{:else if retrieveDownloading}
+									<div class="spinner" aria-label={$t('download.downloadingAria')}></div>
+								{:else}
+									<button class="btn-last-ned" onclick={initiatePassphraseDownload}>
+										{$t('common.download')}
+									</button>
+								{/if}
+							</div>
+						</div>
+
+						{#if retrieve.kind === 'downloaded'}
+							{#if retrieve.deleteError}
+								<div class="download-error" in:fly={{ y: 8, duration: 200 }}>
+									<ErrorMessage message={retrieve.deleteError} />
+								</div>
+							{:else}
 								<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
 									{$t('download.fileDeleted')}
 								</p>
 							{/if}
+						{/if}
 
-							{#if passphraseDownloadError}
-								<div class="download-error" in:fly={{ y: 8, duration: 200 }}>
-									<ErrorMessage message={passphraseDownloadError} />
-								</div>
-							{/if}
+						{#if retrieve.kind === 'download-failed'}
+							<div class="download-error" in:fly={{ y: 8, duration: 200 }}>
+								<ErrorMessage message={retrieve.error} />
+							</div>
 						{/if}
 					{/if}
 				</div>
@@ -1689,12 +1205,6 @@
 		box-shadow:
 			inset 0 3px 10px rgba(0, 0, 0, 0.1),
 			inset 0 1px 4px rgba(64, 184, 123, 0.15);
-	}
-
-	.drop-zone.uploading {
-		opacity: 0.45;
-		pointer-events: none;
-		cursor: default;
 	}
 
 	.drop-icon {

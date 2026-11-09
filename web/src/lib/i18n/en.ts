@@ -66,7 +66,9 @@ const en = {
 			"Could not fetch file information. Check that the key is correct, or that the file hasn't been deleted.",
 		decryptError: 'Could not decrypt the file - the file has now been deleted from the server',
 		deleteNetworkError:
-			'The file was downloaded, but could not be deleted from the server due to a network error.'
+			'The file was downloaded, but could not be deleted from the server due to a network error.',
+		deleteFailed: 'The file was downloaded, but could not be deleted from the server.',
+		unavailable: 'The file does not exist or has already been downloaded.'
 	},
 	key: {
 		requiredTitle: 'Decryption key required',
