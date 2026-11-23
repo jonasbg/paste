@@ -49,6 +49,16 @@ jobs:
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
             type=raw,value=dev,enable=${{ github.ref != format('refs/heads/{0}', 'main') }}
+          labels: |
+            org.opencontainers.image.title=paste
+            org.opencontainers.image.description=Zero-knowledge file sharing server with client-side encryption
+            org.opencontainers.image.vendor=jonasbg
+            org.opencontainers.image.url=https://github.com/jonasbg/paste
+            org.opencontainers.image.documentation=https://github.com/jonasbg/paste#readme
+
+      - name: Get build date (UTC, RFC 3339)
+        id: build-date
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       # Login to GitHub Container Registry. Runs on main/manual dispatch and on
       # same-repo PRs (which can push the :dev tag). Fork PRs have no registry
@@ -73,6 +83,11 @@ jobs:
           push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+            GIT_BRANCH=${{ github.head_ref || github.ref_name }}
+            BUILD_DATE=${{ steps.build-date.outputs.date }}
+            VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
