@@ -43,6 +43,10 @@ jobs:
       - name: Docker Metadata action
         uses: docker/metadata-action@v4.3.0
         id: meta
+        env:
+          # On pull_request builds, label revision with the PR head commit rather
+          # than GitHub's ephemeral merge commit.
+          DOCKER_METADATA_PR_HEAD_SHA: "true"
         with:
           images: ${{ vars.REGISTRY }}/${{ github.repository }}
           tags: |
@@ -54,7 +58,22 @@ jobs:
             org.opencontainers.image.description=Zero-knowledge file sharing server with client-side encryption
             org.opencontainers.image.vendor=jonasbg
             org.opencontainers.image.url=https://github.com/jonasbg/paste
-            org.opencontainers.image.documentation=https://github.com/jonasbg/paste#readme
+            org.opencontainers.image.documentation=https://github.com/jonasbg/paste
+
+      # metadata-action always emits licenses= (empty, as the repo has no
+      # licence on GitHub) and cannot be told not to; drop empty-valued labels
+      # so the image does not carry a blank licenses label.
+      - name: Drop empty labels
+        id: labels
+        env:
+          LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "labels<<$delim"
+            printf '%s\n' "$LABELS" | grep -v '=$' || true
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Get build date (UTC, RFC 3339)
         id: build-date
@@ -82,7 +101,7 @@ jobs:
           # Fork PRs can't authenticate to the registry, so those stay build-only.
           push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: ${{ steps.labels.outputs.labels }}
           build-args: |
             GIT_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
             GIT_BRANCH=${{ github.head_ref || github.ref_name }}

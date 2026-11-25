@@ -112,4 +112,4 @@ LABEL org.opencontainers.image.source="https://github.com/jonasbg/paste" \
       org.opencontainers.image.description="Zero-knowledge file sharing server with client-side encryption" \
       org.opencontainers.image.vendor="jonasbg" \
       org.opencontainers.image.url="https://github.com/jonasbg/paste" \
-      org.opencontainers.image.documentation="https://github.com/jonasbg/paste#readme"
+      org.opencontainers.image.documentation="https://github.com/jonasbg/paste"
