@@ -95,7 +95,7 @@
 					<circle
 						cx={dot.x + 0.5}
 						cy={dot.y + 0.5}
-						r="0.43"
+						r="0.48"
 						fill="#166534"
 					/>
 				{/each}
