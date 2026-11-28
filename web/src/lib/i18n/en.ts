@@ -23,7 +23,10 @@ const en = {
 		maxFileSize: 'Maximum file size {size}',
 		uploadNow: 'Upload',
 		removeFile: 'Remove file',
-		fileTooLarge: 'The file is too large. Maximum file size is {size}.'
+		fileTooLarge: 'The file is too large. Maximum file size is {size}.',
+		downloadsAllowed: 'Downloads allowed',
+		unlimited: 'Unlimited',
+		custom: 'Custom'
 	},
 	paste: {
 		reading: 'Reading clipboard...',
@@ -55,7 +58,16 @@ const en = {
 	download: {
 		completeTitle: 'Download complete',
 		downloadingAria: 'Downloading...',
-		fileDeleted: 'The file has been deleted from the server.'
+		fileDeleted: 'The file has been deleted from the server.',
+		remainingOne: '1 download left',
+		remainingMany: '{count} downloads left',
+		unlimited: 'Unlimited downloads',
+		downloadedRemainingOne: 'Downloaded — 1 download remaining on the server.',
+		downloadedRemainingMany: 'Downloaded — {count} downloads remaining on the server.',
+		downloadedUnlimited: 'Downloaded — file remains available until expiry.',
+		downloadAgain: 'Download again',
+		qrTitle: 'Open on your phone',
+		qrSubtitle: 'Scan this QR code with your phone camera to download directly — encryption key included.'
 	},
 	dl: {
 		titleLink: 'Secure',

@@ -5,10 +5,11 @@
 	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
 	import { initWasm } from '$lib/utils/wasm-loader';
-	import { fetchMetadata } from '$lib/services/fileService';
+	import { fetchMetadata, type RemainingDownloads } from '$lib/services/fileService';
 	import { downloadSaveAndDelete } from '$lib/services/downloadService';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
+	import QrCode from '$lib/components/Shared/QrCode.svelte';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import {
 		type FileMetadata,
@@ -22,7 +23,12 @@
 
 	let { fileId }: { fileId: string } = $props();
 
-	type ResolvedFile = { metadata: FileMetadata & { filename: string }; fileSize: string };
+	type ResolvedFile = {
+		metadata: FileMetadata & { filename: string };
+		fileSize: string;
+		maxDownloads: number | null;
+		remainingDownloads: RemainingDownloads;
+	};
 
 	/**
 	 * The page is always in exactly one of these phases. Each phase carries only
@@ -36,8 +42,15 @@
 		| { kind: 'loading-metadata' }
 		| { kind: 'ready'; key: string; file: ResolvedFile }
 		| { kind: 'downloading'; key: string; file: ResolvedFile }
-		/** Saved to disk. `deleteError` is set when the server copy could not be removed. */
-		| { kind: 'downloaded'; file: ResolvedFile; deleteError: string | null }
+		/** Saved to disk. `deleted` is false when downloads remain or delete failed. */
+		| {
+				kind: 'downloaded';
+				key: string;
+				file: ResolvedFile;
+				deleted: boolean;
+				remaining: RemainingDownloads;
+				deleteError: string | null;
+		  }
 		/** The server no longer has the file (already downloaded, deleted or expired). */
 		| { kind: 'unavailable'; message: string }
 		| { kind: 'failed'; message: string };
@@ -50,14 +63,34 @@
 	const progress = new SmoothProgress();
 
 	let file = $derived('file' in phase ? phase.file : null);
+	let activeKey = $derived('key' in phase ? phase.key : null);
 	let isDownloading = $derived(phase.kind === 'downloading');
 	let isDownloaded = $derived(phase.kind === 'downloaded');
+	let canDownloadAgain = $derived(
+		phase.kind === 'downloaded' && !phase.deleted && phase.remaining !== 0
+	);
+	let shareQrUrl = $derived(
+		browser && activeKey && fileId && !(phase.kind === 'downloaded' && phase.deleted)
+			? `${window.location.origin}/${fileId}#key=${activeKey}`
+			: ''
+	);
+
+	function formatRemainingBadge(rem: RemainingDownloads): string {
+		if (rem === 'unlimited') return $t('download.unlimited');
+		if (typeof rem === 'number') {
+			if (rem <= 0) return '';
+			return rem === 1
+				? $t('download.remainingOne')
+				: $t('download.remainingMany', { count: rem });
+		}
+		return '';
+	}
 
 	const fitPreview = {
 		containerSelector: '.download-section',
-		reserveSelector: '.file-row',
+		reserveSelector: '.file-row, .qr-download-card',
 		bottomGap: 48,
-		minHeight: 200
+		minHeight: 180
 	};
 
 	function validateAndExtractKey(input: string): string | null {
@@ -89,7 +122,12 @@
 			phase = {
 				kind: 'ready',
 				key,
-				file: { metadata: response.metadata, fileSize: response.size ?? '' }
+				file: {
+					metadata: response.metadata,
+					fileSize: response.size ?? '',
+					maxDownloads: response.maxDownloads ?? null,
+					remainingDownloads: response.remainingDownloads ?? null
+				}
 			};
 			void previews.load({
 				fileId,
@@ -121,7 +159,7 @@
 	}
 
 	async function initiateDownload() {
-		if (phase.kind !== 'ready') return;
+		if (phase.kind !== 'ready' && !(phase.kind === 'downloaded' && !phase.deleted)) return;
 		const { key, file } = phase;
 		phase = { kind: 'downloading', key, file };
 		progress.begin();
@@ -129,13 +167,36 @@
 		try {
 			const outcome = await downloadSaveAndDelete(fileId, key, (p) => progress.set(p));
 			progress.complete();
-			phase = {
-				kind: 'downloaded',
-				file,
-				deleteError: outcome.deleted ? null : outcome.message
-			};
-			manualKeyInput = '';
-			if (browser) window.history.replaceState({}, '', '/');
+			if (outcome.deleted) {
+				phase = {
+					kind: 'downloaded',
+					key,
+					file: { ...file, remainingDownloads: 0 },
+					deleted: true,
+					remaining: 0,
+					deleteError: null
+				};
+				manualKeyInput = '';
+				if (browser) window.history.replaceState({}, '', '/');
+			} else if ('remaining' in outcome) {
+				phase = {
+					kind: 'downloaded',
+					key,
+					file: { ...file, remainingDownloads: outcome.remaining },
+					deleted: false,
+					remaining: outcome.remaining,
+					deleteError: null
+				};
+			} else {
+				phase = {
+					kind: 'downloaded',
+					key,
+					file,
+					deleted: false,
+					remaining: file.remainingDownloads,
+					deleteError: outcome.message
+				};
+			}
 		} catch (error) {
 			console.error('Download error:', error);
 			progress.reset();
@@ -321,6 +382,10 @@
 								{#if file.fileSize}
 									<span class="size">{file.fileSize}</span>
 								{/if}
+								{#if formatRemainingBadge(file.remainingDownloads)}
+									<span class="dot">·</span>
+									<span class="downloads-pill">{formatRemainingBadge(file.remainingDownloads)}</span>
+								{/if}
 								{#if progress.eta && isDownloading}
 									<span class="dot">·</span>
 									<span class="eta">{progress.eta}</span>
@@ -343,7 +408,7 @@
 
 					<!-- Right: download button → spinner → checkmark -->
 					<div class="col-action">
-						{#if isDownloaded}
+						{#if isDownloaded && !canDownloadAgain}
 							<div class="checkmark" title={$t('download.completeTitle')}>
 								<svg
 									fill="currentColor"
@@ -368,9 +433,9 @@
 							<button
 								class="download-btn"
 								onclick={initiateDownload}
-								disabled={phase.kind !== 'ready'}
+								disabled={phase.kind !== 'ready' && !canDownloadAgain}
 							>
-								{$t('common.download')}
+								{canDownloadAgain ? $t('download.downloadAgain') : $t('common.download')}
 							</button>
 						{/if}
 					</div>
@@ -379,11 +444,32 @@
 				{#if phase.kind === 'downloaded'}
 					{#if phase.deleteError}
 						<ErrorMessage message={phase.deleteError} />
-					{:else}
+					{:else if phase.deleted}
 						<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
 							{$t('download.fileDeleted')}
 						</p>
+					{:else if phase.remaining === 'unlimited'}
+						<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
+							{$t('download.downloadedUnlimited')}
+						</p>
+					{:else if typeof phase.remaining === 'number' && phase.remaining > 0}
+						<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
+							{phase.remaining === 1
+								? $t('download.downloadedRemainingOne')
+								: $t('download.downloadedRemainingMany', { count: phase.remaining })}
+						</p>
 					{/if}
+				{/if}
+
+				{#if shareQrUrl}
+					<div class="qr-download-card" in:fly={{ y: 12, duration: 260 }}>
+						<QrCode
+							value={shareQrUrl}
+							size={140}
+							title={$t('download.qrTitle')}
+							subtitle={$t('download.qrSubtitle')}
+						/>
+					</div>
 				{/if}
 			{/if}
 
@@ -900,6 +986,19 @@
 		color: #6b7280;
 		margin: 0.625rem 0 0 0;
 		text-align: center;
+	}
+
+	.downloads-pill {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #166534;
+		background: rgba(64, 184, 123, 0.13);
+		border-radius: 999px;
+		padding: 0.12rem 0.5rem;
+	}
+
+	.qr-download-card {
+		margin-top: 1rem;
 	}
 
 	/* ── Mobile ── */

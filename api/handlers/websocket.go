@@ -25,8 +25,12 @@ const (
 	// pingInterval is how often the server sends a WebSocket ping frame to keep
 	// reverse proxies (nginx, caddy, …) from timing out idle connections.
 	pingInterval = 25 * time.Second
-	// pongWait is the maximum time we wait for the next client message or pong.
-	// Any read deadline is extended to now+pongWait after each received message.
+	// handshakeWait bounds the entire pre-transfer handshake (init → token →
+	// metadata header → IV). Pongs do NOT extend this deadline, preventing
+	// clients from holding .reserve locks open indefinitely.
+	handshakeWait = 15 * time.Second
+	// pongWait is the maximum time we wait for the next client message or pong
+	// once chunk transfer has started.
 	pongWait = 60 * time.Second
 	// writeWait is the maximum time we allow for a single write to complete.
 	writeWait = 10 * time.Second
@@ -64,14 +68,7 @@ func checkOrigin(r *http.Request) bool {
 
 // startPingLoop sends periodic WebSocket pings so reverse proxies do not cut
 // idle connections during large uploads/downloads. The goroutine exits when ctx
-// is cancelled or a write fails. The caller must configure ws.SetPongHandler to
-// reset the read deadline on each pong received.
-//
-// IMPORTANT: pings are sent via WriteControl, not WriteMessage.
-// Gorilla WebSocket allows only one concurrent writer, but WriteControl is
-// explicitly documented as safe to call concurrently with all other methods.
-// Using WriteMessage here would race with the main goroutine's data writes and
-// silently corrupt frames.
+// is cancelled or a write fails.
 func startPingLoop(ctx context.Context, ws *websocket.Conn) {
 	go func() {
 		ticker := time.NewTicker(pingInterval)
@@ -99,12 +96,18 @@ func wsWriteJSON(ws *websocket.Conn, v any) error {
 	return ws.WriteJSON(v)
 }
 
-func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *UploadLimiter) gin.HandlerFunc {
+func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *UploadLimiter, downloads *DownloadStore) gin.HandlerFunc {
 	// Limit inbound frame size to one encrypted chunk + GCM tag + small headroom.
 	// This prevents a malicious client from forcing gorilla to allocate a huge buffer
 	// before the application-level chunk-size validation can fire.
-	maxChunkBytes := GlobalConfig.ChunkSize*1024*1024 + 16
+	chunkPlainBytes := int64(GlobalConfig.ChunkSize) * 1024 * 1024
+	maxChunkBytes := int(chunkPlainBytes) + 16
 	maxFrameBytes := maxChunkBytes + 1024
+
+	// Allow framing overhead (encrypted metadata up to 64KB + 16B header + 12B IV
+	// + 16B GCM tag per chunk) so a plaintext file at MAX_FILE_SIZE succeeds.
+	maxChunks := (GlobalConfig.MaxFileSizeBytes / chunkPlainBytes) + 1
+	maxEncryptedBytes := GlobalConfig.MaxFileSizeBytes + headerSize + 65535 + 12 + maxChunks*16
 
 	// Frames are read into pooled buffers instead of ws.ReadMessage, which
 	// allocates and repeatedly regrows a fresh slice for every chunk.
@@ -123,29 +126,23 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 
 		ws.SetReadLimit(int64(maxFrameBytes))
 
-		// Keepalive: extend read deadline whenever a pong arrives.
-		ws.SetReadDeadline(time.Now().Add(pongWait))
-		ws.SetPongHandler(func(string) error {
-			ws.SetReadDeadline(time.Now().Add(pongWait))
-			return nil
-		})
+		// Strict fixed deadline across the entire handshake phase; pongs do not
+		// extend this deadline so idle sockets cannot squat on .reserve files.
+		handshakeDeadline := time.Now().Add(handshakeWait)
+		ws.SetReadDeadline(handshakeDeadline)
 
-		ctx, cancelPing := context.WithCancel(context.Background())
-		defer cancelPing()
-		startPingLoop(ctx, ws)
-
-		// 1. Initial Message: Size Check
+		// 1. Initial Message: Size & Download Limit Check
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
 			sendWSError(ws, "Failed to read initial message")
 			return
 		}
-		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		var init struct {
-			Type   string `json:"type"`
-			Size   int64  `json:"size"`
-			FileID string `json:"fileId,omitempty"` // Optional: for passphrase-based uploads
+			Type         string `json:"type"`
+			Size         int64  `json:"size"`
+			FileID       string `json:"fileId,omitempty"`       // Optional: for passphrase-based uploads
+			MaxDownloads *int   `json:"maxDownloads,omitempty"` // Optional: nil => 1, 0 => unlimited, 1..limit => finite
 		}
 		if err := json.Unmarshal(msg, &init); err != nil {
 			sendWSError(ws, "Invalid initial message format")
@@ -157,9 +154,18 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 			return
 		}
 
-		if init.Size < 0 || init.Size > int64(GlobalConfig.MaxFileSizeBytes) {
+		if init.Size < 0 || init.Size > GlobalConfig.MaxFileSizeBytes {
 			sendWSError(ws, "File too large")
 			return
+		}
+
+		maxDownloads := 1
+		if init.MaxDownloads != nil {
+			if *init.MaxDownloads < 0 || *init.MaxDownloads > GlobalConfig.MaxDownloadsLimit {
+				sendWSError(ws, "Invalid maxDownloads value")
+				return
+			}
+			maxDownloads = *init.MaxDownloads
 		}
 
 		upload, reason := limiter.Begin(c.ClientIP(), init.Size)
@@ -172,8 +178,9 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 		// 2. Generate or Use Provided ID
 		var id string
 		if init.FileID != "" {
-			// Client provided a custom fileID (passphrase mode)
-			if !validateID(init.FileID) {
+			// Restrict custom fileIDs strictly to 32-char lowercase hex (passphrase mode)
+			// so non-passphrase random IDs of other lengths cannot be probed.
+			if !validatePassphraseID(init.FileID) {
 				sendWSError(ws, "Invalid custom file ID format")
 				return
 			}
@@ -227,7 +234,6 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 			sendWSError(ws, "Failed to read token")
 			return
 		}
-		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		var tokenData struct {
 			Type  string `json:"type"`
@@ -250,14 +256,12 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 			return
 		}
 
-		// 4. Create File (with token). O_EXCL guarantees we never write into
-		// a file another upload created.
-		finalPath := filepath.Join(uploadDir, id+"."+tokenData.Token)
+		// 4. Create File using hashed token digest (never raw token on disk).
+		// O_EXCL guarantees we never write into a file another upload created.
+		finalPath := filepath.Join(uploadDir, id+"."+tokenDigest(tokenData.Token))
 		tmpPath := finalPath + ".tmp"
 		file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0640)
 		if errors.Is(err, fs.ErrExist) {
-			// Two concurrent passphrase uploads with the same derived fileId+token
-			// can both pass the Glob collision check; O_EXCL lets only one win.
 			sendWSError(ws, "Share code already in use, please try again with a different passphrase")
 			return
 		}
@@ -278,7 +282,6 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 			wsCleanup(ws, tmpPath, "Invalid header: incorrect size")
 			return
 		}
-		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		metadataLength := binary.LittleEndian.Uint32(header[12:16])
 		if metadataLength > 65535 {
@@ -308,12 +311,21 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 			wsCleanup(ws, tmpPath, "Invalid IV: incorrect size")
 			return
 		}
-		ws.SetReadDeadline(time.Now().Add(pongWait))
 
 		if _, err := file.Write(iv); err != nil {
 			wsCleanup(ws, tmpPath, "Failed to write IV")
 			return
 		}
+
+		// Handshake complete: enable keepalive pings and pong-extended chunk timeouts.
+		ws.SetReadDeadline(time.Now().Add(pongWait))
+		ws.SetPongHandler(func(string) error {
+			ws.SetReadDeadline(time.Now().Add(pongWait))
+			return nil
+		})
+		ctx, cancelPing := context.WithCancel(context.Background())
+		defer cancelPing()
+		startPingLoop(ctx, ws)
 
 		// 7. Chunk Processing Loop
 		var totalBytes int64 = int64(headerSize) + int64(metadataLength) + 12 // header + IV
@@ -346,7 +358,7 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 
 			chunkSize := int64(len(chunk))
 			projectedTotal := totalBytes + chunkSize
-			if projectedTotal > int64(GlobalConfig.MaxFileSizeBytes) {
+			if projectedTotal > maxEncryptedBytes {
 				wsCleanup(ws, tmpPath, "File too large")
 				return
 			}
@@ -356,9 +368,6 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 			}
 
 			// Persist chunk to disk BEFORE acknowledging.
-			// An ACK sent before the write succeeds would make a disk error look like a
-			// sudden connection drop to the client, because the server close frame races
-			// the in-flight next chunk from the client.
 			if _, err := file.Write(chunk); err != nil {
 				wsCleanup(ws, tmpPath, "Failed to write chunk")
 				return
@@ -379,20 +388,33 @@ func HandleWSUpload(uploadDir string, metrics *telemetry.Provider, limiter *Uplo
 			return
 		}
 
+		if downloads != nil {
+			if err := downloads.Init(finalPath, maxDownloads); err != nil {
+				wsCleanup(ws, tmpPath, "Failed to save file metadata")
+				return
+			}
+		}
+
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			os.Remove(tmpPath) // Clean up temp file if rename fails
+			if downloads != nil {
+				downloads.RemoveMeta(finalPath)
+			}
+			_ = os.Remove(tmpPath)
 			sendWSError(ws, "Failed to save file")
 			return
 		}
 
+		upload.Commit(totalBytes)
+
 		metrics.RecordTransfer(c.Request.Context(), "upload", totalBytes, true, "websocket")
 		metrics.RecordUpload(c.Request.Context(), totalBytes, true, "websocket")
 
-		// 10. Send Completion Message
+		// 9. Send Completion Message
 		if err := wsWriteJSON(ws, gin.H{
-			"type": "complete",
-			"id":   id,
-			"size": totalBytes,
+			"type":         "complete",
+			"id":           id,
+			"size":         totalBytes,
+			"maxDownloads": maxDownloads,
 		}); err != nil {
 			log.Printf("Failed to send complete message: %v", err)
 		}
@@ -426,9 +448,7 @@ func sendWSError(ws *websocket.Conn, message string) {
 // wsCleanup sends an error, closes the connection, and removes any partial temp file.
 func wsCleanup(ws *websocket.Conn, tmpPath string, message string) {
 	sendWSError(ws, message)
-	if _, err := os.Stat(tmpPath); err == nil {
-		if err := os.Remove(tmpPath); err != nil {
-			log.Printf("Failed to remove temporary file: %v", err)
-		}
+	if err := os.Remove(tmpPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log.Printf("Failed to remove temporary file")
 	}
 }

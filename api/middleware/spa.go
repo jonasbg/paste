@@ -20,12 +20,28 @@ func Middleware(urlPrefix, spaDirectory string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
+		// Never mask unknown API routes with index.html.
+		if path == "/api" || strings.HasPrefix(path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
+			c.Abort()
+			return
+		}
+
+		// SPA static/fallback serving applies only to GET and HEAD.
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			c.Abort()
+			return
+		}
+
 		// Serve the requested file if it exists (Stat instead of Open)
 		_, full := resolveInDir(spaDirectory, strings.TrimPrefix(path, urlPrefix))
 
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
 			if ext := filepath.Ext(path); ext != "" {
-				if mt := mime.TypeByExtension(ext); mt != "" {
+				if ext == ".wasm" {
+					c.Header("Content-Type", "application/wasm")
+				} else if mt := mime.TypeByExtension(ext); mt != "" {
 					c.Header("Content-Type", mt)
 				}
 			}
@@ -34,9 +50,10 @@ func Middleware(urlPrefix, spaDirectory string) gin.HandlerFunc {
 			return
 		}
 
-		// If the file doesn't exist, serve the index.html
+		// If the file doesn't exist, serve index.html
 		c.Request.URL.Path = "/"
-		c.Header("Content-Type", "text/html")
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.Header("Cache-Control", "no-cache")
 		fileserver.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
 	}

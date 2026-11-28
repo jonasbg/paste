@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,25 +31,21 @@ const (
 	maxTokenLength = 43
 )
 
+// tokenDigest hashes an HMAC access token to lowercase hex before using it in
+// on-disk filenames. This prevents raw access tokens from appearing in
+// directory listings, backups, or error logs, and avoids case-folding issues
+// on case-insensitive filesystems.
+func tokenDigest(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // generateID generates a cryptographically secure random ID with a specified bit length.
-// It supports bit lengths of 64, 128, 192, and 256.  If no length is provided, it defaults to 64 bits.
-// The generated ID is returned as a hexadecimal string.
-//
-// Args:
-//
-//	bitLength (optional): An integer representing the desired bit length of the ID.
-//	                      Must be one of 64, 128, 192, or 256. Defaults to 64.
-//
-// Returns:
-//
-//	(string, error): The generated ID as a hexadecimal string, or an error if the
-//	                specified bit length is invalid or if random byte generation fails.
+// It supports bit lengths of 64, 128, 192, and 256. If no length is provided, it defaults to 128 bits.
 func generateID(bitLength ...int) (string, error) {
-	var length int
+	length := 128
 	if len(bitLength) > 0 {
 		length = bitLength[0]
-	} else {
-		length = 64 // Default to 64 bits
 	}
 
 	switch length {
@@ -59,7 +57,7 @@ func generateID(bitLength ...int) (string, error) {
 		}
 		return hex.EncodeToString(bytes), nil
 	default:
-		return "", fmt.Errorf("invalid ID length: %d.  Must be 128, 192, or 256", length)
+		return "", fmt.Errorf("invalid ID length: %d. Must be 64, 128, 192, or 256", length)
 	}
 }
 
@@ -78,32 +76,58 @@ func resolveFile(c *gin.Context, uploadDir string) (*os.File, string) {
 		return nil, ""
 	}
 
-	filePath := filepath.Join(uploadDir, id+"."+token)
-	file, err := os.Open(filePath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-		} else {
-			log.Printf("Error: Failed to open file: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+	// Primary path uses SHA-256 hex digest of the token.
+	hashedPath := filepath.Join(uploadDir, id+"."+tokenDigest(token))
+	file, err := os.Open(hashedPath)
+	if err == nil {
+		return file, hashedPath
+	}
+
+	// Fallback for legacy files stored before token hashing was introduced.
+	if errors.Is(err, fs.ErrNotExist) {
+		legacyPath := filepath.Join(uploadDir, id+"."+token)
+		if legacyFile, legacyErr := os.Open(legacyPath); legacyErr == nil {
+			return legacyFile, legacyPath
 		}
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return nil, ""
 	}
-	return file, filePath
+
+	log.Printf("Error: Failed to open file for id=%s", id)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+	return nil, ""
 }
 
-func HandleMetadata(uploadDir string) gin.HandlerFunc {
+func setDownloadCountHeaders(c *gin.Context, maxDownloads, remaining int) {
+	c.Header("X-Max-Downloads", strconv.Itoa(maxDownloads))
+	if maxDownloads == 0 || remaining < 0 {
+		c.Header("X-Downloads-Remaining", "unlimited")
+	} else {
+		c.Header("X-Downloads-Remaining", strconv.Itoa(remaining))
+	}
+}
+
+func HandleMetadata(uploadDir string, downloads *DownloadStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		file, _ := resolveFile(c, uploadDir)
+		file, filePath := resolveFile(c, uploadDir)
 		if file == nil {
 			return
 		}
 		defer file.Close()
 
+		if downloads != nil {
+			maxDownloads, remaining, ok := downloads.Peek(filePath)
+			if !ok {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+				return
+			}
+			setDownloadCountHeaders(c, maxDownloads, remaining)
+		}
+
 		// Get file info for size
 		fileInfo, err := file.Stat()
 		if err != nil {
-			log.Printf("Error: Failed to get file info: %v", err)
+			log.Printf("Error: Failed to get file info for id=%s", c.Param("id"))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
@@ -111,14 +135,14 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 		// Read header to get metadata length
 		header := make([]byte, headerSize)
 		if _, err = io.ReadFull(file, header); err != nil {
-			log.Printf("Error: Failed to read header: %v", err)
+			log.Printf("Error: Failed to read header for id=%s", c.Param("id"))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
 		metadataLen := binary.LittleEndian.Uint32(header[12:16])
 		if metadataLen > maxMetadataSize {
-			log.Printf("Error: Metadata size exceeds limit")
+			log.Printf("Error: Metadata size exceeds limit for id=%s", c.Param("id"))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
@@ -128,51 +152,122 @@ func HandleMetadata(uploadDir string) gin.HandlerFunc {
 		copy(fullMetadata, header)
 
 		if _, err = io.ReadFull(file, fullMetadata[headerSize:]); err != nil {
-			log.Printf("Error: Failed to read metadata: %v", err)
+			log.Printf("Error: Failed to read metadata for id=%s", c.Param("id"))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
 
-		// Add size to response headers
 		c.Header("Content-Type", "application/octet-stream")
-		c.Header("Cache-Control", "no-cache")
+		c.Header("Cache-Control", "no-store")
 		c.Header("X-File-Size", strconv.FormatInt(fileInfo.Size(), 10))
 
-		c.Writer.Write(fullMetadata)
+		_, _ = c.Writer.Write(fullMetadata)
 	}
 }
 
-func HandleDelete(uploadDir string) gin.HandlerFunc {
+func HandleDelete(uploadDir string, downloads *DownloadStore, limiter *UploadLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		file, filePath := resolveFile(c, uploadDir)
 		if file == nil {
 			return
 		}
+
+		var fileSize int64
+		if info, err := file.Stat(); err == nil {
+			fileSize = info.Size()
+		}
 		file.Close()
 
-		if err := os.Remove(filePath); err != nil {
-			log.Printf("Error: Failed to delete file: %v", err)
+		// Unless force-delete is explicitly requested, do not delete a file that
+		// still has remaining download slots (keeps multi-download files intact
+		// when older clients issue a post-download DELETE).
+		if downloads != nil && !strings.EqualFold(c.GetHeader("X-Paste-Force-Delete"), "true") {
+			maxDownloads, remaining, ok := downloads.Peek(filePath)
+			if ok && (maxDownloads == 0 || remaining > 0) {
+				c.JSON(http.StatusOK, gin.H{
+					"deleted":       false,
+					"max_downloads": maxDownloads,
+					"remaining":     remaining,
+					"message":       "File retained for remaining downloads",
+				})
+				return
+			}
+		}
+
+		if err := os.Remove(filePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("Error: Failed to delete file for id=%s", c.Param("id"))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
 			return
 		}
+		if downloads != nil {
+			downloads.RemoveMeta(filePath)
+		}
+		limiter.RecordDeleted(fileSize)
 
-		c.JSON(http.StatusOK, gin.H{"message": "File deleted successfully"})
+		c.JSON(http.StatusOK, gin.H{
+			"deleted": true,
+			"message": "File deleted successfully",
+		})
 	}
 }
 
-// HandleDownload streams the stored ciphertext. It does not delete the file:
-// the web client fetches it more than once (previews, then the download) and
-// deletes it explicitly afterwards via DELETE /api/delete/:id.
-func HandleDownload(uploadDir string) gin.HandlerFunc {
+// isNonZeroRange reports whether the request asks for a resumed byte range
+// starting after byte 0 (so range continuations don't consume extra slots).
+func isNonZeroRange(r *http.Request) bool {
+	rng := strings.TrimSpace(r.Header.Get("Range"))
+	if rng == "" {
+		return false
+	}
+	return !strings.HasPrefix(rng, "bytes=0-")
+}
+
+// HandleDownload streams the stored ciphertext and enforces server-side download
+// limits. Previews (X-Paste-Purpose: preview) and resumed Range requests do not
+// consume a download slot. When the final allowed download begins, the file is
+// immediately unlinked while the open file descriptor finishes streaming.
+func HandleDownload(uploadDir string, downloads *DownloadStore, limiter *UploadLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		file, _ := resolveFile(c, uploadDir)
+		file, filePath := resolveFile(c, uploadDir)
 		if file == nil {
 			return
 		}
 		defer file.Close()
 
+		var fileSize int64
+		if info, err := file.Stat(); err == nil {
+			fileSize = info.Size()
+		}
+
+		if downloads != nil {
+			isPreview := strings.EqualFold(c.GetHeader("X-Paste-Purpose"), "preview")
+			if isPreview || isNonZeroRange(c.Request) {
+				maxDownloads, remaining, ok := downloads.Peek(filePath)
+				if !ok {
+					c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+					return
+				}
+				setDownloadCountHeaders(c, maxDownloads, remaining)
+			} else {
+				remaining, maxDownloads, exhausted, allowed := downloads.Consume(filePath)
+				if !allowed {
+					c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+					return
+				}
+				setDownloadCountHeaders(c, maxDownloads, remaining)
+				if exhausted {
+					// Unlink immediately so no subsequent download can start;
+					// the open file descriptor remains readable until ServeContent completes.
+					if err := os.Remove(filePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+						log.Printf("Error: Failed to remove exhausted file for id=%s", c.Param("id"))
+					}
+					downloads.RemoveMeta(filePath)
+					limiter.RecordDeleted(fileSize)
+				}
+			}
+		}
+
 		c.Header("Content-Type", "application/octet-stream")
-		c.Header("Cache-Control", "no-cache")
+		c.Header("Cache-Control", "no-store")
 
 		// ServeContent sets Content-Length and supports Range requests.
 		http.ServeContent(c.Writer, c.Request, "", time.Time{}, file)
@@ -184,7 +279,7 @@ func validateToken(token string) bool {
 		return false
 	}
 
-	// Ensure token only contains safe filename characters
+	// Ensure token only contains safe base64url characters
 	for i := 0; i < len(token); i++ {
 		ch := token[i]
 		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
@@ -206,6 +301,22 @@ func validateID(id string) bool {
 	for i := 0; i < len(id); i++ {
 		ch := id[i]
 		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f' || ch >= 'A' && ch <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// validatePassphraseID strictly validates a client-supplied passphrase-derived
+// file ID (always 32 lowercase hex characters = 128 bits from HKDF).
+// Restricting custom IDs prevents probing random-ID uploads of other lengths.
+func validatePassphraseID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		ch := id[i]
+		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
 			return false
 		}
 	}

@@ -39,10 +39,11 @@ export async function uploadEncryptedFile(
     file: File,
     key: string,
     onProgress: ProgressCallback,
-    customFileId?: string
+    customFileId?: string,
+    maxDownloads: number = 1
 ): Promise<{ fileId: string; token: string }> {
     const fileProcessor = new FileProcessor();
-    const config = get(configStore);
+    let config = get(configStore);
     if (config.loading) {
         await new Promise<void>((resolve) => {
             const unsubscribe = configStore.subscribe((state) => {
@@ -52,6 +53,7 @@ export async function uploadEncryptedFile(
                 }
             });
         });
+        config = get(configStore);
     }
 
     if (config.error) throw new Error(`Failed to load configuration: ${config.error}`);
@@ -149,7 +151,11 @@ export async function uploadEncryptedFile(
         };
 
         ws.onopen = () => {
-            const initMsg: Record<string, unknown> = { type: 'init', size: file.size };
+            const initMsg: Record<string, unknown> = {
+                type: 'init',
+                size: file.size,
+                maxDownloads
+            };
             if (customFileId) initMsg.fileId = customFileId;
             ws.send(JSON.stringify(initMsg));
         };

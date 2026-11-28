@@ -15,11 +15,34 @@ function requireWasmMethod<T>(
 	return method as NonNullable<T>;
 }
 
+export type RemainingDownloads = number | 'unlimited' | null;
+
+function parseDownloadHeaders(headers: Headers): {
+	maxDownloads: number | null;
+	remainingDownloads: RemainingDownloads;
+} {
+	const rawMax = headers.get('X-Max-Downloads');
+	const rawRem = headers.get('X-Downloads-Remaining');
+	const maxDownloads = rawMax !== null && rawMax !== '' ? parseInt(rawMax, 10) : null;
+	let remainingDownloads: RemainingDownloads = null;
+	if (rawRem === 'unlimited') {
+		remainingDownloads = 'unlimited';
+	} else if (rawRem !== null && rawRem !== '') {
+		const n = parseInt(rawRem, 10);
+		if (!isNaN(n)) remainingDownloads = n;
+	}
+	return {
+		maxDownloads: maxDownloads !== null && !isNaN(maxDownloads) ? maxDownloads : null,
+		remainingDownloads
+	};
+}
+
 export async function downloadAndDecryptFile(
 	fileId: string,
 	key: string,
 	token: string,
-	onProgress: ProgressCallback
+	onProgress: ProgressCallback,
+	purpose?: 'preview'
 ): Promise<{ decrypted: Blob; metadata: any }> {
 	const wasmInstance = getWasmInstance();
 	const config = get(configStore);
@@ -45,12 +68,17 @@ export async function downloadAndDecryptFile(
 
 	const headerData = new Uint8Array(await headerResponse.arrayBuffer());
 	const metadata = await decryptMetadata(key, headerData);
+	if (metadata instanceof Error) throw metadata;
 
 	// Now start streaming the full file
+	const downloadHeaders: Record<string, string> = {
+		'X-HMAC-Token': token
+	};
+	if (purpose) {
+		downloadHeaders['X-Paste-Purpose'] = purpose;
+	}
 	const response = await fetch(`/api/download/${fileId}`, {
-		headers: {
-			'X-HMAC-Token': token
-		}
+		headers: downloadHeaders
 	});
 
 	if (!response.ok) {
@@ -179,8 +207,10 @@ export async function fetchMetadata(fileId: string, key: string, token: string):
 		}
 
 		const fileSize = response.headers.get('X-File-Size');
+		const { maxDownloads, remainingDownloads } = parseDownloadHeaders(response.headers);
 		const encryptedData = await response.arrayBuffer();
 		const metadata = decryptMetadata(key, new Uint8Array(encryptedData));
+		if (metadata instanceof Error) throw metadata;
 
 		if (!metadata.filename) {
 			throw new Error('Invalid metadata received');
@@ -188,7 +218,9 @@ export async function fetchMetadata(fileId: string, key: string, token: string):
 
 		return {
 			metadata: metadata,
-			size: formatFileSize(fileSize ? parseInt(fileSize, 10) : undefined)
+			size: formatFileSize(fileSize ? parseInt(fileSize, 10) : undefined),
+			maxDownloads,
+			remainingDownloads
 		};
 	} catch (error) {
 		// Improved error handling: Log the error and re-throw (or handle appropriately)
@@ -219,7 +251,12 @@ export async function streamDownloadAndDecrypt(
   key: string,
   token: string,
   onProgress: ProgressCallback
-): Promise<{ stream: ReadableStream<Uint8Array>; metadata: any }> {
+): Promise<{
+  stream: ReadableStream<Uint8Array>;
+  metadata: any;
+  maxDownloads: number | null;
+  remainingDownloads: RemainingDownloads;
+}> {
   const wasmInstance = getWasmInstance();
   const config = get(configStore);
   if (!wasmInstance) throw new Error('WASM not initialized');
@@ -246,6 +283,7 @@ export async function streamDownloadAndDecrypt(
 	
   const headerData = new Uint8Array(await headerResponse.arrayBuffer());
   const metadata = await decryptMetadata(key, headerData);
+  if (metadata instanceof Error) throw metadata;
 
   // Now start streaming the full file
   const response = await fetch(`/api/download/${fileId}`, {
@@ -264,6 +302,8 @@ export async function streamDownloadAndDecrypt(
   if (!response.body) {
     throw new Error('Response body is null');
   }
+
+  const { maxDownloads, remainingDownloads } = parseDownloadHeaders(response.headers);
 
   // Parse content length correctly ensuring it's a number
   const contentLengthHeader = metadata.size || response.headers.get('Content-Length');
@@ -404,5 +444,5 @@ export async function streamDownloadAndDecrypt(
   // Pipe the response through our decryption transform
   const decryptedStream = response.body.pipeThrough(decryptionStream);
 
-  return { stream: decryptedStream, metadata };
+  return { stream: decryptedStream, metadata, maxDownloads, remainingDownloads };
 }

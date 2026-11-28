@@ -22,16 +22,23 @@ import (
 
 // Handler handles file uploads
 type Handler struct {
-	serverURL string
-	config    *types.Config
+	serverURL    string
+	config       *types.Config
+	maxDownloads int
 }
 
 // NewHandler creates a new upload handler
 func NewHandler(serverURL string, config *types.Config) *Handler {
 	return &Handler{
-		serverURL: serverURL,
-		config:    config,
+		serverURL:    serverURL,
+		config:       config,
+		maxDownloads: 1,
 	}
+}
+
+// SetMaxDownloads sets the number of allowed downloads (0 = unlimited, >= 1 = finite).
+func (h *Handler) SetMaxDownloads(n int) {
+	h.maxDownloads = n
 }
 
 // Upload uploads a file or stdin data
@@ -94,10 +101,11 @@ func (h *Handler) uploadFileWithID(reader io.Reader, filename string, contentTyp
 	}
 	defer conn.Close()
 
-	// Step 1: Initialize upload with optional custom fileID
+	// Step 1: Initialize upload with optional custom fileID and download limit
 	initMsg := map[string]interface{}{
-		"type": "init",
-		"size": fileSize,
+		"type":         "init",
+		"size":         fileSize,
+		"maxDownloads": h.maxDownloads,
 	}
 	if customFileID != "" {
 		initMsg["fileId"] = customFileID

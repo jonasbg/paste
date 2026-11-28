@@ -121,7 +121,8 @@ export class FilePreviews {
 				args.fileId,
 				args.key,
 				args.token,
-				async () => {}
+				async () => {},
+				'preview'
 			);
 			const previewText = (await decrypted.text()).replace(/\r\n/g, '\n');
 			if (generation !== this.#generation) return;
@@ -163,7 +164,8 @@ export class FilePreviews {
 				args.fileId,
 				args.key,
 				args.token,
-				async () => {}
+				async () => {},
+				'preview'
 			);
 			const previewType = resolveImagePreviewType(args.metadata);
 			const blob =

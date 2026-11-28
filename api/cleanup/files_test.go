@@ -31,3 +31,27 @@ func TestCleanOldFilesRemovesOnlyExpired(t *testing.T) {
 		t.Errorf("fresh file removed: %v", err)
 	}
 }
+
+func TestCleanStaleTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "abc.hash.tmp")
+	res := filepath.Join(dir, "abc.reserve")
+	keep := filepath.Join(dir, "abc.hash")
+	for _, p := range []string{tmp, res, keep} {
+		if err := os.WriteFile(p, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := CleanStaleTempFiles(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Errorf("stale .tmp was not removed")
+	}
+	if _, err := os.Stat(res); !os.IsNotExist(err) {
+		t.Errorf("stale .reserve was not removed")
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("completed file was removed: %v", err)
+	}
+}

@@ -6,6 +6,7 @@ interface Config {
     key_size: string;
     chunk_size: number;
     passphrase_words: number;
+    max_downloads_limit?: number;
 }
 
 interface ConfigStore {

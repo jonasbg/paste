@@ -25,20 +25,23 @@ const (
 	minChunkSizeMB = 1
 	maxChunkSizeMB = 64
 
-	defaultUploadsPerIP = 5
+	defaultUploadsPerIP      = 5
+	defaultMaxDownloadsLimit = 100
+	maxAllowedDownloadsLimit = 10000
 )
 
 var GlobalConfig Config
 
 // Config represents the application configuration.
 type Config struct {
-	MaxFileSize      string `json:"max_file_size"`
-	MaxFileSizeBytes int    `json:"max_file_size_bytes"`
-	IDSize           int    `json:"id_size"`
-	KeySize          int    `json:"key_size"`
-	ChunkSize        int    `json:"chunk_size"`
-	TokenMinLength   int    `json:"token_min_length"`
-	PassphraseWords  int    `json:"passphrase_words"`
+	MaxFileSize       string `json:"max_file_size"`
+	MaxFileSizeBytes  int64  `json:"max_file_size_bytes"`
+	IDSize            int    `json:"id_size"`
+	KeySize           int    `json:"key_size"`
+	ChunkSize         int    `json:"chunk_size"`
+	TokenMinLength    int    `json:"token_min_length"`
+	PassphraseWords   int    `json:"passphrase_words"`
+	MaxDownloadsLimit int    `json:"max_downloads_limit"`
 
 	// Server-side limits, not exposed to clients.
 	MaxStorageBytes int64 `json:"-"` // 0 = unlimited
@@ -90,17 +93,23 @@ func InitConfig() error {
 
 	passphraseWords := parsePassphraseWords(getEnv("PASSPHRASE_WORDS", strconv.Itoa(defaultPassphraseWords)))
 
+	maxDownloadsLimit, err := strconv.Atoi(getEnv("MAX_DOWNLOADS_LIMIT", strconv.Itoa(defaultMaxDownloadsLimit)))
+	if err != nil || maxDownloadsLimit < 1 || maxDownloadsLimit > maxAllowedDownloadsLimit {
+		return fmt.Errorf("invalid MAX_DOWNLOADS_LIMIT. Must be an integer between 1 and %d", maxAllowedDownloadsLimit)
+	}
+
 	GlobalConfig = Config{
-		MaxFileSize:      maxFileSize,
-		MaxFileSizeBytes: int(maxFileSizeBytes),
-		IDSize:           idSize,
-		KeySize:          keySize,
-		ChunkSize:        chunkSize,
-		TokenMinLength:   calculateTokenMinLength(keySize),
-		PassphraseWords:  passphraseWords,
-		MaxStorageBytes:  maxStorageBytes,
-		UploadsPerIP:     uploadsPerIP,
-		AllowedOrigins:   parseList(os.Getenv("ALLOWED_ORIGINS")),
+		MaxFileSize:       maxFileSize,
+		MaxFileSizeBytes:  maxFileSizeBytes,
+		IDSize:            idSize,
+		KeySize:           keySize,
+		ChunkSize:         chunkSize,
+		TokenMinLength:    calculateTokenMinLength(keySize),
+		PassphraseWords:   passphraseWords,
+		MaxDownloadsLimit: maxDownloadsLimit,
+		MaxStorageBytes:   maxStorageBytes,
+		UploadsPerIP:      uploadsPerIP,
+		AllowedOrigins:    parseList(os.Getenv("ALLOWED_ORIGINS")),
 	}
 
 	return nil

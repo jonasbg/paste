@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -191,6 +192,83 @@ func MountPrometheusRoute(r *gin.Engine, handler http.Handler) error {
 		return errors.New("OTEL_PROMETHEUS_PATH must start with '/'")
 	}
 
-	r.GET(path, gin.WrapH(handler))
+	allowAll, allowedNets, err := parseMetricsAllowedCIDRs(utils.GetEnv("METRICS_ALLOWED_CIDRS", "127.0.0.1/32,::1/128"))
+	if err != nil {
+		return err
+	}
+
+	wrapped := gin.WrapH(handler)
+	r.GET(path, func(c *gin.Context) {
+		if !allowAll {
+			ip := net.ParseIP(c.ClientIP())
+			if ip == nil || !ipInNets(allowedNets, ip) {
+				c.Status(http.StatusNotFound)
+				c.Abort()
+				return
+			}
+		}
+		c.Header("Cache-Control", "no-store")
+		wrapped(c)
+	})
 	return nil
+}
+
+// StartMetricsServer optionally binds the Prometheus handler on a dedicated
+// internal listener (e.g. METRICS_ADDR=127.0.0.1:9090) so /metrics is not
+// mounted on the public HTTP port. Returns nil when METRICS_ADDR is unset.
+func StartMetricsServer(handler http.Handler) (*http.Server, error) {
+	addr := strings.TrimSpace(os.Getenv("METRICS_ADDR"))
+	if addr == "" || handler == nil {
+		return nil, nil
+	}
+	path := utils.GetEnv("OTEL_PROMETHEUS_PATH", "/metrics")
+	if path == "" || path[0] != '/' {
+		return nil, errors.New("OTEL_PROMETHEUS_PATH must start with '/'")
+	}
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	return srv, nil
+}
+
+func parseMetricsAllowedCIDRs(raw string) (bool, []*net.IPNet, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "*" {
+		return true, nil, nil
+	}
+	var nets []*net.IPNet
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(entry); err == nil {
+			nets = append(nets, n)
+			continue
+		}
+		if ip := net.ParseIP(entry); ip != nil {
+			bits := 128
+			if v4 := ip.To4(); v4 != nil {
+				ip, bits = v4, 32
+			}
+			nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		return false, nil, errors.New("invalid entry in METRICS_ALLOWED_CIDRS: " + entry)
+	}
+	return false, nets, nil
+}
+
+func ipInNets(nets []*net.IPNet, ip net.IP) bool {
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

@@ -9,18 +9,24 @@ import (
 
 // UploadLimiter bounds concurrent uploads per client IP and, when
 // MAX_STORAGE_SIZE is set, the total bytes kept in the upload directory.
-// Bytes of in-flight uploads are tracked in memory as they arrive, so parallel
-// uploads cannot jointly overshoot the storage cap.
+// Completed and in-flight byte totals are maintained in memory in O(1) so
+// parallel uploads never stall on per-chunk directory scans.
 type UploadLimiter struct {
 	uploadDir string
 
 	mu       sync.Mutex
 	active   map[string]int
+	stored   int64
 	inFlight int64
 }
 
 func NewUploadLimiter(uploadDir string) *UploadLimiter {
-	return &UploadLimiter{uploadDir: uploadDir, active: make(map[string]int)}
+	l := &UploadLimiter{
+		uploadDir: uploadDir,
+		active:    make(map[string]int),
+	}
+	l.stored = l.scanStoredBytes()
+	return l
 }
 
 // Upload is one admitted upload. Call Done when it finishes, successfully or not.
@@ -28,6 +34,7 @@ type Upload struct {
 	l       *UploadLimiter
 	ip      string
 	written int64
+	done    bool
 }
 
 // Begin admits an upload of roughly size bytes from ip. It returns a
@@ -40,7 +47,7 @@ func (l *UploadLimiter) Begin(ip string, size int64) (*Upload, string) {
 		return nil, "Too many concurrent uploads"
 	}
 	if limit := GlobalConfig.MaxStorageBytes; limit > 0 {
-		if l.storedBytes()+l.inFlight+size > limit {
+		if l.stored+l.inFlight+size > limit {
 			return nil, "Server storage is full, please try again later"
 		}
 	}
@@ -56,7 +63,7 @@ func (u *Upload) Add(n int64) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if limit := GlobalConfig.MaxStorageBytes; limit > 0 && l.storedBytes()+l.inFlight+n > limit {
+	if limit := GlobalConfig.MaxStorageBytes; limit > 0 && l.stored+l.inFlight+n > limit {
 		return false
 	}
 	l.inFlight += n
@@ -64,14 +71,40 @@ func (u *Upload) Add(n int64) bool {
 	return true
 }
 
-// Done releases the upload slot. Completed files are counted again by the
-// directory scan, so the in-flight bytes are always released.
-func (u *Upload) Done() {
+// Commit moves this upload's bytes from inFlight to stored after the file has
+// been atomically renamed into its final location.
+func (u *Upload) Commit(finalSize int64) {
 	l := u.l
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	l.inFlight -= u.written
+	if l.inFlight < 0 {
+		l.inFlight = 0
+	}
+	u.written = 0
+	if finalSize > 0 {
+		l.stored += finalSize
+	}
+}
+
+// Done releases the upload slot and any uncommitted in-flight bytes.
+func (u *Upload) Done() {
+	l := u.l
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if u.done {
+		return
+	}
+	u.done = true
+
+	l.inFlight -= u.written
+	if l.inFlight < 0 {
+		l.inFlight = 0
+	}
+	u.written = 0
+
 	if l.active[u.ip] <= 1 {
 		delete(l.active, u.ip)
 	} else {
@@ -79,10 +112,35 @@ func (u *Upload) Done() {
 	}
 }
 
-// storedBytes sums the completed uploads on disk. Partial *.tmp files are
-// skipped because their bytes are already counted in inFlight. Only called
-// when a storage cap is configured.
-func (l *UploadLimiter) storedBytes() int64 {
+// RecordDeleted subtracts bytes removed from disk (e.g. after download exhaustion or DELETE).
+func (l *UploadLimiter) RecordDeleted(size int64) {
+	if l == nil || size <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.stored -= size
+	if l.stored < 0 {
+		l.stored = 0
+	}
+}
+
+// SyncStoredBytes recalculates the stored byte total from disk without holding
+// the lock during directory traversal. Intended to run after periodic cleanup sweeps.
+func (l *UploadLimiter) SyncStoredBytes() {
+	if l == nil {
+		return
+	}
+	total := l.scanStoredBytes()
+	l.mu.Lock()
+	l.stored = total
+	l.mu.Unlock()
+}
+
+// scanStoredBytes sums the completed uploads on disk. Partial *.tmp, *.reserve,
+// and *.meta sidecar files are skipped.
+func (l *UploadLimiter) scanStoredBytes() int64 {
 	entries, err := os.ReadDir(l.uploadDir)
 	if err != nil {
 		log.Printf("Failed to read upload directory: %v", err)
@@ -90,7 +148,8 @@ func (l *UploadLimiter) storedBytes() int64 {
 	}
 	var total int64
 	for _, e := range entries {
-		if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
+		name := e.Name()
+		if e.IsDir() || strings.HasSuffix(name, ".tmp") || strings.HasSuffix(name, ".reserve") || strings.HasSuffix(name, ".meta") {
 			continue
 		}
 		if info, err := e.Info(); err == nil {

@@ -9,7 +9,8 @@ type Metadata struct {
 
 // Config represents server configuration
 type Config struct {
-	MaxFileSizeBytes int64 `json:"max_file_size_bytes"`
-	ChunkSize        int   `json:"chunk_size"`
-	KeySize          int   `json:"key_size"`
+	MaxFileSizeBytes  int64 `json:"max_file_size_bytes"`
+	ChunkSize         int   `json:"chunk_size"`
+	KeySize           int   `json:"key_size"`
+	MaxDownloadsLimit int   `json:"max_downloads_limit"`
 }

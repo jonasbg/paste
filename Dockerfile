@@ -69,10 +69,11 @@ FROM scratch
 
 ENV GIN_MODE=release
 ENV UPLOAD_DIR=/uploads
+ENV WEB_DIR=/web
 ENV FILES_RETENTION_DAYS=7
 ENV MAX_FILE_SIZE=2GB
-ENV ID_SIZE=64
-ENV KEY_SIZE=128
+ENV ID_SIZE=128
+ENV KEY_SIZE=256
 
 # Copy SSL certificates for HTTPS support
 COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

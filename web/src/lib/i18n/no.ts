@@ -23,7 +23,10 @@ const no = {
 		maxFileSize: 'Maksimum filstørrelse {size}',
 		uploadNow: 'Last opp',
 		removeFile: 'Fjern fil',
-		fileTooLarge: 'Filen er for stor. Maksimal filstørrelse er {size}.'
+		fileTooLarge: 'Filen er for stor. Maksimal filstørrelse er {size}.',
+		downloadsAllowed: 'Tillatte nedlastinger',
+		unlimited: 'Ubegrenset',
+		custom: 'Egendefinert'
 	},
 	paste: {
 		reading: 'Leser utklippstavlen...',
@@ -55,7 +58,16 @@ const no = {
 	download: {
 		completeTitle: 'Nedlasting fullført',
 		downloadingAria: 'Laster ned...',
-		fileDeleted: 'Filen er slettet fra serveren.'
+		fileDeleted: 'Filen er slettet fra serveren.',
+		remainingOne: '1 nedlasting igjen',
+		remainingMany: '{count} nedlastinger igjen',
+		unlimited: 'Ubegrenset antall nedlastinger',
+		downloadedRemainingOne: 'Lastet ned — 1 nedlasting gjenstår på serveren.',
+		downloadedRemainingMany: 'Lastet ned — {count} nedlastinger gjenstår på serveren.',
+		downloadedUnlimited: 'Lastet ned — filen forblir tilgjengelig til den utløper.',
+		downloadAgain: 'Last ned igjen',
+		qrTitle: 'Åpne på mobilen',
+		qrSubtitle: 'Skann denne QR-koden med mobilkameraet for å laste ned direkte — krypteringsnøkkel inkludert.'
 	},
 	dl: {
 		titleLink: 'Sikker',

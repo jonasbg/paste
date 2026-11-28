@@ -132,17 +132,20 @@ func TestUploadLimiterStorageCap(t *testing.T) {
 func newTestServer(t *testing.T) (*httptest.Server, string) {
 	dir := t.TempDir()
 	r := gin.New()
-	r.GET("/api/ws/upload", HandleWSUpload(dir, nil, NewUploadLimiter(dir)))
-	r.GET("/api/download/:id", HandleDownload(dir))
-	r.GET("/api/metadata/:id", HandleMetadata(dir))
+	limiter := NewUploadLimiter(dir)
+	downloads := NewDownloadStore()
+	r.GET("/api/ws/upload", HandleWSUpload(dir, nil, limiter, downloads))
+	r.GET("/api/download/:id", HandleDownload(dir, downloads, limiter))
+	r.GET("/api/metadata/:id", HandleMetadata(dir, downloads))
+	r.DELETE("/api/delete/:id", HandleDelete(dir, downloads, limiter))
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv, dir
 }
 
-// upload runs the client side of the upload protocol and returns the server's
-// final message.
-func upload(t *testing.T, srv *httptest.Server, fileID, token string, header []byte, chunks ...[]byte) map[string]any {
+// uploadWithDownloads runs the client side of the upload protocol with an
+// optional maxDownloads value (nil omits the field, using the server default of 1).
+func uploadWithDownloads(t *testing.T, srv *httptest.Server, fileID, token string, maxDownloads *int, header []byte, chunks ...[]byte) map[string]any {
 	t.Helper()
 	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/api/ws/upload", nil)
 	if err != nil {
@@ -165,7 +168,11 @@ func upload(t *testing.T, srv *httptest.Server, fileID, token string, header []b
 		return m["type"] != "error" && m["type"] != "closed"
 	}
 
-	if !step(map[string]any{"type": "init", "size": 100, "fileId": fileID}) ||
+	initPayload := map[string]any{"type": "init", "size": 100, "fileId": fileID}
+	if maxDownloads != nil {
+		initPayload["maxDownloads"] = *maxDownloads
+	}
+	if !step(initPayload) ||
 		!step(map[string]any{"type": "token", "token": token}) ||
 		!step(header) {
 		return m
@@ -178,6 +185,10 @@ func upload(t *testing.T, srv *httptest.Server, fileID, token string, header []b
 	}
 	step([]byte{0})
 	return m
+}
+
+func upload(t *testing.T, srv *httptest.Server, fileID, token string, header []byte, chunks ...[]byte) map[string]any {
+	return uploadWithDownloads(t, srv, fileID, token, nil, header, chunks...)
 }
 
 func metadataHeader(ciphertextLen int) []byte {
@@ -250,8 +261,103 @@ func TestWSUploadPassphraseIDIsExclusive(t *testing.T) {
 		}
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, id+".*"))
-	if completed != 1 || len(matches) != 1 {
+	dataFiles := 0
+	for _, match := range matches {
+		if !strings.HasSuffix(match, ".meta") {
+			dataFiles++
+		}
+	}
+	if completed != 1 || dataFiles != 1 {
 		t.Fatalf("want exactly one upload for a shared ID, got %d completed, files %v", completed, matches)
+	}
+}
+
+func TestDownloadLimitsAndPreviews(t *testing.T) {
+	srv, dir := newTestServer(t)
+	token := strings.Repeat("T", 43)
+	chunk := []byte(strings.Repeat("c", 64))
+	maxDl := 2
+
+	m := uploadWithDownloads(t, srv, "", token, &maxDl, metadataHeader(20), chunk)
+	if m["type"] != "complete" {
+		t.Fatalf("upload failed: %v", m)
+	}
+	id := m["id"].(string)
+
+	// Verify raw token is never exposed in filenames on disk.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), token) {
+			t.Fatalf("raw token leaked in filename: %s", e.Name())
+		}
+	}
+
+	doReq := func(method, path, purpose string) *http.Response {
+		req, _ := http.NewRequest(method, srv.URL+path, nil)
+		req.Header.Set("X-HMAC-Token", token)
+		if purpose != "" {
+			req.Header.Set("X-Paste-Purpose", purpose)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// Metadata reports 2 remaining.
+	resp := doReq(http.MethodGet, "/api/metadata/"+id, "")
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("X-Downloads-Remaining") != "2" || resp.Header.Get("X-Max-Downloads") != "2" {
+		t.Fatalf("metadata: status=%d rem=%q max=%q", resp.StatusCode, resp.Header.Get("X-Downloads-Remaining"), resp.Header.Get("X-Max-Downloads"))
+	}
+
+	// Preview does not consume a download.
+	resp = doReq(http.MethodGet, "/api/download/"+id, "preview")
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("X-Downloads-Remaining") != "2" {
+		t.Fatalf("preview: status=%d rem=%q", resp.StatusCode, resp.Header.Get("X-Downloads-Remaining"))
+	}
+
+	// Download #1 leaves 1 remaining.
+	resp = doReq(http.MethodGet, "/api/download/"+id, "")
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("X-Downloads-Remaining") != "1" {
+		t.Fatalf("download 1: status=%d rem=%q", resp.StatusCode, resp.Header.Get("X-Downloads-Remaining"))
+	}
+
+	// Non-force DELETE retains the file while 1 download remains.
+	resp = doReq(http.MethodDelete, "/api/delete/"+id, "")
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("non-force delete: status=%d", resp.StatusCode)
+	}
+
+	// Download #2 uses the last slot and deletes the file.
+	resp = doReq(http.MethodGet, "/api/download/"+id, "")
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("X-Downloads-Remaining") != "0" {
+		t.Fatalf("download 2: status=%d rem=%q", resp.StatusCode, resp.Header.Get("X-Downloads-Remaining"))
+	}
+
+	// Download #3 is rejected.
+	resp = doReq(http.MethodGet, "/api/download/"+id, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("download 3: status=%d, want 403", resp.StatusCode)
+	}
+}
+
+func TestCustomFileIDRestrictedToPassphraseLength(t *testing.T) {
+	srv, _ := newTestServer(t)
+	token := strings.Repeat("T", 43)
+	// 16-char hex ID (64-bit random ID length) must be rejected as custom fileId.
+	if m := upload(t, srv, strings.Repeat("a", 16), token, metadataHeader(20)); m["type"] != "error" {
+		t.Fatalf("expected error for non-32-char custom fileId, got %v", m)
+	}
+	// Uppercase hex must also be rejected for passphrase IDs.
+	if m := upload(t, srv, strings.Repeat("A", 32), token, metadataHeader(20)); m["type"] != "error" {
+		t.Fatalf("expected error for uppercase custom fileId, got %v", m)
 	}
 }
 

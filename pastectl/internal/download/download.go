@@ -85,7 +85,8 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 	}
 
 	// Download and decrypt with streaming
-	if err := h.downloadAndDecryptStreaming(fileID, token, key, writer); err != nil {
+	remainingHeader, err := h.downloadAndDecryptStreaming(fileID, token, key, writer)
+	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
@@ -93,8 +94,18 @@ func (h *Handler) Download(fileID string, key []byte, outputPath string) error {
 		fmt.Fprintf(os.Stderr, "\n")
 	}
 
-	if err := h.client.DeleteFile(fileID, token); err != nil {
-		return fmt.Errorf("failed to delete file after download: %w", err)
+	// Servers supporting download limits report X-Downloads-Remaining and delete
+	// the file automatically once the final allowed download is consumed.
+	if remainingHeader == "" {
+		if err := h.client.DeleteFile(fileID, token); err != nil {
+			return fmt.Errorf("failed to delete file after download: %w", err)
+		}
+	} else if remainingHeader == "0" {
+		fmt.Fprintf(os.Stderr, "File deleted from server.\n")
+	} else if remainingHeader == "unlimited" {
+		fmt.Fprintf(os.Stderr, "File remains available (unlimited downloads until expiry).\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "Downloads remaining on server: %s\n", remainingHeader)
 	}
 
 	return nil
@@ -162,29 +173,31 @@ func IsPassphrase(input string) bool {
 	return true
 }
 
-func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key []byte, writer io.Writer) error {
+func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key []byte, writer io.Writer) (string, error) {
 	// Get base URL from client
 	baseURL := h.client.BaseURL()
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/download/%s", baseURL, fileID), nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("X-HMAC-Token", token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("server returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
+
+	remainingHeader := resp.Header.Get("X-Downloads-Remaining")
 
 	// Read metadata header (16 bytes)
 	metadataHeader := make([]byte, 16)
 	if _, err := io.ReadFull(resp.Body, metadataHeader); err != nil {
-		return fmt.Errorf("failed to read metadata header: %w", err)
+		return "", fmt.Errorf("failed to read metadata header: %w", err)
 	}
 
 	// Parse metadata length
@@ -192,19 +205,19 @@ func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key [
 
 	// Skip encrypted metadata (we already fetched it separately)
 	if _, err := io.CopyN(io.Discard, resp.Body, int64(metadataLen)); err != nil {
-		return fmt.Errorf("failed to skip metadata: %w", err)
+		return "", fmt.Errorf("failed to skip metadata: %w", err)
 	}
 
 	// Read IV
 	iv := make([]byte, crypto.IVSize)
 	if _, err := io.ReadFull(resp.Body, iv); err != nil {
-		return fmt.Errorf("failed to read IV: %w", err)
+		return "", fmt.Errorf("failed to read IV: %w", err)
 	}
 
 	// Create stream decryptor
 	streamCipher, err := crypto.NewStreamDecryptor(key, iv)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer streamCipher.Clear()
 
@@ -250,7 +263,7 @@ func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key [
 		if err == io.EOF {
 			if hasPending {
 				if dErr := decryptAndWrite(pending, true); dErr != nil {
-					return dErr
+					return "", dErr
 				}
 			}
 			break
@@ -259,24 +272,24 @@ func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key [
 		if err == io.ErrUnexpectedEOF {
 			if hasPending {
 				if dErr := decryptAndWrite(pending, false); dErr != nil {
-					return dErr
+					return "", dErr
 				}
 			}
 			if n > 0 {
 				if dErr := decryptAndWrite(append([]byte(nil), buffer[:n]...), true); dErr != nil {
-					return dErr
+					return "", dErr
 				}
 			}
 			break
 		}
 
 		if err != nil {
-			return fmt.Errorf("failed to read chunk: %w", err)
+			return "", fmt.Errorf("failed to read chunk: %w", err)
 		}
 
 		if hasPending {
 			if dErr := decryptAndWrite(pending, false); dErr != nil {
-				return dErr
+				return "", dErr
 			}
 		}
 		pending = append(pending[:0], buffer[:n]...)
@@ -287,7 +300,7 @@ func (h *Handler) downloadAndDecryptStreaming(fileID string, token string, key [
 		bar.Finish()
 	}
 
-	return nil
+	return remainingHeader, nil
 }
 
 // ParseLink parses a download link and extracts the file ID and key

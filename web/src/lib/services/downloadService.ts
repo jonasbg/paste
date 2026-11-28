@@ -1,17 +1,19 @@
 import { tr } from '$lib/i18n';
-import { streamDownloadAndDecrypt } from '$lib/services/fileService';
+import { streamDownloadAndDecrypt, type RemainingDownloads } from '$lib/services/fileService';
 import { generateHmacToken } from '$lib/utils/hmacUtils';
 
-/** Outcome of the delete request sent after a successful download. */
-export type DeleteOutcome = { deleted: true } | { deleted: false; message: string };
+/** Outcome of the download + server retention update. */
+export type DeleteOutcome =
+	| { deleted: true }
+	| { deleted: false; remaining: number | 'unlimited'; maxDownloads: number | null }
+	| { deleted: false; message: string };
 
 /**
- * Download, decrypt and save a file, then ask the server to delete it.
+ * Download, decrypt and save a file.
  *
- * Throws if the download or decryption fails (nothing was saved). Once the file
- * has been handed to the browser it never throws: a failed delete is reported
- * through the returned outcome, because the download itself succeeded and the
- * file is still on the server.
+ * Servers supporting download limits report X-Downloads-Remaining on GET /api/download/:id
+ * and delete the file automatically when remaining reaches 0. When talking to an older
+ * server without that header, falls back to DELETE /api/delete/:id.
  */
 export async function downloadSaveAndDelete(
 	fileId: string,
@@ -20,7 +22,7 @@ export async function downloadSaveAndDelete(
 ): Promise<DeleteOutcome> {
 	const hmacToken = await generateHmacToken(fileId, key);
 
-	const { stream, metadata } = await streamDownloadAndDecrypt(
+	const { stream, metadata, maxDownloads, remainingDownloads } = await streamDownloadAndDecrypt(
 		fileId,
 		key,
 		hmacToken,
@@ -40,14 +42,11 @@ export async function downloadSaveAndDelete(
 		}
 	}
 
-	if (receivedLength === 0) {
+	if (receivedLength === 0 && (metadata.size ?? 0) > 0) {
 		throw new Error(tr('dl.decryptError'));
 	}
 
 	const blob = new Blob(chunks, { type: metadata.contentType || 'application/octet-stream' });
-	if (blob.size === 0) {
-		throw new Error(tr('dl.decryptError'));
-	}
 
 	const url = window.URL.createObjectURL(blob);
 	const a = document.createElement('a');
@@ -56,8 +55,21 @@ export async function downloadSaveAndDelete(
 	document.body.appendChild(a);
 	a.click();
 	document.body.removeChild(a);
-	window.URL.revokeObjectURL(url);
+	setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 
+	// Server-managed download count: already decremented/deleted on GET /api/download/:id.
+	if (remainingDownloads !== null) {
+		if (remainingDownloads === 0) {
+			return { deleted: true };
+		}
+		return {
+			deleted: false,
+			remaining: remainingDownloads,
+			maxDownloads
+		};
+	}
+
+	// Legacy server fallback: explicitly delete after download.
 	try {
 		const response = await fetch(`/api/delete/${fileId}`, {
 			method: 'DELETE',
@@ -72,3 +84,5 @@ export async function downloadSaveAndDelete(
 		return { deleted: false, message: tr('dl.deleteNetworkError') };
 	}
 }
+
+export type { RemainingDownloads };

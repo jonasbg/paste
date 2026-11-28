@@ -17,6 +17,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	maxStaticCacheEntries = 200
+	maxStaticCacheBytes   = 64 * 1024 * 1024 // 64 MiB
+)
+
 // staticFile represents a cached immutable asset kept fully in memory.
 type staticFile struct {
 	content      []byte
@@ -26,17 +31,27 @@ type staticFile struct {
 	lastModified string
 }
 
-// in-memory cache (only for fingerprinted immutable assets)
+// in-memory cache (bounded, only for fingerprinted assets under /assets/)
 var (
-	staticCache   = make(map[string]*staticFile)
-	staticCacheMu sync.RWMutex
+	staticCache      = make(map[string]*staticFile)
+	staticCacheBytes int64
+	staticCacheMu    sync.RWMutex
 )
 
-// Load and cache a static immutable file. Returns nil if not suitable for caching or error.
+// APINoStore forces no-store caching on all API routes so browsers and proxies
+// never persist encrypted blobs, metadata, or config responses.
+func APINoStore() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Next()
+	}
+}
+
+// Load and cache a static immutable file under /assets/. Returns nil if not
+// suitable for caching, exceeds cache budget, or on error.
 func getOrLoadStatic(spaDir, relPath string) *staticFile {
 	relPath, fullPath := resolveInDir(spaDir, relPath)
-	// Only cache files with a fingerprint-like name (simple heuristic: contains a dot and a hash-looking segment)
-	if !strings.Contains(relPath, ".") {
+	if !strings.HasPrefix(relPath, "assets/") || !strings.Contains(relPath, ".") {
 		return nil
 	}
 	ext := filepath.Ext(relPath)
@@ -53,9 +68,8 @@ func getOrLoadStatic(spaDir, relPath string) *staticFile {
 	}
 	staticCacheMu.RUnlock()
 
-	// Load file from disk
 	info, err := os.Stat(fullPath)
-	if err != nil || info.IsDir() {
+	if err != nil || info.IsDir() || info.Size() > maxStaticCacheBytes {
 		return nil
 	}
 	data, err := os.ReadFile(fullPath)
@@ -74,12 +88,20 @@ func getOrLoadStatic(spaDir, relPath string) *staticFile {
 	}
 
 	staticCacheMu.Lock()
-	staticCache[relPath] = sf
+	if len(staticCache) < maxStaticCacheEntries && staticCacheBytes+int64(len(data)) <= maxStaticCacheBytes {
+		if _, exists := staticCache[relPath]; !exists {
+			staticCache[relPath] = sf
+			staticCacheBytes += int64(len(data))
+		}
+	}
 	staticCacheMu.Unlock()
 	return sf
 }
 
 func mimeTypeByExtension(ext string) string {
+	if ext == ".wasm" {
+		return "application/wasm"
+	}
 	if ext == "" {
 		return "application/octet-stream"
 	}
@@ -89,9 +111,12 @@ func mimeTypeByExtension(ext string) string {
 	return "application/octet-stream"
 }
 
-// CacheHeaders sets caching headers based on request path / extension.
+// CacheHeaders sets caching headers for static SPA assets.
+// Only content-hashed /assets/* files (and explicitly ?v=-versioned static
+// resources) receive immutable 1-year caching; unversioned files and SPA HTML
+// routes use no-cache so deployments take effect immediately.
 func CacheHeaders(spaDir string) gin.HandlerFunc {
-	immutableExt := map[string]struct{}{
+	staticExt := map[string]struct{}{
 		".js": {}, ".css": {}, ".wasm": {}, ".png": {}, ".jpg": {}, ".jpeg": {},
 		".gif": {}, ".svg": {}, ".webp": {}, ".ico": {}, ".ttf": {}, ".woff": {}, ".woff2": {},
 	}
@@ -99,9 +124,7 @@ func CacheHeaders(spaDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p := c.Request.URL.Path
 
-		// API routes: default no-store (adjust selectively if safe)
 		if strings.HasPrefix(p, "/api/") {
-			// Downloads / sensitive data: force no-store
 			c.Header("Cache-Control", "no-store")
 			return
 		}
@@ -109,47 +132,54 @@ func CacheHeaders(spaDir string) gin.HandlerFunc {
 		// SPA entry points
 		if p == "/" || p == "/index.html" {
 			c.Header("Cache-Control", "no-cache")
-			// Optional weak ETag for index.html (best-effort)
 			if f, err := http.Dir(spaDir).Open("index.html"); err == nil {
 				defer f.Close()
 				h := sha1.New()
-				io.CopyN(h, f, 32*1024) // partial hash is enough
+				_, _ = io.CopyN(h, f, 32*1024)
 				c.Header("ETag", `W/"`+hex.EncodeToString(h.Sum(nil))+`"`)
 			}
 			return
 		}
 
-		// Static immutable assets (assumes fingerprinted names in builds)
 		ext := filepath.Ext(p)
-		if _, ok := immutableExt[ext]; ok {
-			if f := getOrLoadStatic(spaDir, p); f != nil {
-				c.Header("Cache-Control", "public,max-age=31536000,immutable")
-				c.Header("ETag", f.etag)
-				c.Header("Last-Modified", f.lastModified)
+		if _, ok := staticExt[ext]; ok {
+			// Fingerprinted build assets under /assets/
+			if strings.HasPrefix(p, "/assets/") {
+				if f := getOrLoadStatic(spaDir, p); f != nil {
+					c.Header("Cache-Control", "public,max-age=31536000,immutable")
+					c.Header("ETag", f.etag)
+					c.Header("Last-Modified", f.lastModified)
 
-				// Conditional request handling
-				inm := c.GetHeader("If-None-Match")
-				ims := c.GetHeader("If-Modified-Since")
-				if (inm != "" && inm == f.etag) || (ims != "" && ims == f.lastModified) {
-					c.Status(http.StatusNotModified)
+					inm := c.GetHeader("If-None-Match")
+					ims := c.GetHeader("If-Modified-Since")
+					if (inm != "" && inm == f.etag) || (ims != "" && ims == f.lastModified) {
+						c.Status(http.StatusNotModified)
+						c.Abort()
+						return
+					}
+
+					c.Header("Content-Type", f.contentType)
+					br := &bytesReader{b: f.content}
+					http.ServeContent(c.Writer, c.Request, p, f.modTime, br)
 					c.Abort()
 					return
 				}
-
-				// Serve from memory directly; writer not yet written by other middleware.
-				c.Header("Content-Type", f.contentType)
-				br := &bytesReader{b: f.content}
-				http.ServeContent(c.Writer, c.Request, p, f.modTime, br)
-				c.Abort()
+				c.Header("Cache-Control", "public,max-age=31536000,immutable")
 				return
 			}
-			// Fallback: still mark as immutable even if not cached
-			c.Header("Cache-Control", "public,max-age=31536000,immutable")
+
+			// Unversioned static files (e.g. /encryption.wasm, /wasm_exec.js):
+			// only mark immutable when explicitly versioned via ?v=...
+			if c.Query("v") != "" {
+				c.Header("Cache-Control", "public,max-age=31536000,immutable")
+			} else {
+				c.Header("Cache-Control", "no-cache")
+			}
 			return
 		}
 
-		// Fallback: short cache
-		c.Header("Cache-Control", "public,max-age=300")
+		// SPA fallback routes (e.g. /{fileId}) serve index.html -> never cache stale HTML
+		c.Header("Cache-Control", "no-cache")
 	}
 }
 

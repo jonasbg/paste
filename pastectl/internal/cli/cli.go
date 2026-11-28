@@ -58,6 +58,8 @@ func (a *App) Run(args []string) error {
 	uploadPassphrase := uploadCmd.Int("p", 4, "Number of words in passphrase (4-8, default: 4)")
 	uploadPassphraseAlt := uploadCmd.Int("passphrase", 0, "Number of words in passphrase (4-8, default: 4)")
 	uploadURLMode := uploadCmd.Bool("url-mode", false, "Use URL mode instead of passphrase")
+	uploadDownloads := uploadCmd.Int("d", 1, "Max allowed downloads (0 = unlimited, default: 1)")
+	uploadDownloadsAlt := uploadCmd.Int("downloads", -1, "Max allowed downloads (0 = unlimited, default: 1)")
 
 	sendFile := sendCmd.String("f", "", "File to send (omit to read from stdin)")
 	sendName := sendCmd.String("n", "", "Override filename (default: uses file name or 'stdin.txt')")
@@ -65,6 +67,8 @@ func (a *App) Run(args []string) error {
 	sendPassphrase := sendCmd.Int("p", 4, "Number of words in passphrase (4-8, default: 4)")
 	sendPassphraseAlt := sendCmd.Int("passphrase", 0, "Number of words in passphrase (4-8, default: 4)")
 	sendURLMode := sendCmd.Bool("url-mode", false, "Use URL mode instead of passphrase")
+	sendDownloads := sendCmd.Int("d", 1, "Max allowed downloads (0 = unlimited, default: 1)")
+	sendDownloadsAlt := sendCmd.Int("downloads", -1, "Max allowed downloads (0 = unlimited, default: 1)")
 
 	// Download flags
 	downloadLink := downloadCmd.String("l", "", "Download link (format: https://paste.torden.tech/{id}#key={key})")
@@ -81,7 +85,7 @@ func (a *App) Run(args []string) error {
 	if len(args) < 1 {
 		if stdinIsPiped {
 			// Default to upload from stdin with passphrase
-			return a.handleUpload("", "", a.pasteURL, 4)
+			return a.handleUpload("", "", a.pasteURL, 4, 1)
 		}
 		printUsage()
 		return errors.New("no command provided")
@@ -97,7 +101,11 @@ func (a *App) Run(args []string) error {
 		if *uploadURLMode {
 			passphraseWords = 0 // Use URL mode
 		}
-		return a.handleUpload(*uploadFile, *uploadName, *uploadURL, passphraseWords)
+		maxDl := *uploadDownloads
+		if *uploadDownloadsAlt >= 0 {
+			maxDl = *uploadDownloadsAlt
+		}
+		return a.handleUpload(*uploadFile, *uploadName, *uploadURL, passphraseWords, maxDl)
 	}
 
 	switch args[0] {
@@ -110,7 +118,11 @@ func (a *App) Run(args []string) error {
 		if *uploadURLMode {
 			passphraseWords = 0 // Use URL mode
 		}
-		return a.handleUpload(*uploadFile, *uploadName, *uploadURL, passphraseWords)
+		maxDl := *uploadDownloads
+		if *uploadDownloadsAlt >= 0 {
+			maxDl = *uploadDownloadsAlt
+		}
+		return a.handleUpload(*uploadFile, *uploadName, *uploadURL, passphraseWords, maxDl)
 
 	case "send":
 		sendCmd.Parse(args[1:])
@@ -126,7 +138,11 @@ func (a *App) Run(args []string) error {
 		if *sendURLMode {
 			passphraseWords = 0 // Use URL mode
 		}
-		return a.handleUpload(*sendFile, *sendName, *sendURL, passphraseWords)
+		maxDl := *sendDownloads
+		if *sendDownloadsAlt >= 0 {
+			maxDl = *sendDownloadsAlt
+		}
+		return a.handleUpload(*sendFile, *sendName, *sendURL, passphraseWords, maxDl)
 
 	case "download":
 		// Find passphrase/link in any position (non-flag argument)
@@ -198,7 +214,7 @@ func (a *App) Run(args []string) error {
 	}
 }
 
-func (a *App) handleUpload(filePath, customName, serverURL string, passphraseWords int) error {
+func (a *App) handleUpload(filePath, customName, serverURL string, passphraseWords int, maxDownloads int) error {
 	// Prepare input
 	reader, filename, contentType, fileSize, err := upload.PrepareInput(filePath, customName)
 	if err != nil {
@@ -216,8 +232,13 @@ func (a *App) handleUpload(filePath, customName, serverURL string, passphraseWor
 		return fmt.Errorf("file size (%d bytes) exceeds server limit (%d bytes)", fileSize, config.MaxFileSizeBytes)
 	}
 
+	if maxDownloads < 0 || (config.MaxDownloadsLimit > 0 && maxDownloads > config.MaxDownloadsLimit) {
+		return fmt.Errorf("max downloads must be 0 (unlimited) or between 1 and %d", config.MaxDownloadsLimit)
+	}
+
 	// Create upload handler
 	handler := upload.NewHandler(serverURL, config)
+	handler.SetMaxDownloads(maxDownloads)
 
 	// Check if passphrase mode is enabled
 	if passphraseWords > 0 {

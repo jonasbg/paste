@@ -1,14 +1,24 @@
 <script lang="ts">
 	import { browser } from '$lib/env';
 	import { t, tr } from '$lib/i18n';
+	import QrCode from '$lib/components/Shared/QrCode.svelte';
 
 	interface Props {
 		passphrase?: string;
 		secureUrl?: string;
 		isVisible?: boolean;
+		maxDownloads?: number;
 	}
 
-	let { passphrase = '', secureUrl = '', isVisible = false }: Props = $props();
+	let { passphrase = '', secureUrl = '', isVisible = false, maxDownloads = 1 }: Props = $props();
+
+	let downloadsLabel = $derived(
+		maxDownloads === 0
+			? $t('download.unlimited')
+			: maxDownloads === 1
+				? $t('download.remainingOne')
+				: $t('download.remainingMany', { count: maxDownloads })
+	);
 
 	let passphraseLink = $derived(browser ? `${window.location.origin}/#passphrase=${passphrase}` : '');
 
@@ -113,23 +123,34 @@
 			<div class="block-header">
 				<h3>{$t('share.viaCode')}</h3>
 				<span class="badge badge-easy">{$t('share.easierBadge')}</span>
+				<span class="badge badge-downloads">{downloadsLabel}</span>
 			</div>
 			<p class="hint">{$t('share.codeHint')}</p>
 
-			<div class="field-row">
-				<label class="field-label">{$t('share.link')}</label>
-				<div class="input-group">
-					<input type="text" class="url-field" value={passphraseLink} readonly />
-					<button class="button" onclick={() => copy(passphraseLink, 'share.link')}>{$t('common.copy')}</button>
-				</div>
-			</div>
+			<div class="share-with-qr">
+				<div class="share-fields">
+					<div class="field-row">
+						<label class="field-label" for="share-passphrase-link">{$t('share.link')}</label>
+						<div class="input-group">
+							<input id="share-passphrase-link" type="text" class="url-field" value={passphraseLink} readonly />
+							<button class="button" onclick={() => copy(passphraseLink, 'share.link')}>{$t('common.copy')}</button>
+						</div>
+					</div>
 
-			<div class="field-row">
-				<label class="field-label">{$t('share.codeOnly')}</label>
-				<div class="input-group">
-					<input type="text" class="url-field" value={passphrase} readonly />
-					<button class="button" onclick={() => copy(passphrase, 'share.labelCode')}>{$t('common.copy')}</button>
+					<div class="field-row">
+						<label class="field-label" for="share-passphrase-code">{$t('share.codeOnly')}</label>
+						<div class="input-group">
+							<input id="share-passphrase-code" type="text" class="url-field" value={passphrase} readonly />
+							<button class="button" onclick={() => copy(passphrase, 'share.labelCode')}>{$t('common.copy')}</button>
+						</div>
+					</div>
 				</div>
+
+				{#if passphraseLink || secureUrl}
+					<div class="share-qr">
+						<QrCode value={passphraseLink || secureUrl} size={124} compact title={$t('download.qrTitle')} />
+					</div>
+				{/if}
 			</div>
 		</div>
 
@@ -230,6 +251,28 @@
 		border-color: #93c5fd;
 	}
 
+	.badge-downloads {
+		background: #f3f4f6;
+		color: #374151;
+		border-color: #e5e7eb;
+		margin-left: auto;
+	}
+
+	.share-with-qr {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.share-fields {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.share-qr {
+		flex-shrink: 0;
+	}
+
 	.hint {
 		font-size: 0.75rem;
 		color: #888;
@@ -321,6 +364,15 @@
 	}
 
 	@media (max-width: 768px) {
+		.share-with-qr {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.share-qr {
+			align-self: center;
+		}
+
 		.share-shell {
 			overflow: visible;
 			height: auto !important;

@@ -7,11 +7,12 @@
 	import { t, tr } from '$lib/i18n';
 	import { FileProcessor } from '$lib/services/fileProcessor';
 	import { uploadEncryptedFile } from '$lib/services/encryptionService';
-	import { fetchMetadata } from '$lib/services/fileService';
+	import { fetchMetadata, type RemainingDownloads } from '$lib/services/fileService';
 	import { downloadSaveAndDelete } from '$lib/services/downloadService';
 	import { generateHmacToken } from '$lib/utils/hmacUtils';
 	import { generatePassphrase, DEFAULT_PASSPHRASE_WORDS } from '$lib/utils/wordlist';
 	import ProgressBar from '$lib/components/Shared/ProgressBar.svelte';
+	import QrCode from '$lib/components/Shared/QrCode.svelte';
 	import PassphraseShare from '$lib/components/PassphraseShare/PassphraseShare.svelte';
 	import { fade, fly, slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -36,13 +37,16 @@
 		| { kind: 'selected'; file: File }
 		| { kind: 'uploading'; file: File }
 		| { kind: 'failed'; file: File; error: string }
-		| { kind: 'shared'; file: File; passphrase: string; url: string };
+		| { kind: 'shared'; file: File; passphrase: string; url: string; maxDownloads: number };
 
 	type ResolvedFile = {
 		fileId: string;
 		key: string;
+		passphrase: string;
 		metadata: FileMetadata & { filename: string };
 		fileSize: string;
+		maxDownloads: number | null;
+		remainingDownloads: RemainingDownloads;
 	};
 
 	/** Receive-by-passphrase flow, shown under the upload area. */
@@ -53,8 +57,14 @@
 		| { kind: 'ready'; file: ResolvedFile }
 		| { kind: 'downloading'; file: ResolvedFile }
 		| { kind: 'download-failed'; file: ResolvedFile; error: string }
-		/** Saved to disk. `deleteError` is set when the server copy could not be removed. */
-		| { kind: 'downloaded'; file: ResolvedFile; deleteError: string | null }
+		/** Saved to disk. `deleted` is false when downloads remain or delete failed. */
+		| {
+				kind: 'downloaded';
+				file: ResolvedFile;
+				deleted: boolean;
+				remaining: RemainingDownloads;
+				deleteError: string | null;
+		  }
 		/** The server no longer has the file (already downloaded, deleted or expired). */
 		| { kind: 'unavailable'; message: string };
 
@@ -71,6 +81,10 @@
 	let uploadMessage = $state('');
 	// Validation message for a rejected file (too large / config missing).
 	let fileSizeError = $state('');
+	// Allowed downloads for the next upload (0 = unlimited, >= 1 = finite).
+	let maxDownloads = $state(1);
+	let customDownloadsMode = $state(false);
+	let customDownloadsInput = $state('2');
 
 	let passphraseInput = $state('');
 
@@ -99,8 +113,56 @@
 	let canAcceptFile = $derived(!uploadLocked && !hasRetrievedFile && retrieve.kind !== 'resolving');
 	let retrieveDownloading = $derived(retrieve.kind === 'downloading');
 	let retrieveDownloaded = $derived(retrieve.kind === 'downloaded');
+	let retrieveCanDownloadAgain = $derived(
+		retrieve.kind === 'downloaded' && !retrieve.deleted && retrieve.remaining !== 0
+	);
+	let retrievedQrUrl = $derived(
+		browser && retrievedFile && !(retrieve.kind === 'downloaded' && retrieve.deleted)
+			? retrievedFile.passphrase
+				? `${window.location.origin}/#passphrase=${retrievedFile.passphrase}`
+				: `${window.location.origin}/${retrievedFile.fileId}#key=${retrievedFile.key}`
+			: ''
+	);
 
 	let maxFileSizeLabel = $derived($configStore.data?.max_file_size ?? '–');
+	let maxDownloadsLimit = $derived($configStore.data?.max_downloads_limit ?? 100);
+	const DOWNLOAD_PRESETS = [1, 3, 5, 10, 0] as const;
+
+	function selectDownloadPreset(val: number) {
+		customDownloadsMode = false;
+		maxDownloads = val;
+	}
+
+	function enableCustomDownloads() {
+		customDownloadsMode = true;
+		const parsed = parseInt(customDownloadsInput, 10);
+		if (!isNaN(parsed) && parsed >= 1 && parsed <= maxDownloadsLimit) {
+			maxDownloads = parsed;
+		} else {
+			customDownloadsInput = '2';
+			maxDownloads = 2;
+		}
+	}
+
+	function handleCustomDownloadsInput(event: Event) {
+		const raw = (event.target as HTMLInputElement).value;
+		customDownloadsInput = raw;
+		const parsed = parseInt(raw, 10);
+		if (!isNaN(parsed)) {
+			maxDownloads = Math.max(1, Math.min(maxDownloadsLimit, parsed));
+		}
+	}
+
+	function formatRemainingBadge(rem: RemainingDownloads): string {
+		if (rem === 'unlimited') return $t('download.unlimited');
+		if (typeof rem === 'number') {
+			if (rem <= 0) return '';
+			return rem === 1
+				? $t('download.remainingOne')
+				: $t('download.remainingMany', { count: rem });
+		}
+		return '';
+	}
 
 	// Server-configured passphrase word count (PASSPHRASE_WORDS); generatePassphrase
 	// clamps this to the safe [4,8] range, so the fallback only matters before config loads.
@@ -108,9 +170,9 @@
 
 	const fitPreview = {
 		containerSelector: '.passphrase-panel',
-		reserveSelector: '.file-row',
+		reserveSelector: '.file-row, .qr-download-card',
 		bottomGap: 48,
-		minHeight: 200
+		minHeight: 180
 	};
 
 	/** Validate a picked/dropped/pasted file and make it the upload selection. */
@@ -146,6 +208,9 @@
 		uploadProgress = 0;
 		uploadMessage = '';
 		fileSizeError = '';
+		maxDownloads = 1;
+		customDownloadsMode = false;
+		customDownloadsInput = '2';
 		if (fileInput) fileInput.value = '';
 	}
 
@@ -186,6 +251,9 @@
 
 			const { fileId, key } = derived as { fileId: string; key: string };
 
+			const chosenMaxDownloads =
+				maxDownloads === 0 ? 0 : Math.max(1, Math.min(maxDownloadsLimit, Math.floor(maxDownloads)));
+
 			await uploadEncryptedFile(
 				file,
 				key,
@@ -194,7 +262,8 @@
 					uploadProgress = progress;
 					uploadMessage = message;
 				},
-				fileId
+				fileId,
+				chosenMaxDownloads
 			);
 
 			if (!isCurrent()) return;
@@ -202,7 +271,8 @@
 				kind: 'shared',
 				file,
 				passphrase,
-				url: `${window.location.origin}/${fileId}#key=${key}`
+				url: `${window.location.origin}/${fileId}#key=${key}`,
+				maxDownloads: chosenMaxDownloads
 			};
 			if (fileInput) fileInput.value = '';
 		} catch (error) {
@@ -250,7 +320,15 @@
 			clearUpload();
 			retrieve = {
 				kind: 'ready',
-				file: { fileId, key, metadata: response.metadata, fileSize: response.size ?? '' }
+				file: {
+					fileId,
+					key,
+					passphrase: phrase,
+					metadata: response.metadata,
+					fileSize: response.size ?? '',
+					maxDownloads: response.maxDownloads ?? null,
+					remainingDownloads: response.remainingDownloads ?? null
+				}
 			};
 			void previews.load({
 				fileId,
@@ -272,7 +350,13 @@
 	}
 
 	async function initiatePassphraseDownload() {
-		if (retrieve.kind !== 'ready' && retrieve.kind !== 'download-failed') return;
+		if (
+			retrieve.kind !== 'ready' &&
+			retrieve.kind !== 'download-failed' &&
+			!(retrieve.kind === 'downloaded' && !retrieve.deleted)
+		) {
+			return;
+		}
 		const file = retrieve.file;
 		const attempt = retrieveAttempt;
 		retrieve = { kind: 'downloading', file };
@@ -284,11 +368,31 @@
 			});
 			if (attempt !== retrieveAttempt) return;
 			dlProgress.complete();
-			retrieve = {
-				kind: 'downloaded',
-				file,
-				deleteError: outcome.deleted ? null : outcome.message
-			};
+			if (outcome.deleted) {
+				retrieve = {
+					kind: 'downloaded',
+					file: { ...file, remainingDownloads: 0 },
+					deleted: true,
+					remaining: 0,
+					deleteError: null
+				};
+			} else if ('remaining' in outcome) {
+				retrieve = {
+					kind: 'downloaded',
+					file: { ...file, remainingDownloads: outcome.remaining },
+					deleted: false,
+					remaining: outcome.remaining,
+					deleteError: null
+				};
+			} else {
+				retrieve = {
+					kind: 'downloaded',
+					file,
+					deleted: false,
+					remaining: file.remainingDownloads,
+					deleteError: outcome.message
+				};
+			}
 		} catch (error) {
 			if (attempt !== retrieveAttempt) return;
 			dlProgress.reset();
@@ -769,47 +873,84 @@
 
 			<!-- Selected file preview: shown after file chosen, before upload starts -->
 			{#if upload.kind === 'selected'}
-				<div class="selected-file-row" in:fly={{ y: 8, duration: 220 }}>
-					<div class="col-icon">
-						<svg
-							width="32"
-							height="32"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="1.5"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-							<polyline points="13 2 13 9 20 9" />
-						</svg>
-					</div>
-					<div class="col-info">
-						<div class="file-name">{upload.file.name}</div>
-						<div class="file-pre-size">{FileProcessor.formatFileSize(upload.file.size)}</div>
-					</div>
-					<div class="selected-col-action">
-						<button class="btn-upload-now" onclick={handleUpload}>{$t('upload.uploadNow')}</button>
-						<button
-							class="btn-remove-file"
-							onclick={clearUpload}
-							aria-label={$t('upload.removeFile')}
-						>
+				<div class="selected-file-card" in:fly={{ y: 8, duration: 220 }}>
+					<div class="selected-file-row">
+						<div class="col-icon">
 							<svg
-								width="15"
-								height="15"
+								width="32"
+								height="32"
 								viewBox="0 0 24 24"
 								fill="none"
 								stroke="currentColor"
-								stroke-width="2.5"
+								stroke-width="1.5"
 								stroke-linecap="round"
 								stroke-linejoin="round"
 							>
-								<line x1="18" y1="6" x2="6" y2="18" />
-								<line x1="6" y1="6" x2="18" y2="18" />
+								<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+								<polyline points="13 2 13 9 20 9" />
 							</svg>
-						</button>
+						</div>
+						<div class="col-info">
+							<div class="file-name">{upload.file.name}</div>
+							<div class="file-pre-size">{FileProcessor.formatFileSize(upload.file.size)}</div>
+						</div>
+						<div class="selected-col-action">
+							<button class="btn-upload-now" onclick={handleUpload}>{$t('upload.uploadNow')}</button>
+							<button
+								class="btn-remove-file"
+								onclick={clearUpload}
+								aria-label={$t('upload.removeFile')}
+							>
+								<svg
+									width="15"
+									height="15"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<line x1="18" y1="6" x2="6" y2="18" />
+									<line x1="6" y1="6" x2="18" y2="18" />
+								</svg>
+							</button>
+						</div>
+					</div>
+
+					<div class="downloads-limit-bar">
+						<span class="downloads-limit-label">{$t('upload.downloadsAllowed')}</span>
+						<div class="downloads-preset-group" role="group" aria-label={$t('upload.downloadsAllowed')}>
+							{#each DOWNLOAD_PRESETS as preset}
+								<button
+									type="button"
+									class="preset-chip"
+									class:active={!customDownloadsMode && maxDownloads === preset}
+									onclick={() => selectDownloadPreset(preset)}
+								>
+									{preset === 0 ? '∞' : preset}
+								</button>
+							{/each}
+							<button
+								type="button"
+								class="preset-chip"
+								class:active={customDownloadsMode}
+								onclick={enableCustomDownloads}
+							>
+								{$t('upload.custom')}
+							</button>
+							{#if customDownloadsMode}
+								<input
+									type="number"
+									class="custom-downloads-input"
+									min="1"
+									max={maxDownloadsLimit}
+									value={customDownloadsInput}
+									oninput={handleCustomDownloadsInput}
+									aria-label={$t('upload.downloadsAllowed')}
+								/>
+							{/if}
+						</div>
 					</div>
 				</div>
 			{/if}
@@ -828,6 +969,7 @@
 			<PassphraseShare
 				passphrase={upload.kind === 'shared' ? upload.passphrase : ''}
 				secureUrl={upload.kind === 'shared' ? upload.url : ''}
+				maxDownloads={upload.kind === 'shared' ? upload.maxDownloads : 1}
 				isVisible={upload.kind === 'shared'}
 			/>
 
@@ -994,6 +1136,10 @@
 										{#if retrievedFile.fileSize}
 											<span class="size">{retrievedFile.fileSize}</span>
 										{/if}
+										{#if formatRemainingBadge(retrievedFile.remainingDownloads)}
+											<span class="dot">·</span>
+											<span class="downloads-pill">{formatRemainingBadge(retrievedFile.remainingDownloads)}</span>
+										{/if}
 										{#if dlProgress.eta && retrieveDownloading}
 											<span class="dot">·</span>
 											<span class="eta">{dlProgress.eta}</span>
@@ -1016,7 +1162,7 @@
 
 							<!-- Right: download button → spinner → checkmark -->
 							<div class="col-action">
-								{#if retrieveDownloaded}
+								{#if retrieveDownloaded && !retrieveCanDownloadAgain}
 									<div class="checkmark" title={$t('download.completeTitle')}>
 										<svg
 											fill="currentColor"
@@ -1039,7 +1185,7 @@
 									<div class="spinner" aria-label={$t('download.downloadingAria')}></div>
 								{:else}
 									<button class="btn-last-ned" onclick={initiatePassphraseDownload}>
-										{$t('common.download')}
+										{retrieveCanDownloadAgain ? $t('download.downloadAgain') : $t('common.download')}
 									</button>
 								{/if}
 							</div>
@@ -1050,9 +1196,19 @@
 								<div class="download-error" in:fly={{ y: 8, duration: 200 }}>
 									<ErrorMessage message={retrieve.deleteError} />
 								</div>
-							{:else}
+							{:else if retrieve.deleted}
 								<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
 									{$t('download.fileDeleted')}
+								</p>
+							{:else if retrieve.remaining === 'unlimited'}
+								<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
+									{$t('download.downloadedUnlimited')}
+								</p>
+							{:else if typeof retrieve.remaining === 'number' && retrieve.remaining > 0}
+								<p class="deleted-notice" in:fly={{ y: 6, duration: 250 }}>
+									{retrieve.remaining === 1
+										? $t('download.downloadedRemainingOne')
+										: $t('download.downloadedRemainingMany', { count: retrieve.remaining })}
 								</p>
 							{/if}
 						{/if}
@@ -1060,6 +1216,17 @@
 						{#if retrieve.kind === 'download-failed'}
 							<div class="download-error" in:fly={{ y: 8, duration: 200 }}>
 								<ErrorMessage message={retrieve.error} />
+							</div>
+						{/if}
+
+						{#if retrievedQrUrl}
+							<div class="qr-download-card" in:fly={{ y: 12, duration: 260 }}>
+								<QrCode
+									value={retrievedQrUrl}
+									size={140}
+									title={$t('download.qrTitle')}
+									subtitle={$t('download.qrSubtitle')}
+								/>
 							</div>
 						{/if}
 					{/if}
@@ -1763,12 +1930,97 @@
 	}
 
 	/* ── Selected file preview (before upload) ── */
+	.selected-file-card {
+		background: #fff;
+		border: 1px solid #e5e7eb;
+		border-radius: 12px;
+		margin-top: 0.75rem;
+		overflow: hidden;
+	}
+
 	.selected-file-row {
 		display: grid;
 		grid-template-columns: 52px 1fr auto;
 		align-items: center;
 		gap: 1rem;
 		padding: 1rem 1.25rem;
+	}
+
+	.downloads-limit-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		padding: 0.75rem 1.25rem;
+		border-top: 1px solid #f3f4f6;
+		background: #f9fafb;
+	}
+
+	.downloads-limit-label {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: #4b5563;
+	}
+
+	.downloads-preset-group {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+	}
+
+	.preset-chip {
+		background: #fff;
+		color: #374151;
+		border: 1px solid #d1d5db;
+		border-radius: 999px;
+		padding: 0.25rem 0.65rem;
+		font-size: 0.8rem;
+		font-weight: 600;
+		font-family: inherit;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.preset-chip:hover {
+		border-color: var(--primary-green);
+		color: #166534;
+	}
+
+	.preset-chip.active {
+		background: var(--primary-green);
+		border-color: var(--primary-green);
+		color: #fff;
+	}
+
+	.custom-downloads-input {
+		width: 4.25rem;
+		padding: 0.25rem 0.45rem;
+		border: 1px solid #d1d5db;
+		border-radius: 8px;
+		font-size: 0.82rem;
+		font-family: inherit;
+		color: #111827;
+		background: #fff;
+	}
+
+	.custom-downloads-input:focus {
+		outline: none;
+		border-color: var(--primary-green);
+		box-shadow: 0 0 0 2px rgba(64, 184, 123, 0.18);
+	}
+
+	.downloads-pill {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #166534;
+		background: rgba(64, 184, 123, 0.13);
+		border-radius: 999px;
+		padding: 0.12rem 0.5rem;
+	}
+
+	.qr-download-card {
 		margin-top: 0.75rem;
 	}
 
